@@ -23,6 +23,11 @@ prepare() {
   make ARCH=arm64 defconfig
   cat arch/arm64/configs/sm8150.config >> .config
   make ARCH=arm64 olddefconfig
+
+  # LZ4 crypto modules required by mkinitcpio's 'systemd' hook
+  echo 'CONFIG_CRYPTO_LZ4=m' >> .config
+  echo 'CONFIG_CRYPTO_LZ4HC=m' >> .config
+  make ARCH=arm64 olddefconfig
 }
 
 build() {
