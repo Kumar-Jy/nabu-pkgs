@@ -1,0 +1,19 @@
+# Maintainer: Kumar-Jy
+# Sets a deterministic WLAN MAC address based on the board serial
+# (fixes the WLAN "random id" issue on the Xiaomi Pad 5)
+
+pkgname=nabu-pmac
+pkgver=1
+pkgrel=1
+pkgdesc="Set WLAN MAC address based on board serial"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('bash' 'iproute2')
+source=('nabu-pmac-set' 'nabu-pmac.service')
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/nabu-pmac-set" "$pkgdir/usr/bin/nabu-pmac-set"
+  install -Dm644 "$srcdir/nabu-pmac.service" "$pkgdir/usr/lib/systemd/system/nabu-pmac.service"
+}
