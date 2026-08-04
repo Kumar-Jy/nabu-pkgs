@@ -210,6 +210,14 @@ jobs:
             --dir . 2>/dev/null || echo "  No previous release packages"
           ls -la *.pkg.tar.* 2>/dev/null || echo "  (empty baseline)"
 
+      - name: Download generic rootfs tarball
+        run: |
+          cd repo/aarch64
+          if ! wget --timeout=30 --tries=2 --waitretry=5 "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz; then
+            echo "Primary mirror failed, falling back"
+            wget --timeout=30 --tries=2 "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz 2>/dev/null || true
+          fi
+
       - name: Download local package artifacts
         uses: actions/download-artifact@v4
         with:
@@ -325,6 +333,7 @@ jobs:
             *.pkg.tar.zst.sig
             *.pkg.tar.xz
             *.pkg.tar.xz.sig
+            ArchLinuxARM-aarch64-latest.tar.gz
           )
           [ -f nabu-repo.asc ] && ASSETS+=(nabu-repo.asc)
           gh release create repo \
