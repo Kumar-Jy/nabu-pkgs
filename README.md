@@ -13,6 +13,7 @@ published as a pacman repository.
 | `code`         | Visual Studio Code                                |
 | `python2`      | Python 2                                          |
 | `widevine`     | Widevine DRM                                      |
+| `nabu-pmac`    | Deterministic WLAN MAC from board serial          |
 
 ## Repository
 
