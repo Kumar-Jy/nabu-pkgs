@@ -1,0 +1,44 @@
+# Maintainer: Kumar-Jy
+
+pkgname=google-chrome
+pkgver=151.0.7922.71
+pkgrel=1
+pkgdesc="The popular web browser by Google (Stable Channel)"
+arch=('aarch64')
+url="https://www.google.com/chrome"
+license=('custom:chrome')
+depends=(
+  'alsa-lib' 'gtk3' 'libcups' 'libxss' 'libxtst' 'nss'
+  'ttf-liberation' 'xdg-utils'
+)
+optdepends=(
+  'gnome-keyring: for storing passwords in GNOME keyring'
+  'pipewire: WebRTC desktop sharing under Wayland'
+)
+provides=('google-chrome-stable')
+conflicts=('google-chrome-stable')
+source=("https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb")
+sha256sums=('SKIP')
+
+pkgver() {
+  curl -sSf "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages" | \
+    grep -A1 "Package: google-chrome-stable" | awk '/Version/{print $2}' | cut -d '-' -f1 | head -n1
+}
+
+prepare() {
+  cd "${srcdir}"
+  bsdtar -xf google-chrome-stable_current_arm64.deb 2>/dev/null || true
+  mkdir -p extracted
+  bsdtar -xf data.tar.* -C extracted
+}
+
+package() {
+  cp -r "${srcdir}/extracted"/. "${pkgdir}/"
+
+  # Remove the SUID sandbox binary (not setuid in this build; rely on user namespaces)
+  rm -f "${pkgdir}/opt/google/chrome/chrome-sandbox"
+
+  # Prefer Wayland (Ozone) for touchscreen/desktop use
+  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --enable-features=UseOzonePlatform,WaylandWindowDecorations|' \
+    "${pkgdir}/usr/share/applications/google-chrome.desktop"
+}

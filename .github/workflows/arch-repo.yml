@@ -31,6 +31,14 @@ on:
         type: boolean
         default: true
         description: Build nabu-pmac
+      build_google_chrome:
+        type: boolean
+        default: true
+        description: Build google-chrome
+      build_edk2_aarch64:
+        type: boolean
+        default: true
+        description: Build edk2-aarch64
 
 jobs:
   resolve-packages:
@@ -51,15 +59,19 @@ jobs:
               --argjson widevine "${{ inputs.build_widevine }}" \
               --argjson linux_nabu "${{ inputs.build_linux_nabu }}" \
               --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
+              --argjson google_chrome "${{ inputs.build_google_chrome }}" \
+              --argjson edk2_aarch64 "${{ inputs.build_edk2_aarch64 }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
                  if $python2 then "python2" else empty end,
                  if $widevine then "widevine" else empty end,
                  if $linux_nabu then "linux-nabu" else empty end,
-                 if $nabu_pmac then "nabu-pmac" else empty end ]' > matrix.json
+                 if $nabu_pmac then "nabu-pmac" else empty end,
+                 if $google_chrome then "google-chrome" else empty end,
+                 if $edk2_aarch64 then "edk2-aarch64" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu","nabu-pmac"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu","nabu-pmac","google-chrome","edk2-aarch64"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -108,7 +120,7 @@ jobs:
 
       - name: Restore cached build
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: pkg-cache
           key: ${{ matrix.pkg }}-${{ steps.sig.outputs.sig }}
@@ -150,13 +162,13 @@ jobs:
 
       - name: Save cache
         if: steps.decide.outputs.need-build == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: pkg-cache
           key: ${{ matrix.pkg }}-${{ steps.sig.outputs.sig }}
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.pkg }}
           path: pkg-cache/*
@@ -226,7 +238,7 @@ jobs:
           fi
 
       - name: Download local package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: repo/aarch64
           pattern: pkg-*
