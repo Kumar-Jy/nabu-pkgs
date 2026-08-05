@@ -1,0 +1,99 @@
+From 7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b Mon Sep 17 00:00:00 2001
+From: Kumar-Ju <20044626+Kumar-Ju@users.noreply.github.com>
+Date: Thu, 6 Aug 2026 00:00:00 +0000
+Subject: [PATCH 50/50] drm: msm: dsi: defer blank-notify to enable, run on workqueue
+
+The NT36523 touchscreen resumes on MI_DRM_EVENT_BLANK /
+MI_DRM_BLANK_UNBLANK. It was previously emitted from
+dsi_mgr_bridge_pre_enable(), before the DSI host is actually streaming,
+so after suspend the touch controller would not come back.
+
+Twinborn's fix moved the emit into dsi_mgr_bridge_enable() so the touch
+resumes against a live panel, but it invoked the blocking notifier chain
+synchronously while the kernel DRM atomic commit held its locks. The
+chain subscriber (nt36523) flushes a driver workqueue, waiting on the
+very locks the commit holds -> deadlock, seen as a switch-root hang.
+
+Defer the notification onto a system workqueue so it runs only after the
+commit has released its locks, preserving the enable-time (post-stream)
+timing that makes wakeup work without the deadlock.
+
+Signed-off-by: Kumar-Ju <20044626+Kumar-Ju@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/dsi/dsi_manager.c | 29 +++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index 168c54c..16a1e8f 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -9,7 +9,8 @@
+ #include "msm_kms.h"
+ #include "dsi.h"
+ #include "drm/drm_notifier.h"
++#include <linux/workqueue.h>
+ 
+ #define DSI_CLOCK_MASTER	DSI_0
+@@ -277,6 +287,30 @@ static void dsi_mgr_bridge_power_off(struct drm_bridge *bridge)
+ 	dsi_mgr_phy_disable(id);
+ }
+ 
++/* blank-notify deferral work (see dsi_mgr_bridge_enable below) */
++static struct work_struct dsi_blank_work;
++static bool dsi_blank_work_inited;
++
++static void dsi_blank_work_fn(struct work_struct *work)
++{
++	enum drm_notifier_data blank = MI_DRM_BLANK_UNBLANK;
++
++	mi_drm_notifier_call_chain(MI_DRM_EVENT_BLANK, &blank);
++}
++
++static void dsi_mgr_bridge_enable(struct drm_bridge *bridge)
++{
++	/*
++	 * Enable runs inside the kms atomic commit while its locks are held.
++	 * The MI blank notifier chain is blocking and its nt36523 subscriber
++	 * waits on a driver workqueue, so calling it synchronously here would
++	 * deadlock while the commit holds the very lock that work item needs.
++	 * Defer to a system worker so it runs after the commit releases them.
++	 */
++	if (!dsi_blank_work_inited) {
++		INIT_WORK(&dsi_blank_work, dsi_blank_work_fn);
++		dsi_blank_work_inited = true;
++	}
++	schedule_work(&dsi_blank_work);
++}
++
+ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge)
+ {
+ 	int id = dsi_mgr_bridge_get_id(bridge);
+ 	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
+ 	struct msm_dsi *msm_dsi1 = dsi_mgr_get_dsi(DSI_1);
+ 	struct mipi_dsi_host *host = msm_dsi->host;
+ 	bool is_bonded_dsi = IS_BONDED_DSI();
+ 	int ret;
+-	enum drm_notifier_data notifier_data;
+ 
+ 	DBG("id=%d", id);
+ 
+@@ -315,6 +335,3 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge)
+ 		return;
+ 	}
+ 
+-	notifier_data = MI_DRM_BLANK_UNBLANK;
+-	mi_drm_notifier_call_chain(MI_DRM_EVENT_BLANK, &notifier_data);
+-
+ 	ret = msm_dsi_host_enable(host);
+ 	if (ret) {
+ 		pr_err("%s: enable host %d failed, %d\n", __func__, id, ret);
+@@ -456,6 +500,7 @@ static int dsi_mgr_bridge_attach(struct drm_bridge *bridge,
+ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.attach = dsi_mgr_bridge_attach,
+ 	.pre_enable = dsi_mgr_bridge_pre_enable,
++	.enable = dsi_mgr_bridge_enable,
+ 	.post_disable = dsi_mgr_bridge_post_disable,
+ 	.mode_set = dsi_mgr_bridge_mode_set,
+ 	.mode_valid = dsi_mgr_bridge_mode_valid,
+-- 
+2.49.0

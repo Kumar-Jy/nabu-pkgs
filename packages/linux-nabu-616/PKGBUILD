@@ -1,8 +1,9 @@
 # / AArch64 Xiaomi Pad 5
 # Maintainer: Kumar-Jy
-# Kernel 6.16.0-5 = rodriguezst recipe, no extra patches.
-# (6.16.0-4 carried 0050, a Twinborn dsi_mgr_bridge_enable wakeup backport,
-#  which caused an initrd switch-root failure; dropped here.)
+# Kernel 6.16.0-6 = rodriguezst recipe + deferred wakeup fix (0050 safe).
+# 6.16.0-4 carried 0050 (Twinborn dsi_mgr_bridge_enable wakeup backport) that
+# deadlocked switch-root; 6.16.0-6 re-adds the wakeup timing fix but defers
+# the blocking notifier to a workqueue so it cannot hold the commit locks.
 
 pkgbase=linux-nabu
 pkgver=6.16.0
@@ -10,7 +11,7 @@ _kernelname=${pkgbase#linux}
 _desc="AArch64 Xiaomi Pad 5"
 _srcname="linux-${pkgver/%.0/}"
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-pkgrel=5
+pkgrel=6
 arch=('aarch64')
 url="http://www.kernel.org/"
 license=('GPL2')
@@ -67,6 +68,7 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0047-arch-arm64-boot-dts-qcom-sm8150-add-ufs-dependecy-on.patch'
         '0048-arch-arm64-boot-dts-qcom-sm8150-disable-broken-crypt.patch'
         '0049-nt36xxx-Change-pen-resolution-This-is-done-to-be-abl.patch'
+        '0050-drm-msm-dsi-move-blank-notification-to-enable-safe.patch'
         'linux.preset')
 sha256sums=('SKIP'
             'SKIP'
@@ -116,11 +118,12 @@ sha256sums=('SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP')
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP')
 
 prepare() {
   cd $_srcname
