@@ -63,7 +63,9 @@ jobs:
         run: |
           cd repo/aarch64
           rm -f linux-nabu-6.18.42-1*.pkg.tar.* linux-nabu-6.18.42-1*.sig
+          rm -f linux-nabu-headers-6.18.42-1*.pkg.tar.* linux-nabu-headers-6.18.42-1*.sig
           rm -f linux-nabu-6.16.0-4*.pkg.tar.* linux-nabu-6.16.0-4*.sig
+          rm -f linux-nabu-headers-6.16.0-4*.pkg.tar.* linux-nabu-headers-6.16.0-4*.sig
           echo "Remaining linux-nabu packages:"
           ls linux-nabu*.pkg.tar.* 2>/dev/null || echo "  none"
 
