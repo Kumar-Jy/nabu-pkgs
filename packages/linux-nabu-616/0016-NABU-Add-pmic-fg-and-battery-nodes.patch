@@ -1,0 +1,44 @@
+From a4a43e6479b7d471202564b0e9d2563b0446a969 Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Wed, 2 Aug 2023 19:20:01 +0300
+Subject: [PATCH 16/49] NABU: Add pmic fg and battery nodes
+
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 5fc879ed5499..89658efc2875 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -139,6 +139,14 @@ rmtfs_mem: memory@fe101000 {
+ 		};
+ 	};
+ 
++	battery: battery {
++		compatible = "simple-battery";
++		charge-full-design-microamp-hours = <8720000>;
++		energy-full-design-microwatt-hours = <33600000>;
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4480000>;
++	};
++
+ 	bl_vddpos_5p5: bl-vddpos-regulator {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "bl_vddpos_5p5";
+@@ -632,6 +640,12 @@ vol_up_n: vol-up-n-state {
+ 	};
+ };
+ 
++&pm8150b_fg {
++	status = "okay";
++	monitored-battery = <&battery>;
++	//power-supplies = <&ln8000_charger>;
++};
++
+ &pon_pwrkey {
+ 	status = "okay";
+ };
+-- 
+2.49.0
+

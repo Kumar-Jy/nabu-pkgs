@@ -1,0 +1,25 @@
+From 1f2e4ea7d3bc07255256acb431cf74e90250f6b5 Mon Sep 17 00:00:00 2001
+From: Nicola Guerrera <guerrera.nicola@gmail.com>
+Date: Sat, 11 Jan 2025 23:55:24 +0100
+Subject: [PATCH 48/49] arch: arm64: boot: dts: qcom: sm8150 disable broken
+ crypto engine
+
+---
+ arch/arm64/boot/dts/qcom/sm8150.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+index 7c5e602dd048..733dfdca8a6b 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -2178,6 +2178,7 @@ crypto: crypto@1dfa000 {
+ 				 <&apps_smmu 0x512 0x0000>;
+ 			interconnects = <&aggre2_noc MASTER_CRYPTO_CORE_0 0 &mc_virt SLAVE_EBI_CH0 0>;
+ 			interconnect-names = "memory";
++			status = "disable";
+ 		};
+ 
+ 		tcsr_mutex: hwlock@1f40000 {
+-- 
+2.49.0
+

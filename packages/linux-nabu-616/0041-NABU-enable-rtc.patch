@@ -1,0 +1,60 @@
+From 902fd3db7fcf639f715ce52ec5e0dbdc4a3db12e Mon Sep 17 00:00:00 2001
+From: Catmengi <138163939+catmengi@users.noreply.github.com>
+Date: Sat, 23 Nov 2024 21:56:39 +0000
+Subject: [PATCH 41/49] NABU: enable rtc
+
+---
+ arch/arm64/boot/dts/qcom/pm8150.dtsi            | 10 +++++++++-
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 12 ++++++++++++
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/pm8150.dtsi b/arch/arm64/boot/dts/qcom/pm8150.dtsi
+index d2568686a098..c3411b308e3d 100644
+--- a/arch/arm64/boot/dts/qcom/pm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/pm8150.dtsi
+@@ -116,13 +116,21 @@ pm8150_adc_tm: adc-tm@3500 {
+ 			status = "disabled";
+ 		};
+ 
+-		rtc@6000 {
++		pm8150_rtc: rtc@6000 {
+ 			compatible = "qcom,pm8941-rtc";
+ 			reg = <0x6000>, <0x6100>;
+ 			reg-names = "rtc", "alarm";
+ 			interrupts = <0x0 0x61 0x1 IRQ_TYPE_NONE>;
+ 		};
+ 
++		pm8150_sdam_2: sdam@b100 {
++			compatible = "qcom,spmi-sdam";
++			reg = <0xb100>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			status = "disabled";
++		};
++
+ 		pm8150_gpios: gpio@c000 {
+ 			compatible = "qcom,pm8150-gpio", "qcom,spmi-gpio";
+ 			reg = <0xc000>;
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 5d9446b19d27..dbf673b78014 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -1146,3 +1146,15 @@ &wifi {
+ 	vdd-1.3-rfa-supply = <&vreg_l2c_1p3>;
+ 	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
+ };
++
++&pm8150_rtc {
++	nvmem-cells = <&rtc_offset>;
++	nvmem-cell-names = "offset";
++	status = "okay";
++};
++&pm8150_sdam_2 {
++	status = "okay";
++	rtc_offset: rtc-offset@bc {
++		reg = <0xbc 0x4>;
++	};
++};
+-- 
+2.49.0
+

@@ -1,0 +1,26 @@
+From 79dabe3447d85344f26b1d2dacffa8629e95c4fe Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Thu, 4 Jan 2024 13:01:31 +0000
+Subject: [PATCH 25/49] drm/panel: nt36523: Enable 120fps for nabu csot
+
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index 151da98a99a8..ebb6e6b9cccf 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -1123,8 +1123,7 @@ static const struct drm_display_mode elish_csot_modes[] = {
+ 
+ static const struct drm_display_mode nabu_csot_modes[] = {
+ 	{
+-		/* There is only one 120 Hz timing, but it doesn't work perfectly, 104 Hz preferred */
+-		.clock = (1600 + 88 + 40 + 40) * (2560 + 26 + 4 + 168) * 104 / 1000,
++		.clock = (1600 + 88 + 40 + 40) * (2560 + 26 + 4 + 168) * 120 / 1000,
+ 		.hdisplay = 1600,
+ 		.hsync_start = 1600 + 88,
+ 		.hsync_end = 1600 + 88 + 40,
+-- 
+2.49.0
+

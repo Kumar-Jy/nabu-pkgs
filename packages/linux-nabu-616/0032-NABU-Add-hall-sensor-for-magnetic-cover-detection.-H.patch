@@ -1,0 +1,42 @@
+From 48fc57bae817b46d1ae305774c0f053b4c0cf36a Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Wed, 20 Mar 2024 14:16:21 +0000
+Subject: [PATCH 32/49] NABU: Add hall sensor for magnetic cover detection.
+ Hall IC Model: BU52272NUZ-ZE2
+
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 2ab37a2ca88d..3f39e0b3e261 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: BSD-3-Clause
+ /*
+- * Copyright (c) 2023, map220v <map220v300@gmail.com>
++ * Copyright (c) 2023-2024, map220v <map220v300@gmail.com>
+  */
+ 
+ /dts-v1/;
+@@ -210,6 +210,16 @@ key-vol-up {
+ 			linux,can-disable;
+ 			wakeup-source;
+ 		};
++
++		event-hall-sensor {
++			label = "Hall Effect Sensor";
++			gpios = <&tlmm 9 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_LID>;
++			debounce-interval = <15>;
++			linux,can-disable;
++			wakeup-source;
++		};
+ 	};
+ };
+ 
+-- 
+2.49.0
+

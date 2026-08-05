@@ -1,0 +1,92 @@
+From dc5c9381b9cfc937ac4ed7bc8e06a39b2dedd03e Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Tue, 9 Jan 2024 11:18:40 +0000
+Subject: [PATCH 26/49] NABU: Add pm8150b type-c node and enable otg
+
+---
+ .../boot/dts/qcom/sm8150-xiaomi-nabu.dts      | 51 ++++++++++++++++++-
+ 1 file changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 17f7aeb5e99f..ee6dfcf5b4bd 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/phy/phy.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
++#include <dt-bindings/usb/pd.h>
+ #include "sm8150.dtsi"
+ #include "sm8150-wcd9340.dtsi"
+ #include "pm8150.dtsi"
+@@ -647,6 +648,49 @@ &pm8150b_fg {
+ 	//power-supplies = <&ln8000_charger>;
+ };
+ 
++&pm8150b_typec {
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++	status = "okay";
++
++	connector {
++		compatible = "usb-c-connector";
++
++		power-role = "dual";
++		data-role = "dual";
++		self-powered;
++
++		source-pdos = <PDO_FIXED(5000, 3000,
++					 PDO_FIXED_DUAL_ROLE |
++					 PDO_FIXED_USB_COMM |
++					 PDO_FIXED_DATA_SWAP)>;
++
++		sink-pdos = <PDO_FIXED(5000, 3000,
++					 PDO_FIXED_DUAL_ROLE |
++					 PDO_FIXED_USB_COMM |
++					 PDO_FIXED_DATA_SWAP)
++					 PDO_VAR(5000, 12000, 3000)>;
++
++		op-sink-microwatt = <10000000>;
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++
++				pm8150b_role_switch_in: endpoint {
++					remote-endpoint = <&usb_1_dwc3_hs>;
++				};
++			};
++		};
++	};
++};
++
++&pm8150b_vbus {
++	status = "okay";
++};
++
+ &pon_pwrkey {
+ 	status = "okay";
+ };
+@@ -916,11 +960,16 @@ &usb_1 {
+ };
+ 
+ &usb_1_dwc3 {
+-	dr_mode = "peripheral";
++	dr_mode = "otg";
+ 	maximum-speed = "high-speed";
+ 	/* Remove USB3 phy */
+ 	phys = <&usb_1_hsphy>;
+ 	phy-names = "usb2-phy";
++	usb-role-switch;
++};
++
++&usb_1_dwc3_hs {
++	remote-endpoint = <&pm8150b_role_switch_in>;
+ };
+ 
+ &usb_1_hsphy {
+-- 
+2.49.0
+

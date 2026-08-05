@@ -1,0 +1,48 @@
+From 89a503c58da70150a5bc508cfec4f5026120e082 Mon Sep 17 00:00:00 2001
+From: rodriguezst <2828844+rodriguezst@users.noreply.github.com>
+Date: Thu, 28 Nov 2024 21:09:26 +0100
+Subject: [PATCH 44/49] clk: qcom: gcc: change halt_check for
+ gcc_ufs_phy_tx/rx_symbol_0/1_clk
+
+---
+ drivers/clk/qcom/gcc-sm8150.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/clk/qcom/gcc-sm8150.c b/drivers/clk/qcom/gcc-sm8150.c
+index cefceb780889..cb27715ea727 100644
+--- a/drivers/clk/qcom/gcc-sm8150.c
++++ b/drivers/clk/qcom/gcc-sm8150.c
+@@ -3051,7 +3051,7 @@ static struct clk_branch gcc_ufs_phy_phy_aux_hw_ctl_clk = {
+ 
+ /* external clocks so add BRANCH_HALT_SKIP */
+ static struct clk_branch gcc_ufs_phy_rx_symbol_0_clk = {
+-	.halt_check = BRANCH_HALT_SKIP,
++	.halt_check = BRANCH_HALT_DELAY,
+ 	.clkr = {
+ 		.enable_reg = 0x7701c,
+ 		.enable_mask = BIT(0),
+@@ -3062,9 +3062,8 @@ static struct clk_branch gcc_ufs_phy_rx_symbol_0_clk = {
+ 	},
+ };
+ 
+-/* external clocks so add BRANCH_HALT_SKIP */
+ static struct clk_branch gcc_ufs_phy_rx_symbol_1_clk = {
+-	.halt_check = BRANCH_HALT_SKIP,
++	.halt_check = BRANCH_HALT_DELAY,
+ 	.clkr = {
+ 		.enable_reg = 0x770ac,
+ 		.enable_mask = BIT(0),
+@@ -3075,9 +3074,8 @@ static struct clk_branch gcc_ufs_phy_rx_symbol_1_clk = {
+ 	},
+ };
+ 
+-/* external clocks so add BRANCH_HALT_SKIP */
+ static struct clk_branch gcc_ufs_phy_tx_symbol_0_clk = {
+-	.halt_check = BRANCH_HALT_SKIP,
++	.halt_check = BRANCH_HALT_DELAY,
+ 	.clkr = {
+ 		.enable_reg = 0x77018,
+ 		.enable_mask = BIT(0),
+-- 
+2.49.0
+

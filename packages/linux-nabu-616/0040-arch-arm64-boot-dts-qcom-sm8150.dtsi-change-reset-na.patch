@@ -1,0 +1,36 @@
+From 29046754b1d454c4570bad4bb47ce520f783dbcb Mon Sep 17 00:00:00 2001
+From: Catmengi <138163939+catmengi@users.noreply.github.com>
+Date: Tue, 19 Nov 2024 09:48:28 +0000
+Subject: [PATCH 40/49] NABU: remove reset and change freq-table-hz of ufs_mem_hc
+
+This is needed in some nabu tablets to fix UFS
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 5d9446b19d27..917663888c45 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -1057,6 +1057,19 @@ &ufs_mem_hc {
+ 	vccq-max-microamp = <700000>;
+ 	vccq2-supply = <&vreg_s4a_1p8>;
+ 	vccq2-max-microamp = <750000>;
++
++	/delete-property/ resets;
++    /delete-property/ reset-names;
++	freq-table-hz =
++		<37500000 300000000>,
++		<0 0>,
++		<0 0>,
++		<37500000 300000000>,
++		<37500000 300000000>,
++		<0 0>,
++		<0 0>,
++		<0 0>,
++		<0 0>;
+ };
+ 
+ &ufs_mem_phy {
+-- 
+2.50.1
