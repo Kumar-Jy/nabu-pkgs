@@ -1,7 +1,8 @@
 # / AArch64 Xiaomi Pad 5
 # Maintainer: Kumar-Jy
-# Kernel 6.16.0-4 = rodriguezst recipe + 0050 backport of Twinborn's
-# dsi_mgr_bridge_enable wakeup fix (bc048e062)
+# Kernel 6.16.0-5 = rodriguezst recipe, no extra patches.
+# (6.16.0-4 carried 0050, a Twinborn dsi_mgr_bridge_enable wakeup backport,
+#  which caused an initrd switch-root failure; dropped here.)
 
 pkgbase=linux-nabu
 pkgver=6.16.0
@@ -9,7 +10,7 @@ _kernelname=${pkgbase#linux}
 _desc="AArch64 Xiaomi Pad 5"
 _srcname="linux-${pkgver/%.0/}"
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-pkgrel=4
+pkgrel=5
 arch=('aarch64')
 url="http://www.kernel.org/"
 license=('GPL2')
@@ -66,7 +67,6 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0047-arch-arm64-boot-dts-qcom-sm8150-add-ufs-dependecy-on.patch'
         '0048-arch-arm64-boot-dts-qcom-sm8150-disable-broken-crypt.patch'
         '0049-nt36xxx-Change-pen-resolution-This-is-done-to-be-abl.patch'
-        '0050-drm-msm-dsi-move-blank-notification-to-enable.patch'
         'linux.preset')
 sha256sums=('SKIP'
             'SKIP'
