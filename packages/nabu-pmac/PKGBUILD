@@ -4,16 +4,17 @@
 
 pkgname=nabu-pmac
 pkgver=1
-pkgrel=1
+pkgrel=2
 pkgdesc="Set WLAN MAC address based on board serial"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('MIT')
 depends=('bash' 'iproute2')
-source=('nabu-pmac-set' 'nabu-pmac.service')
-sha256sums=('SKIP' 'SKIP')
+source=('nabu-pmac-set' 'nabu-pmac.service' '10-wlan.link')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 package() {
   install -Dm755 "$srcdir/nabu-pmac-set" "$pkgdir/usr/bin/nabu-pmac-set"
   install -Dm644 "$srcdir/nabu-pmac.service" "$pkgdir/usr/lib/systemd/system/nabu-pmac.service"
+  install -Dm644 "$srcdir/10-wlan.link" "$pkgdir/etc/systemd/network/10-wlan.link"
 }
