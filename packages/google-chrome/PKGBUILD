@@ -1,15 +1,16 @@
 # Maintainer: Kumar-Jy
 
 pkgname=google-chrome
-pkgver=151.0.7922.71
-pkgrel=1
+pkgver=151.0.7922.108
+pkgrel=2
 pkgdesc="The popular web browser by Google (Stable Channel)"
 arch=('aarch64')
 url="https://www.google.com/chrome"
 license=('custom:chrome')
 depends=(
-  'alsa-lib' 'gtk3' 'libcups' 'libxss' 'libxtst' 'nss'
-  'ttf-liberation' 'xdg-utils'
+  'alsa-lib' 'ca-certificates' 'dbus' 'gtk3' 'hicolor-icon-theme'
+  'libcups' 'libvulkan' 'libxss' 'libxtst' 'mesa' 'nss' 'nspr'
+  'systemd-libs' 'ttf-liberation' 'vulkan-icd-loader' 'xdg-utils'
 )
 optdepends=(
   'gnome-keyring: for storing passwords in GNOME keyring'
@@ -35,10 +36,21 @@ prepare() {
 package() {
   cp -r "${srcdir}/extracted"/. "${pkgdir}/"
 
-  # Remove the SUID sandbox binary (not setuid in this build; rely on user namespaces)
-  rm -f "${pkgdir}/opt/google/chrome/chrome-sandbox"
+  # The .deb does not ship app icons under /usr/share; install the bundled ones
+  for size in 16 24 32 48 64 128 256; do
+    install -Dm644 "${pkgdir}/opt/google/chrome/product_logo_${size}.png" \
+      "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/google-chrome.png"
+  done
 
-  # Prefer Wayland (Ozone) for touchscreen/desktop use
-  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --enable-features=UseOzonePlatform,WaylandWindowDecorations|' \
-    "${pkgdir}/usr/share/applications/google-chrome.desktop"
+  # Keep the sandbox helper and mark it setuid (required when user namespaces
+  # are unavailable on the kernel)
+  chmod 4755 "${pkgdir}/opt/google/chrome/chrome-sandbox"
+
+  # Convenience alias so `chrome` works from the terminal
+  ln -s google-chrome-stable "${pkgdir}/usr/bin/chrome"
+
+  # Prefer Wayland (Ozone) when running under a Wayland compositor
+  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto|' \
+    "${pkgdir}/usr/share/applications/google-chrome.desktop" \
+    "${pkgdir}/usr/share/applications/com.google.Chrome.desktop"
 }
