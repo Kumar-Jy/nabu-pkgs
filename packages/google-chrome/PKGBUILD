@@ -9,7 +9,7 @@ url="https://www.google.com/chrome"
 license=('custom:chrome')
 depends=(
   'alsa-lib' 'ca-certificates' 'dbus' 'gtk3' 'hicolor-icon-theme'
-  'libcups' 'libvulkan' 'libxss' 'libxtst' 'mesa' 'nss' 'nspr'
+  'libcups' 'libxss' 'libxtst' 'mesa' 'nss' 'nspr'
   'systemd-libs' 'ttf-liberation' 'vulkan-icd-loader' 'xdg-utils'
 )
 optdepends=(
