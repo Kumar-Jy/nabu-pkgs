@@ -2,7 +2,7 @@
 
 pkgname=google-chrome
 pkgver=151.0.7922.108
-pkgrel=2
+pkgrel=3
 pkgdesc="The popular web browser by Google (Stable Channel)"
 arch=('aarch64')
 url="https://www.google.com/chrome"
@@ -46,8 +46,9 @@ package() {
   # are unavailable on the kernel)
   chmod 4755 "${pkgdir}/opt/google/chrome/chrome-sandbox"
 
-  # Convenience alias so `chrome` works from the terminal
+  # Convenience aliases so `chrome` and `google-chrome` work from the terminal
   ln -s google-chrome-stable "${pkgdir}/usr/bin/chrome"
+  ln -s google-chrome-stable "${pkgdir}/usr/bin/google-chrome"
 
   # Prefer Wayland (Ozone) when running under a Wayland compositor
   sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto|' \
