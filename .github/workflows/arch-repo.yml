@@ -30,7 +30,7 @@ on:
       build_linux_nabu_616:
         type: boolean
         default: true
-        description: Build linux-nabu 6.16 (rodriguezst recipe + wakeup fix)
+        description: Build linux-nabu 6.16
       build_nabu_pmac:
         type: boolean
         default: true
