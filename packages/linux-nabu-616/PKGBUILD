@@ -1,6 +1,5 @@
-# / AArch64 Xiaomi Pad 5
 # Maintainer: Kumar-Jy
-# Kernel 6.16.0-6 = rodriguezst recipe + deferred wakeup fix (0050 safe).
+# Kernel 6.16.0-7 = rodriguezst recipe + PM8150B SMB5 charger + deferred wakeup fix.
 # SMB5 backport (0014b, 0051-0057) replaces the LN8000 charger with the
 # PM8150B qcom_smbx charger block so USB-A and USB-C charging works.
 # 6.16.0-4 carried 0050 (Twinborn dsi_mgr_bridge_enable wakeup backport) that
@@ -18,7 +17,7 @@ _kernelname=${pkgbase#linux}
 _desc="AArch64 Xiaomi Pad 5"
 _srcname="linux-${pkgver/%.0/}"
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-pkgrel=6
+pkgrel=7
 arch=('aarch64')
 url="http://www.kernel.org/"
 license=('GPL2')
@@ -194,7 +193,7 @@ _package_common() {
 }
 
 _package() {
-  pkgdesc="The Linux Kernel and modules - ${_desc} (6.16 + wakeup fix)"
+  pkgdesc="The Linux Kernel and modules - ${_desc} (6.16 + SMB5 charger)"
   depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7')
   optdepends=('wireless-regdb: to set the correct wireless channels of your country')
   provides=("linux=${pkgver}" "KSMBD-MODULE" "WIREGUARD-MODULE")
