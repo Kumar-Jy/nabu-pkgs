@@ -1,9 +1,16 @@
 # / AArch64 Xiaomi Pad 5
 # Maintainer: Kumar-Jy
 # Kernel 6.16.0-6 = rodriguezst recipe + deferred wakeup fix (0050 safe).
+# SMB5 backport (0014b, 0051-0057) replaces the LN8000 charger with the
+# PM8150B qcom_smbx charger block so USB-A and USB-C charging works.
 # 6.16.0-4 carried 0050 (Twinborn dsi_mgr_bridge_enable wakeup backport) that
 # deadlocked switch-root; 6.16.0-6 re-adds the wakeup timing fix but defers
 # the blocking notifier to a workqueue so it cannot hold the commit locks.
+# 0014b pins qcom_fg registration against CI GCC link-time pruning.
+# 0051: add qcom_smbx SMB5 charger driver. 0052/0053: pm8150b SMB5 node,
+# switch nabu to it, drop LN8000. 0054: enable the build. 0055: integrate
+# USB-PD via the type-c port. 0056: clear USBIN suspend for any attached
+# source. 0057: advertise only a 5V/3A sink PDO (SMB5 charges only from 5V).
 
 pkgbase=linux-nabu
 pkgver=6.16.0
@@ -33,6 +40,7 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0012-NABU-Add-sound-nodes.patch'
         '0013-power-supply-Add-driver-for-Qualcomm-PMIC-fuel-gauge.patch'
         '0014-power-qcom_fg-Add-initial-pm8150b-support.patch'
+        '0014b-power-supply-qcom_fg-pin-registration-against-gcc-pruning.patch'
         '0015-arm64-dts-qcom-pm8150b-Add-fuel-gauge.patch'
         '0016-NABU-Add-pmic-fg-and-battery-nodes.patch'
         '0017-SM8150-Add-slimbus-nodes.patch'
@@ -69,6 +77,13 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0048-arch-arm64-boot-dts-qcom-sm8150-disable-broken-crypt.patch'
         '0049-nt36xxx-Change-pen-resolution-This-is-done-to-be-abl.patch'
         '0050-drm-msm-dsi-move-blank-notification-to-enable-safe.patch'
+        '0051-power-supply-Add-qcom-smbx-SMB5-charger-driver.patch'
+        '0052-arm64-dts-qcom-pm8150b-Add-SMB5-charger-node.patch'
+        '0053-arm64-dts-qcom-nabu-Switch-to-pm8150b-charger-and-drop-ln8000.patch'
+        '0054-drivers-power-supply-Enable-qcom-smbx-build.patch'
+        '0055-power-supply-qcom_smbx-integrate-USB-PD-via-the-type-c-port.patch'
+        '0056-power-supply-qcom_smbx-clear-USBIN-suspend-for-any-attached-source.patch'
+        '0057-arm64-dts-qcom-sm8150-xiaomi-nabu-only-advertise-5V-sink-PDO.patch'
         'linux.preset')
 sha256sums=('SKIP'
             'SKIP'
@@ -118,6 +133,12 @@ sha256sums=('SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
+             'SKIP'
              'SKIP'
              'SKIP'
              'SKIP'
