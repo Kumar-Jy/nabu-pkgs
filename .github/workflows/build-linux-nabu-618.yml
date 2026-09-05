@@ -9,8 +9,8 @@ name: Build linux-nabu-618 (Twinborn 6.18)
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'packages/linux-nabu/**'
+    branches:
+      - nabu-618
 
 jobs:
   build-linux-nabu-618:
