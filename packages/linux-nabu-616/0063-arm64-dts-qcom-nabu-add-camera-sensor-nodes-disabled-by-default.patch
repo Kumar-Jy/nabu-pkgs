@@ -1,7 +1,7 @@
 diff --git aa/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
-@@ -1151,3 +1151,246 @@
+@@ -1151,3 +1151,245 @@
  		reg = <0xbc 0x4>;
  	};
  };
