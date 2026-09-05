@@ -1,0 +1,379 @@
+diff --git a/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml b/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
+index 0840a3d92513..b79299b56fe3 100644
+--- a/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
++++ b/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
+@@ -46,6 +46,17 @@ properties:
+       Used to mark the current domain as non-secure.
+     type: boolean
+ 
++  qcom,protection-domain:
++    description:
++      Protection domain service and path which must be ready before a client
++      attaches to the sensors static process domain.
++    $ref: /schemas/types.yaml#/definitions/string-array
++    minItems: 2
++    maxItems: 2
++    items:
++      - const: tms/servreg
++      - const: msm/slpi/root_pd
++
+   qcom,smd-channels:
+     description:
+       Channel name used for the RPM communication
+@@ -123,6 +134,7 @@ examples:
+             qcom,glink-channels = "fastrpcglink-apps-dsp";
+             label = "sdsp";
+             qcom,non-secure-domain;
++            qcom,protection-domain = "tms/servreg", "msm/slpi/root_pd";
+             #address-cells = <1>;
+             #size-cells = <0>;
+ 
+diff --git a/drivers/misc/fastrpc.c
+index 3789235..72a6598 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -5,9 +5,11 @@
+ #include <linux/completion.h>
+ #include <linux/device.h>
+ #include <linux/dma-buf.h>
++#include <linux/dma-map-ops.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dma-resv.h>
+ #include <linux/idr.h>
++#include <linux/iommu.h>
+ #include <linux/list.h>
+ #include <linux/miscdevice.h>
+ #include <linux/module.h>
+@@ -19,6 +21,7 @@
+ #include <linux/rpmsg.h>
+ #include <linux/scatterlist.h>
+ #include <linux/slab.h>
++#include <linux/soc/qcom/pdr.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <uapi/misc/fastrpc.h>
+ #include <linux/of_reserved_mem.h>
+@@ -42,6 +45,7 @@
+ #define INIT_FILELEN_MAX (2 * 1024 * 1024)
+ #define INIT_FILE_NAMELEN_MAX (128)
+ #define FASTRPC_DEVICE_NAME	"fastrpc"
++#define FASTRPC_ATTACH_PD_TIMEOUT	(15 * HZ)
+ 
+ /* Add memory to static PD pool, protection thru XPU */
+ #define ADSP_MMAP_HEAP_ADDR  4
+@@ -199,6 +203,9 @@ struct fastrpc_buf {
+ 	void *virt;
+ 	u64 phys;
+ 	u64 size;
++	struct iommu_domain *alias_domain;
++	dma_addr_t alias_iova;
++	size_t alias_size;
+ 	/* Lock for dma buf attachments */
+ 	struct mutex lock;
+ 	struct list_head attachments;
+@@ -281,6 +288,12 @@ struct fastrpc_channel_ctx {
+ 	bool secure;
+ 	bool unsigned_support;
+ 	u64 dma_mask;
++	bool sdsp_iova_workaround;
++	struct device *dev;
++	struct pdr_handle *attach_pdr;
++	struct pdr_service *attach_pdr_service;
++	wait_queue_head_t attach_pd_wait;
++	bool attach_pd_up;
+ };
+ 
+ struct fastrpc_device {
+@@ -394,11 +407,73 @@ static int fastrpc_map_lookup(struct fastrpc_user *fl, int fd,
+ 
+ static void fastrpc_buf_free(struct fastrpc_buf *buf)
+ {
++	if (buf->alias_domain) {
++		size_t unmapped;
++
++		unmapped = iommu_unmap(buf->alias_domain, buf->alias_iova,
++				      buf->alias_size);
++		if (unmapped != buf->alias_size)
++			dev_warn(buf->dev,
++				 "failed to fully unmap SDSP IOVA alias %pad (%zu/%zu)\n",
++				 &buf->alias_iova, unmapped, buf->alias_size);
++	}
++
+ 	dma_free_coherent(buf->dev, buf->size, buf->virt,
+ 			  FASTRPC_PHYS(buf->phys));
+ 	kfree(buf);
+ }
+ 
++static int fastrpc_buf_map_sdsp_alias(struct fastrpc_buf *buf, int sid)
++{
++	struct iommu_domain *domain;
++	dma_addr_t dma_addr = FASTRPC_PHYS(buf->phys);
++	dma_addr_t alias = dma_addr + ((u64)sid << 32);
++	size_t size = PAGE_ALIGN(buf->size);
++	size_t mapped = 0;
++	unsigned int prot = IOMMU_READ | IOMMU_WRITE;
++	int ret;
++
++	domain = iommu_get_domain_for_dev(buf->dev);
++	if (!domain)
++		return -ENODEV;
++
++	if (dev_is_dma_coherent(buf->dev))
++		prot |= IOMMU_CACHE;
++
++	while (mapped < size) {
++		phys_addr_t phys;
++
++		phys = iommu_iova_to_phys(domain, dma_addr + mapped);
++		if (!phys) {
++			ret = -EFAULT;
++			goto err_unmap;
++		}
++
++		ret = iommu_map(domain, alias + mapped, phys, PAGE_SIZE, prot,
++				GFP_KERNEL);
++		if (ret)
++			goto err_unmap;
++
++		mapped += PAGE_SIZE;
++	}
++
++	buf->alias_domain = domain;
++	buf->alias_iova = alias;
++	buf->alias_size = size;
++	buf->phys = alias;
++
++	dev_dbg(buf->dev, "mapped SDSP IOVA alias %pad -> %pad (%zu bytes)\n",
++		&alias, &dma_addr, size);
++
++	return 0;
++
++err_unmap:
++	if (mapped)
++		iommu_unmap(domain, alias, mapped);
++
++	return ret;
++}
++
+ static int __fastrpc_buf_alloc(struct fastrpc_user *fl, struct device *dev,
+ 			     u64 size, struct fastrpc_buf **obuf)
+ {
+@@ -444,8 +519,17 @@ static int fastrpc_buf_alloc(struct fastrpc_user *fl, struct device *dev,
+ 
+ 	buf = *obuf;
+ 
+-	if (fl->sctx && fl->sctx->sid)
++	if (fl->sctx && fl->sctx->sid && fl->cctx->sdsp_iova_workaround) {
++		ret = fastrpc_buf_map_sdsp_alias(buf, fl->sctx->sid);
++		if (ret) {
++			dev_err(dev, "failed to map SDSP IOVA alias: %d\n", ret);
++			fastrpc_buf_free(buf);
++			*obuf = NULL;
++			return ret;
++		}
++	} else if (fl->sctx && fl->sctx->sid) {
+ 		buf->phys += ((u64)fl->sctx->sid << 32);
++	}
+ 
+ 	return 0;
+ }
+@@ -1650,8 +1734,29 @@ static int fastrpc_init_attach(struct fastrpc_user *fl, int pd)
+ {
+ 	struct fastrpc_invoke_args args[1];
+ 	int client_id = fl->client_id;
++	long wait_ret;
+ 	u32 sc;
+ 
++	if (pd == SENSORS_PD && fl->cctx->attach_pdr &&
++	    !READ_ONCE(fl->cctx->attach_pd_up)) {
++		dev_info(fl->cctx->dev,
++			 "waiting for attach protection domain\n");
++		wait_ret = wait_event_interruptible_timeout(
++			fl->cctx->attach_pd_wait,
++			READ_ONCE(fl->cctx->attach_pd_up) ||
++			!READ_ONCE(fl->cctx->rpdev),
++			FASTRPC_ATTACH_PD_TIMEOUT);
++		if (wait_ret < 0)
++			return wait_ret;
++		if (!wait_ret) {
++			dev_err(fl->cctx->dev,
++				"timed out waiting for attach protection domain\n");
++			return -ETIMEDOUT;
++		}
++		if (!READ_ONCE(fl->cctx->rpdev))
++			return -EPIPE;
++	}
++
+ 	args[0].ptr = (u64)(uintptr_t) &client_id;
+ 	args[0].length = sizeof(client_id);
+ 	args[0].fd = -1;
+@@ -2255,6 +2360,86 @@ static int fastrpc_device_register(struct device *dev, struct fastrpc_channel_ct
+ 	return err;
+ }
+ 
++#if IS_REACHABLE(CONFIG_QCOM_PDR_HELPERS)
++static void fastrpc_attach_pd_status(int state, char *service_path, void *priv)
++{
++	struct fastrpc_channel_ctx *cctx = priv;
++	bool up = state == SERVREG_SERVICE_STATE_UP;
++
++	WRITE_ONCE(cctx->attach_pd_up, up);
++	wake_up_all(&cctx->attach_pd_wait);
++
++	dev_info(cctx->dev, "protection domain %s is %s (state %#x)\n",
++		 service_path, up ? "up" : "not ready", state);
++}
++
++static int fastrpc_attach_pdr_init(struct fastrpc_channel_ctx *cctx,
++				   struct device_node *node)
++{
++	const char *service_name;
++	const char *service_path;
++	int ret;
++
++	if (!of_property_present(node, "qcom,protection-domain"))
++		return 0;
++
++	ret = of_property_read_string_index(node, "qcom,protection-domain", 0,
++					    &service_name);
++	if (ret)
++		return ret;
++
++	ret = of_property_read_string_index(node, "qcom,protection-domain", 1,
++					    &service_path);
++	if (ret)
++		return ret;
++
++	cctx->attach_pdr = pdr_handle_alloc(fastrpc_attach_pd_status, cctx);
++	if (IS_ERR(cctx->attach_pdr)) {
++		ret = PTR_ERR(cctx->attach_pdr);
++		cctx->attach_pdr = NULL;
++		return dev_err_probe(cctx->dev, ret,
++				     "failed to allocate attach PDR handle\n");
++	}
++
++	cctx->attach_pdr_service = pdr_add_lookup(cctx->attach_pdr,
++						   service_name, service_path);
++	if (IS_ERR(cctx->attach_pdr_service)) {
++		ret = PTR_ERR(cctx->attach_pdr_service);
++		cctx->attach_pdr_service = NULL;
++		pdr_handle_release(cctx->attach_pdr);
++		cctx->attach_pdr = NULL;
++		return dev_err_probe(cctx->dev, ret,
++				     "failed to register attach PDR lookup\n");
++	}
++
++	dev_info(cctx->dev, "tracking protection domain %s for %s\n",
++		 service_path, service_name);
++
++	return 0;
++}
++
++static void fastrpc_attach_pdr_release(struct fastrpc_channel_ctx *cctx)
++{
++	pdr_handle_release(cctx->attach_pdr);
++	cctx->attach_pdr = NULL;
++	cctx->attach_pdr_service = NULL;
++}
++#else
++static int fastrpc_attach_pdr_init(struct fastrpc_channel_ctx *cctx,
++				   struct device_node *node)
++{
++	if (!of_property_present(node, "qcom,protection-domain"))
++		return 0;
++
++	return dev_err_probe(cctx->dev, -EOPNOTSUPP,
++			     "attach PDR support is not reachable\n");
++}
++
++static void fastrpc_attach_pdr_release(struct fastrpc_channel_ctx *cctx)
++{
++}
++#endif
++
+ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ {
+ 	struct device *rdev = &rpdev->dev;
+@@ -2325,6 +2510,26 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ 
+ 	secure_dsp = !(of_property_read_bool(rdev->of_node, "qcom,non-secure-domain"));
+ 	data->secure = secure_dsp;
++	data->dev = rdev;
++	init_waitqueue_head(&data->attach_pd_wait);
++	kref_init(&data->refcount);
++	dev_set_drvdata(&rpdev->dev, data);
++	rdev->dma_mask = &data->dma_mask;
++	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
++	INIT_LIST_HEAD(&data->users);
++	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
++	spin_lock_init(&data->lock);
++	idr_init(&data->ctx_idr);
++	data->domain_id = domain_id;
++	data->sdsp_iova_workaround = domain_id == SDSP_DOMAIN_ID &&
++					    of_machine_is_compatible("qcom,sm8150");
++	if (data->sdsp_iova_workaround)
++		dev_info(rdev, "enabling SM8150 SDSP high-IOVA workaround\n");
++	data->rpdev = rpdev;
++
++	err = fastrpc_attach_pdr_init(data, rdev->of_node);
++	if (err)
++		goto err_free_data;
+ 
+ 	switch (domain_id) {
+ 	case ADSP_DOMAIN_ID:
+@@ -2353,18 +2558,6 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ 		goto err_free_data;
+ 	}
+ 
+-	kref_init(&data->refcount);
+-
+-	dev_set_drvdata(&rpdev->dev, data);
+-	rdev->dma_mask = &data->dma_mask;
+-	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
+-	INIT_LIST_HEAD(&data->users);
+-	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
+-	spin_lock_init(&data->lock);
+-	idr_init(&data->ctx_idr);
+-	data->domain_id = domain_id;
+-	data->rpdev = rpdev;
+-
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);
+ 	if (err)
+ 		goto err_deregister_fdev;
+@@ -2378,6 +2571,7 @@ err_deregister_fdev:
+ 		misc_deregister(&data->secure_fdevice->miscdev);
+ 
+ err_free_data:
++	fastrpc_attach_pdr_release(data);
+ 	kfree(data);
+ 	return err;
+ }
+@@ -2407,6 +2601,7 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ 	list_for_each_entry(user, &cctx->users, user)
+ 		fastrpc_notify_users(user);
+ 	spin_unlock_irqrestore(&cctx->lock, flags);
++	wake_up_all(&cctx->attach_pd_wait);
+ 
+ 	if (cctx->fdevice)
+ 		misc_deregister(&cctx->fdevice->miscdev);
+@@ -2414,6 +2609,8 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ 	if (cctx->secure_fdevice)
+ 		misc_deregister(&cctx->secure_fdevice->miscdev);
+ 
++	fastrpc_attach_pdr_release(cctx);
++
+ 	list_for_each_entry_safe(buf, b, &cctx->invoke_interrupted_mmaps, node)
+ 		list_del(&buf->node);
+ 
+diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper.c
+index 154ca5beb471..6fc06b08499e 100644
+--- a/drivers/soc/qcom/qcom_pd_mapper.c
++++ b/drivers/soc/qcom/qcom_pd_mapper.c
+@@ -484,6 +484,8 @@ static const struct qcom_pdm_domain_data *sm8150_domains[] = {
+ 	&cdsp_root_pd,
+ 	&mpss_root_pd_gps,
+ 	&mpss_wlan_pd,
++	&slpi_root_pd,
++	&slpi_sensor_pd,
+ 	NULL,
+ };
+ 

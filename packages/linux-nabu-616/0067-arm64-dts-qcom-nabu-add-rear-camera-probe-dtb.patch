@@ -1,0 +1,78 @@
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index a0ae67b..77b3037 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -274,6 +274,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-sony-xperia-kumano-griffin.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-iris.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-camera.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-camera-rear.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-cci.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-mtp.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dts
+new file mode 100644
+index 0000000..a8be8fd
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dts
+@@ -0,0 +1,12 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Xiaomi Pad 5 (nabu) rear-camera-isolated derivative.
++ *
++ * Booted ONLY for on-device camera probing. Enables camss + cci0 (rear
++ * ov13b10 + front bus present) but disables the front ov8856 bus, isolating
++ * rear VFE capture. Keep the default boot DTB fully camera-disabled.
++ */
++/dts-v1/;
++
++#include "sm8150-xiaomi-nabu.dts"
++#include "sm8150-xiaomi-nabu-camera-rear.dtsi"
+\ No newline at end of file
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dtsi b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dtsi
+new file mode 100644
+index 0000000..bf74f0e
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera-rear.dtsi
+@@ -0,0 +1,40 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Rear-camera-isolated camera probe DTB override.
++ *
++ * Same as camera.dtsi but keeps camss+cci0 for v4l2 capture while disabling
++ * the FRONT ov8856 sensor, so on-device probing exercises ONLY the rear
++ * ov13b10 path. This isolates the rear DMA capture (VFE) test from the front
++ * sensor no-ACK regression.
++ */
++&camcc {
++	status = "okay";
++};
++
++&camss {
++	status = "okay";
++};
++
++&cci0 {
++	status = "okay";
++};
++
++&cci1 {
++	status = "disabled";
++};
++
++/* Rear camera on cci0_i2c0 (i2c-3) stays enabled. Disable only the front. */
++&cci0_i2c1 {
++	status = "disabled";
++};
++
++/* Also disable camss port@1 (front endpoint) so camss's v4l2 async notifier
++ * does NOT wait on the (now absent) front ov8856 -> which would stall the
++ * whole media pipeline and prevent /dev/media0 from being created. */
++&camss {
++	ports {
++		port@1 {
++			status = "disabled";
++		};
++	};
++};
+\ No newline at end of file

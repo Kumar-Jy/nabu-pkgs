@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Thu, 4 Sep 2026
+Subject: [PATCH] media: i2c: ov13b10/ov8856: handle missing link-frequencies
+ gracefully
+
+The ov13b10 and ov8856 drivers require the `link-frequencies` property
+on the sensor endpoint node. When it is absent, they fail probe with
+-EINVAL.
+
+Change the missing-link-frequencies check from a hard error to a
+debug-level warning. The driver already has compiled-in tables of
+supported link frequencies and modes, so it can operate without
+the DT-provided validation. This allows the sensors to probe even
+when the device tree omits the property, which is useful during
+camera bring-up.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+
+--- a/drivers/media/i2c/ov13b10.c
++++ b/drivers/media/i2c/ov13b10.c
+@@ -1565,24 +1565,22 @@
+ 	dev_dbg(dev, "%u lanes with %u modes selected\n",
+ 		ov13b->data_lanes, ov13b->supported_modes_num);
+ 
+-	if (!bus_cfg.nr_of_link_frequencies) {
+-		dev_err(dev, "no link frequencies defined");
+-		ret = -EINVAL;
+-		goto out_err;
+-	}
+-
+-	for (i = 0; i < ARRAY_SIZE(link_freq_menu_items); i++) {
+-		for (j = 0; j < bus_cfg.nr_of_link_frequencies; j++) {
+-			if (link_freq_menu_items[i] ==
+-				bus_cfg.link_frequencies[j])
+-				break;
+-		}
++	if (!bus_cfg.nr_of_link_frequencies)
++		dev_dbg(dev, "no link frequencies defined in DT\n");
++	else {
++		for (i = 0; i < ARRAY_SIZE(link_freq_menu_items); i++) {
++			for (j = 0; j < bus_cfg.nr_of_link_frequencies; j++) {
++				if (link_freq_menu_items[i] ==
++					bus_cfg.link_frequencies[j])
++					break;
++			}
+ 
+-		if (j == bus_cfg.nr_of_link_frequencies) {
+-			dev_err(dev, "no link frequency %lld supported",
+-				link_freq_menu_items[i]);
+-			ret = -EINVAL;
+-			goto out_err;
++			if (j == bus_cfg.nr_of_link_frequencies) {
++				dev_err(dev, "no link frequency %lld supported",
++					link_freq_menu_items[i]);
++				ret = -EINVAL;
++				goto out_err;
++			}
+ 		}
+ 	}
+ 
+
+--- a/drivers/media/i2c/ov8856.c
++++ b/drivers/media/i2c/ov8856.c
+@@ -2330,24 +2330,22 @@
+ 
+ 	ov8856->modes_size = ov8856_modes_num(ov8856);
+ 
+-	if (!bus_cfg.nr_of_link_frequencies) {
+-		dev_err(dev, "no link frequencies defined");
+-		ret = -EINVAL;
+-		goto check_hwcfg_error;
+-	}
+-
+-	for (i = 0; i < ARRAY_SIZE(ov8856->priv_lane->link_freq_menu_items); i++) {
+-		for (j = 0; j < bus_cfg.nr_of_link_frequencies; j++) {
+-			if (ov8856->priv_lane->link_freq_menu_items[i] ==
+-			    bus_cfg.link_frequencies[j])
+-				break;
+-		}
++	if (!bus_cfg.nr_of_link_frequencies)
++		dev_dbg(dev, "no link frequencies defined in DT\n");
++	else {
++		for (i = 0; i < ARRAY_SIZE(ov8856->priv_lane->link_freq_menu_items); i++) {
++			for (j = 0; j < bus_cfg.nr_of_link_frequencies; j++) {
++				if (ov8856->priv_lane->link_freq_menu_items[i] ==
++				    bus_cfg.link_frequencies[j])
++					break;
++			}
+ 
+-		if (j == bus_cfg.nr_of_link_frequencies) {
+-			dev_err(dev, "no link frequency %lld supported",
+-				ov8856->priv_lane->link_freq_menu_items[i]);
+-			ret = -EINVAL;
+-			goto check_hwcfg_error;
++			if (j == bus_cfg.nr_of_link_frequencies) {
++				dev_err(dev, "no link frequency %lld supported",
++					ov8856->priv_lane->link_freq_menu_items[i]);
++				ret = -EINVAL;
++				goto check_hwcfg_error;
++			}
+ 		}
+ 	}
+ 

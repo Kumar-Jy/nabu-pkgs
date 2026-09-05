@@ -1,0 +1,58 @@
+name: Build linux-nabu-616 (SMB5)
+
+# Minimal build-only job: compiles the linux-nabu-616 kernel (rodriguezst
+# recipe + wakeup fix 0050 + qcom_smbx SMB5 charger backport 0051..0054) on a
+# native aarch64 runner and uploads the resulting .pkg.tar.* as an artifact.
+# Does NOT touch the pacman repo.
+# Use for CI validation before merging into the main arch-repo workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packages/linux-nabu-616/**'
+
+jobs:
+  build-linux-nabu-616:
+    name: Build linux-nabu-616
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman git
+
+      - name: Build package
+        run: |
+          mkdir -p pkg-out
+          echo "::group::Building linux-nabu-616 (SMB5 0051..0054)..."
+          podman run --rm \
+            -v "$(pwd)/packages/linux-nabu-616:/work" \
+            -v "$(pwd)/pkg-out:/output" \
+            -w /work \
+            menci/archlinuxarm:base \
+            sh -c "
+              sed -i '/^#DisableSandbox/s/^#//' /etc/pacman.conf
+              echo 'DisableSandbox' >> /etc/pacman.conf
+              pacman-key --init
+              pacman-key --populate archlinuxarm
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc systemd-ukify
+              useradd -m builder
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+              chown -R builder:builder /work
+              su builder -c 'cd /work && makepkg -s --noconfirm --skipchecksums' || exit 1
+              cp /work/*.pkg.tar.* /output/
+            "
+          echo "::endgroup::"
+          ls -la pkg-out/
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-nabu-616-smb5
+          path: pkg-out/*.pkg.tar.*
+          if-no-files-found: error

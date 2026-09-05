@@ -1,0 +1,249 @@
+diff --git aa/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -1151,3 +1151,246 @@
+ 		reg = <0xbc 0x4>;
+ 	};
+ };
++
++/*
++ * Camera hardware for Xiaomi Pad 5 (nabu): OV13B10 rear + OV8856 front +
++ * CN3927 AF lens. Wiring follows the CFM880/postmarketOS SM8150 camera recipe
++ * (confirmed working upstream). Every node is disabled by default here; only
++ * the derived sm8150-xiaomi-nabu-camera.dtb (0064) enables them for probing.
++ */
++
++/ {
++	camera_vdig_1p2: camera-vdig-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_vdig_1p2";
++		regulator-min-microvolt = <1200000>;
++		regulator-max-microvolt = <1200000>;
++		regulator-enable-ramp-delay = <135>;
++		gpio = <&pm8150l_gpios 3 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_s4a_1p8>;
++	};
++
++	camera_front_vana_3p0: camera-front-vana-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_front_vana_3p0";
++		regulator-min-microvolt = <3008000>;
++		regulator-max-microvolt = <3008000>;
++		regulator-enable-ramp-delay = <135>;
++		gpio = <&tlmm 31 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++	};
++
++	camera_rear_vana_3p0: camera-rear-vana-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_rear_vana_3p0";
++		regulator-min-microvolt = <3008000>;
++		regulator-max-microvolt = <3008000>;
++		regulator-enable-ramp-delay = <135>;
++		gpio = <&tlmm 11 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++	};
++
++	camera_rear_vaf_2p8: camera-rear-vaf-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_rear_vaf_2p8";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		regulator-enable-ramp-delay = <135>;
++		gpio = <&tlmm 29 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++	};
++};
++
++&tlmm {
++	cam_sensor_mclk0_default: cam-sensor-mclk0-default {
++		function = "cam_mclk";
++		pins = "gpio13";
++		bias-disable;
++		drive-strength = <6>;
++	};
++
++	cam_sensor_mclk0_sleep: cam-sensor-mclk0-sleep {
++		function = "cam_mclk";
++		pins = "gpio13";
++		bias-pull-down;
++		drive-strength = <2>;
++	};
++
++	cam_sensor_mclk1_default: cam-sensor-mclk1-default {
++		function = "cam_mclk";
++		pins = "gpio14";
++		bias-disable;
++		drive-strength = <6>;
++	};
++
++	cam_sensor_mclk1_sleep: cam-sensor-mclk1-sleep {
++		function = "cam_mclk";
++		pins = "gpio14";
++		bias-pull-down;
++		drive-strength = <2>;
++	};
++
++	cam_sensor_reset_rear_default: cam-sensor-reset-rear-default {
++		function = "gpio";
++		pins = "gpio28";
++		bias-disable;
++		drive-strength = <2>;
++		output-low;
++	};
++
++	cam_sensor_reset_front_default: cam-sensor-reset-front-default {
++		function = "gpio";
++		pins = "gpio30";
++		bias-disable;
++		drive-strength = <2>;
++		output-low;
++	};
++
++	cci0_default: cci0-default {
++		pins = "gpio17", "gpio18";
++		function = "cci_i2c";
++		bias-pull-up;
++		drive-strength = <2>;
++	};
++
++	cci0_sleep: cci0-sleep {
++		pins = "gpio17", "gpio18";
++		function = "cci_i2c";
++		bias-pull-up;
++		drive-strength = <2>;
++	};
++
++	cci1_default: cci1-default {
++		pins = "gpio19", "gpio20";
++		function = "cci_i2c";
++		bias-pull-up;
++		drive-strength = <2>;
++	};
++
++	cci1_sleep: cci1-sleep {
++		pins = "gpio19", "gpio20";
++		function = "cci_i2c";
++		bias-pull-up;
++		drive-strength = <2>;
++	};
++};
++
++&camcc {
++	status = "disabled";
++};
++
++&camss {
++	pinctrl-names = "default";
++
++	vdda-phy-supply = <&vreg_l5a_0p8>;
++	vdda-pll-supply = <&vreg_l3c_1p2>;
++
++	status = "disabled";
++
++	ports {
++		port@0 {
++			reg = <0>;
++			ov13b10_ep: endpoint {
++				remote-endpoint = <&ov13b10_ep_out>;
++				clock-lanes = <0>;
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <560000000>;
++			};
++		};
++
++		port@1 {
++			reg = <1>;
++			ov8856_ep: endpoint {
++				remote-endpoint = <&ov8856_ep_out>;
++				clock-lanes = <0>;
++				data-lanes = <1 2>;
++				link-frequencies = /bits/ 64 <720000000 360000000>;
++			};
++		};
++	};
++};
++
++&cci0 {
++	pinctrl-0 = <&cci0_default>;
++	pinctrl-1 = <&cci0_sleep>;
++	pinctrl-names = "default", "sleep";
++	status = "disabled";
++};
++
++&cci1 {
++	pinctrl-0 = <&cci1_default>;
++	pinctrl-1 = <&cci1_sleep>;
++	pinctrl-names = "default", "sleep";
++	status = "disabled";
++};
++
++&cci0_i2c0 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	rear-camera@10 {
++		compatible = "ovti,ov13b10";
++		reg = <0x10>;
++		clocks = <&camcc CAM_CC_MCLK0_CLK>;
++		clock-names = "xvclk";
++		clock-frequency = <19200000>;
++		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
++		assigned-clock-rates = <19200000>;
++		dovdd-supply = <&vreg_l1c_1p8>;
++		avdd-supply = <&camera_rear_vana_3p0>;
++		dvdd-supply = <&camera_vdig_1p2>;
++		lens-focus = <&cn3927>;
++		reset-gpios = <&tlmm 28 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&cam_sensor_mclk0_default>,
++			    <&cam_sensor_reset_rear_default>;
++		pinctrl-names = "default";
++
++		port {
++			ov13b10_ep_out: endpoint {
++				remote-endpoint = <&ov13b10_ep>;
++				data-lanes = <1 2 3 4>;
++			};
++		};
++	};
++
++	cn3927: lens@c {
++		compatible = "chipnext,cn3927";
++		reg = <0x0c>;
++		vio-supply = <&vreg_l1c_1p8>;
++		vcc-supply = <&camera_rear_vaf_2p8>;
++	};
++};
++
++&cci0_i2c1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	front-camera@10 {
++		compatible = "ovti,ov8856";
++		reg = <0x10>;
++		clocks = <&camcc CAM_CC_MCLK1_CLK>;
++		clock-names = "xvclk";
++		clock-frequency = <19200000>;
++		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
++		assigned-clock-rates = <19200000>;
++		dovdd-supply = <&vreg_l1c_1p8>;
++		avdd-supply = <&camera_front_vana_3p0>;
++		dvdd-supply = <&camera_vdig_1p2>;
++		reset-gpios = <&tlmm 30 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&cam_sensor_mclk1_default>,
++			    <&cam_sensor_reset_front_default>;
++		pinctrl-names = "default";
++
++		port {
++			ov8856_ep_out: endpoint {
++				remote-endpoint = <&ov8856_ep>;
++				data-lanes = <1 2>;
++			};
++		};
++	};
++};

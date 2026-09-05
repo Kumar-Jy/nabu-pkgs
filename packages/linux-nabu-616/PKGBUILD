@@ -1,15 +1,109 @@
+# / AArch64 Xiaomi Pad 5
 # Maintainer: Kumar-Jy
-# Kernel 6.16.0-7 = rodriguezst recipe + PM8150B SMB5 charger + deferred wakeup fix.
-# SMB5 backport (0014b, 0051-0057) replaces the LN8000 charger with the
-# PM8150B qcom_smbx charger block so USB-A and USB-C charging works.
-# 6.16.0-4 carried 0050 (Twinborn dsi_mgr_bridge_enable wakeup backport) that
-# deadlocked switch-root; 6.16.0-6 re-adds the wakeup timing fix but defers
-# the blocking notifier to a workqueue so it cannot hold the commit locks.
-# 0014b pins qcom_fg registration against CI GCC link-time pruning.
-# 0051: add qcom_smbx SMB5 charger driver. 0052/0053: pm8150b SMB5 node,
-# switch nabu to it, drop LN8000. 0054: enable the build. 0055: integrate
-# USB-PD via the type-c port. 0056: clear USBIN suspend for any attached
-# source. 0057: advertise only a 5V/3A sink PDO (SMB5 charges only from 5V).
+# Kernel 6.16.0-8 = rodriguezst recipe + wakeup fix (0050) + SMB5
+# backport (0051-0054: qcom_smbx charger) replacing ln8000. SMB5 adds the
+# PM8150B PMIC charger block (USBIN + ADC), so 5V USB / QC3 A-to-C charging
+# now works. 0050 defers the MI blank-notify from pre_enable to enable time
+# on a workqueue (panel-live wakeup, no atomic-commit deadlock). The SM8150
+# camss series (old 0051-0055) is dropped: it enabled camss/cci at boot,
+# which the ABL bootloader rejects (gray-screen reset) and
+# caused a no-console CAMSS probe hang on this port.
+# pkgrel 17: camera bring-up test (0059-0064). Re-adds the SM8150 camss
+# driver (0059) + sm8150 camss/cci DT nodes (0061) + ov13b10 compatible
+# (0062), with camcc now built (CONFIG_SM_CAMCC_8150=m, was the missing clock
+# controller that made the old camss probe hang). Board sensor nodes (0063)
+# and all camss/cci/camcc remain 'disabled' so default boot is UNCHANGED
+# (no ABL gray-screen reset); enable them via the derived (0064)
+# sm8150-xiaomi-nabu-camera.dtb for on-device probe. Verified: camss compiles
+# against 6.16; 0059-0064 series applies cleanly to pristine 6.16 via the
+# makepkg 'patch -Np1' invocation (all 65 patches, no fuzz/rejects).
+# pkgrel 8 (0051): add CHGR_CFG2 to smb5_init_seq so charge termination /
+# auto-recharge / inhibit are set to sane defaults; without it the PM8150b
+# can sit in INHIBIT/TERMINATE and report FULL at a low state of charge,
+# which also propagated to the fuel gauge via its power-supply notifier.
+# pkgrel 9: rebuild of identical pkgrel-8 source. The 6.16.0-8 CI build lost
+# the qcom_smbx driver at link time (CI GCC 16.1.1 dropped smb_probe / the
+# platform-driver registration), leaving only its data tables; the running
+# kernel had no charger. Source set unchanged; retry to confirm the -8 drop
+# was a one-off CI-GCC flake (the complete 0051 builds the driver fine
+# locally: smb_probe + qcom_spmi_smb present, no -Wunused-function).
+# pkgrel 10 (0051): the -9 rebuild reproduced the same loss - CI GCC 16.1.1
+# deterministically prunes the whole module_platform_driver registration
+# (initcall + qcom_spmi_smb struct + smb_probe) out of qcom_smbx.c. Fix:
+# replace module_platform_driver with an explicit __used device_initcall
+# (qcom_spmi_smb_init/exit) and mark smb_probe __used, so the registration
+# is anchored in the initcall section and cannot be dead-code eliminated.
+# pkgrel 11 (0014b): the same CI GCC 16.1.1 dead-code elimination that pruned
+# qcom_smbx also strips qcom_fg (the built-in CONFIG_BATTERY_QCOM_FG fuel
+# gauge / battery driver): its static qcom_fg_probe + module_platform_driver
+# registration vanish at link time, so 6.16.0-8/9/10 had no qcom-battery psy
+# and the charger could not read battery status. Fix is applied as a separate
+# patch (0014b) AFTER 0014 rather than editing 0013: modifying 0013 shifts the
+# source lines that 0014's hunks target, and GNU patch (used by makepkg) then
+# truncates the qcom_fg.c tail (qcom_fg_exit body), breaking the build. So 0013
+# stays stock and 0014b marks qcom_fg_probe __used and replaces
+# module_platform_driver with an explicit __used device_initcall
+# (qcom_fg_init/exit) on the final source.
+# pkgrel 12 (0051): on-device test of pkgrel-11 (6.16.0-11) showed the fuel
+# gauge now binds (deferred probe msg) but qcom-battery still never appears:
+# the battery's power-supplies phandle points at the charger, and the charger
+# (qcom_smbx) is STILL absent. Root cause found in 0051 itself: its diff
+# header declares "1131 insertions" / "@@ -0,0 +1,1131 @@", but the body
+# actually carries 1153 '+ ' lines (the __used device_initcall registration
+# added in pkgrel-10 was folded in without recomputing the count). GNU patch
+# (makepkg) trusts the declared count and silently truncates the 22 trailing
+# lines - the whole qcom_spmi_smb driver struct + device_initcall + exit are
+# dropped, so the charger could never bind in 6.16.0-8/-9/-10/-11. Fix: set
+# the header to "1153 insertions" / "@@ -0,0 +1,1153 @@" so the full driver
+# survives, and additionally mark smb_match_id_table[] + qcom_spmi_smb __used
+# so CI GCC 16.1.1 + -fdata-sections/--gc-sections cannot GC the of-match and
+# driver data at link time.
+# pkgrel 13 (0055): PD (USB-C to USB-C) still never charges: the SMB5 block
+# only performs APSD-based detection (SDP/CDP/DCP) and has no USB-PD
+# awareness, so a PD source is reported as "Unknown SDP" with a 500mA limit,
+# battery status stays FULL and the battery discharges. Follow the proven
+# LN8000 approach - reference the type-c port psy via the "usb-tcpm" phandle,
+# register a power-supply notifier, and when a PD/PPS source comes online set
+# the input current limit from battery info, clear USBIN suspend and let
+# hardware charge.
+# pkgrel 14 (0056+0057): two follow-ups. 0056: the type-c notifier set the
+# USBIN suspend bit on online=0 and only cleared it for PD sources, so legacy
+# USB-A to USB-C chargers (APSD SDP/CDP/DCP) stayed suspended -> battery stuck
+# at FULL while discharging; now the suspend bit is cleared for any attached
+# source and APSD/type-c picks the input current limit. 0057: advertise only a
+# fixed 5V/3A sink PDO (drop PDO_VAR 5000-9000) because the SMB5 block only
+# charges from 5V; a 9V PD contract negotiated fine but never charged.
+
+# pkgrel 21 (0070): ov13b10/ov8856 probe failed with -EINVAL ("no link
+# frequencies defined") because the sensor endpoint nodes in 0063 don't carry
+# a link-frequencies property - the upstream drivers require it on the
+# sensor endpoint, while camss has it on its own remote endpoint. Rather than
+# editing 0063 (which shifts the DTS tail and broke CI with a DTC syntax error
+# at sm8150-xiaomi-nabu.dts:1401), 0070 makes both drivers tolerate the
+# missing property: link-frequency validation is skipped with a dev_dbg when
+# the DT endpoint omits it. The drivers still operate with their own
+# compiled-in mode/link-freq tables.
+# pkgrel 22 (0063 fix): on-device camera-probe boot of pkgrel 21 failed:
+# camss probe error "pin GPIO_17 already requested by ac4a000.cci; cannot
+# claim for ac65000.camss" because 0063 put the mclk/reset/cci pinctrl groups
+# on &camss, double-claiming GPIO17/18/19/20 that the cci nodes own (the
+# docs-camera-bringup fix was to drop camss pinctrl-0, keeping only
+# pinctrl-names). Also ov8856 probe failed with "no link frequency 720000000
+# supported" - the sensor endpoint only listed 360 MHz while the driver's
+# 2-lane menu wants 720+360. 0063 now drops the camss pinctrl-0 block and
+# lists 720000000 360000000 on the ov8856 endpoint (matches CFM880 <720 360>).
+# pkgrel 23 (boot/install parity): bring the package boot plumbing up to the
+# fully-working 6.14 baseline - inline UKI mkinitcpio preset, stable /boot
+# symlinks (vmlinuz-/dtb-linux-nabu), iris/venus blacklist, and the
+# linux-nabu.install hook that regenerates the UKI and pins uki.conf
+# DeviceTree to the current DTB. Now installable as a direct UKI boot like 6.14.
+#
+# pkgrel 24 (SLPI accelerometer): enable the ST accel through the SLPI
+# remoteproc + FastRPC protection-domain stack like the 6.14 baseline.
+# 0071 backports the CFM880 FastRPC PDR attach + SDSP IOVA alias workaround
+# (driver, binding, qcom_pd_mapper domains) to 6.16; 0072 turns on
+# &remoteproc_slpi and adds the msm/slpi/root_pd compute contexts in the
+# nabu DTS. iris/venus remain blacklisted (SLPI is the boot-default stack).
 
 pkgbase=linux-nabu
 pkgver=6.16.0
@@ -17,7 +111,7 @@ _kernelname=${pkgbase#linux}
 _desc="AArch64 Xiaomi Pad 5"
 _srcname="linux-${pkgver/%.0/}"
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-pkgrel=7
+pkgrel=24
 arch=('aarch64')
 url="http://www.kernel.org/"
 license=('GPL2')
@@ -83,6 +177,21 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0055-power-supply-qcom_smbx-integrate-USB-PD-via-the-type-c-port.patch'
         '0056-power-supply-qcom_smbx-clear-USBIN-suspend-for-any-attached-source.patch'
         '0057-arm64-dts-qcom-sm8150-xiaomi-nabu-only-advertise-5V-sink-PDO.patch'
+        '0058-video-iris-CFM880-fork-v154-SM8150-platform-videocc-trigger-DTS.patch'
+        '0059-media-camss-Add-SM8150-camss-port.patch'
+        '0060-media-camss-Add-SM8150-camss-yaml-binding.patch'
+        '0061-arm64-dts-qcom-sm8150-add-camss-and-cci-nodes.patch'
+        '0062-media-i2c-ov13b10-Add-DT-compatible.patch'
+        '0063-arm64-dts-qcom-nabu-add-camera-sensor-nodes-disabled-by-default.patch'
+        '0064-arm64-dts-qcom-nabu-add-camera-probe-dtb.patch'
+        '0065-arm64-dts-qcom-nabu-add-cci-probe-dtb.patch'
+        '0066-media-i2c-Add-Chipnext-CN3927-lens-driver.patch'
+        '0067-arm64-dts-qcom-nabu-add-rear-camera-probe-dtb.patch'
+        '0068-media-camss-camss-trace.patch'
+        '0069-arm64-dts-qcom-nabu-fix-camss-pinctrl-conflict.patch'
+        '0070-media-i2c-ov13b10-ov8856-handle-missing-link-frequencies.patch'
+        '0071-fastrpc-Add-PDR-acceleration-domains-and-SDSP-iova-workaround.patch'
+        '0072-arm64-dts-qcom-nabu-enable-slpi-fastrpc-accelerometer.patch'
         'linux.preset')
 sha256sums=('SKIP'
             'SKIP'
@@ -132,18 +241,34 @@ sha256sums=('SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP')
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+          )
 
 prepare() {
   cd $_srcname
@@ -184,17 +309,29 @@ _package_common() {
   install -Dm644 arch/arm64/boot/Image "${pkgdir}/boot/vmlinux-${kernver}"
   install -Dm644 arch/arm64/boot/Image.gz "${pkgdir}/boot/vmlinuz-${kernver}"
   install -Dm644 arch/arm64/boot/dts/${_dtbfile} "${pkgdir}/boot/dtb-${kernver}"
+  # stable symlinks so the mkinitcpio preset / uki.conf never go stale on kernel updates
+  ln -s "vmlinuz-${kernver}" "${pkgdir}/boot/vmlinuz-linux-nabu"
+  ln -s "vmlinux-${kernver}" "${pkgdir}/boot/vmlinux-linux-nabu"
+  ln -s "dtb-${kernver}" "${pkgdir}/boot/dtb-linux-nabu"
 
   echo "Installing modules..."
   make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
 
   # remove build link
   rm "$pkgdir/usr/lib/modules/$kernver/build"
+
+  # CFM880 production behaviour: the SLPI/accelerometer stack is the default
+  # boot target, so iris (video decode) is blacklisted at boot. The kernel
+  # still builds/modules the iris driver; remove this file to re-enable it.
+  install -Dm644 /dev/stdin "${pkgdir}/etc/modprobe.d/blacklist-iris.conf" << EOF
+blacklist qcom_iris
+blacklist venus_core
+EOF
 }
 
 _package() {
   pkgdesc="The Linux Kernel and modules - ${_desc} (6.16 + SMB5 charger)"
-  depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7')
+  depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7' 'ukify')
   optdepends=('wireless-regdb: to set the correct wireless channels of your country')
   provides=("linux=${pkgver}" "KSMBD-MODULE" "WIREGUARD-MODULE")
   conflicts=('linux')
@@ -205,20 +342,20 @@ _package() {
 
   _package_common
 
-  # sed expression for following substitutions
-  local _subst="
-    s|%PKGBASE%|${pkgbase}|g
-    s|%KERNVER%|${kernver}|g
-  "
+  # mkinitcpio preset so the UKI is rebuilt automatically on install/upgrade.
+  # Pointed at the stable symlinks and the production command line, matching the
+  # CFM880 6.14 baseline (SLPI/accelerometer boot target, iris/venus blacklisted).
+  install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset" << PRESET
+# mkinitcpio preset file for the 'linux-nabu' package
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux-nabu"
+PRESETS=('default')
+default_uki="/boot/efi/EFI/arch/arch-linux-nabu.efi"
+default_cmdline="/etc/cmdline.d/root.conf"
+PRESET
 
-  # install mkinitcpio preset file
-  sed "${_subst}" ../linux.preset |
-    install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset"
-
-  # rather than use another hook (90-linux.hook) rely on mkinitcpio's 90-mkinitcpio-install.hook
-  # which avoids a double run of mkinitcpio that can occur
-  install -d "${pkgdir}/usr/lib/initcpio/"
-  echo "dummy file to trigger mkinitcpio to run" > "${pkgdir}/usr/lib/initcpio/$(<version)"
+  # The UKI is rebuilt by linux-nabu.install (regenerate_uki) on install/upgrade,
+  # so no 90-mkinitcpio-install hook trigger is needed.
 }
 
 _package-headers() {

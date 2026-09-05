@@ -1,0 +1,29 @@
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-17x.c b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
+@@ -348,6 +348,12 @@
+ 	writel_relaxed(CMD_GLOBAL_CLEAR, vfe->base + VFE_IRQ_CMD);
+ 	writel_relaxed(1, vfe->base + VFE_BUS_IRQ_CLEAR_GLOBAL);
+ 
++	/* K3-DEBUG: dump VFE status every frame-detected interrupt */
++	if (status0 & (STATUS_0_CAMIF_SOF | STATUS_0_IMAGE_MASTER_PING_PONG(0)))
++		dev_err_ratelimited(vfe->camss->dev,
++			"K_VFE_ISR id=%u status0=0x%08x status1=0x%08x\n",
++			vfe->id, status0, status1);
++
+ 	if (status0 & STATUS_0_RESET_ACK)
+ 		vfe->isr_ops.reset_ack(vfe);
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
+@@ -767,6 +767,11 @@
+ 	u8 val;
+ 	int i;
+ 
++	/* K3-DEBUG: dump DPHY lane config + link freq on stream-on */
++	dev_err(csiphy->camss->dev,
++		"K_DPHY_LANES cnt num_data=%d clk_lane=%d lane_mask=0x%02x link_freq=%lld\n",
++		c->num_data, c->clk.pos, lane_mask, link_freq);
++
+ 	settle_cnt = csiphy_settle_cnt_calc(link_freq, csiphy->timer_clk_rate);
+ 
+ 	val = CSIPHY_3PH_CMN_CSI_COMMON_CTRL5_CLK_ENABLE;
