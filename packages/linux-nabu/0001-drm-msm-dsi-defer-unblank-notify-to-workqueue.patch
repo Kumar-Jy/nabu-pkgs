@@ -1,0 +1,39 @@
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -8,6 +8,7 @@
+ #include "msm_kms.h"
+ #include "dsi.h"
+ #include "drm/drm_notifier.h"
++#include <linux/workqueue.h>
+ 
+ #define DSI_CLOCK_MASTER	DSI_0
+ #define DSI_CLOCK_SLAVE		DSI_1
+@@ -276,12 +277,24 @@
+ 	dsi_mgr_phy_disable(id);
+ }
+ 
++/* blank-notify deferral work to prevent KMS atomic commit deadlock */
++static struct work_struct dsi_blank_work;
++static bool dsi_blank_work_inited;
++
++static void dsi_blank_work_fn(struct work_struct *work)
++{
++	enum drm_notifier_data blank = MI_DRM_BLANK_UNBLANK;
++
++	mi_drm_notifier_call_chain(MI_DRM_EVENT_BLANK, &blank);
++}
++
+ static void dsi_mgr_bridge_enable(struct drm_bridge *bridge)
+ {
+-	enum drm_notifier_data notifier_data;
+-
+-	notifier_data = MI_DRM_BLANK_UNBLANK;
+-	mi_drm_notifier_call_chain(MI_DRM_EVENT_BLANK, &notifier_data);
++	if (!dsi_blank_work_inited) {
++		INIT_WORK(&dsi_blank_work, dsi_blank_work_fn);
++		dsi_blank_work_inited = true;
++	}
++	schedule_work(&dsi_blank_work);
+ }
+ 
+ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge)

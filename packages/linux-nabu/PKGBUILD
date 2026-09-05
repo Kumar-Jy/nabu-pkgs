@@ -3,7 +3,7 @@
 
 pkgbase=linux-nabu
 pkgver=6.18.42
-pkgrel=1
+pkgrel=2
 arch=('aarch64')
 url="https://github.com/TwinbornPlate75/linux-nabu"
 license=('GPL2')
@@ -11,8 +11,12 @@ makedepends=('bc' 'git' 'kmod' 'inetutils' 'dtc' 'python3' 'libelf')
 options=('!strip')
 _srcname=linux-nabu
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-source=("$_srcname::git+https://github.com/TwinbornPlate75/linux-nabu.git#branch=sm8150/6.18")
-sha256sums=('SKIP')
+source=(
+  "$_srcname::git+https://github.com/TwinbornPlate75/linux-nabu.git#branch=sm8150/6.18"
+  "0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch"
+  "0002-NABU-dts-fix-ufs-reset-and-freq-table.patch"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd "${srcdir}/${_srcname}"
@@ -20,9 +24,18 @@ prepare() {
   echo "-${pkgrel}" > localversion.10-pkgrel
   echo "${pkgbase#linux}" > localversion.20-pkgname
 
+  echo "Applying deferred unblank notify patch (fixes KMS atomic commit deadlock)..."
+  patch -Np1 -i "${srcdir}/0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch"
+
+  echo "Applying UFS reset and clock frequency fix..."
+  patch -Np1 -i "${srcdir}/0002-NABU-dts-fix-ufs-reset-and-freq-table.patch"
+
   make ARCH=arm64 defconfig
   cat arch/arm64/configs/sm8150.config >> .config
-  make ARCH=arm64 olddefconfig
+
+  # Build display panel and backlight built-in (=y) so early KMS boots immediately
+  echo 'CONFIG_DRM_PANEL_NOVATEK_NT36523=y' >> .config
+  echo 'CONFIG_BACKLIGHT_KTZ8866=y' >> .config
 
   # LZ4 crypto modules required by mkinitcpio's 'systemd' hook
   echo 'CONFIG_CRYPTO_LZ4=m' >> .config
