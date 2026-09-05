@@ -35,6 +35,10 @@ on:
         type: boolean
         default: true
         description: Build nabu-pmac
+      build_nabu_tablet_mode:
+        type: boolean
+        default: true
+        description: Build nabu-tablet-mode
       build_google_chrome:
         type: boolean
         default: true
@@ -63,6 +67,7 @@ jobs:
               --argjson widevine "${{ inputs.build_widevine }}" \
               --argjson linux_nabu "${{ inputs.build_linux_nabu }}" \
               --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
+              --argjson nabu_tablet_mode "${{ inputs.build_nabu_tablet_mode }}" \
               --argjson google_chrome "${{ inputs.build_google_chrome }}" \
               --argjson edk2_aarch64 "${{ inputs.build_edk2_aarch64 }}" \
               --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
@@ -73,11 +78,12 @@ jobs:
                  if $widevine then "widevine" else empty end,
                  if $linux_nabu then "linux-nabu" else empty end,
                  if $nabu_pmac then "nabu-pmac" else empty end,
+                 if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
                  if $google_chrome then "google-chrome" else empty end,
                  if $edk2_aarch64 then "edk2-aarch64" else empty end,
                  if $linux_nabu_616 then "linux-nabu-616" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu","nabu-pmac","google-chrome","edk2-aarch64","linux-nabu-616"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu","nabu-pmac","nabu-tablet-mode","google-chrome","edk2-aarch64","linux-nabu-616"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,31 @@
+# Maintainer: Kumar-Jy
+# Expose Nabu as a tablet to GNOME/Mutter and handle sensor sleep/resume
+
+pkgname=nabu-tablet-mode
+pkgver=1.0.0
+pkgrel=2
+pkgdesc="Tablet mode switch helper and sensor resume hook for GNOME/Plasma on Xiaomi Pad 5 (nabu)"
+arch=('aarch64')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('GPL2')
+depends=('glibc' 'iio-sensor-proxy' 'psmisc')
+makedepends=('gcc')
+source=('nabu-tablet-mode.c'
+        'nabu-tablet-mode.service'
+        'nabu-sensors-resume.sh'
+        '90-nabu-ssc-accelerometer.rules'
+        'nabu-ssc.conf')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir"
+  gcc -O2 -Wall -Wextra nabu-tablet-mode.c -o nabu-tablet-mode
+}
+
+package() {
+  install -Dm755 "$srcdir/nabu-tablet-mode" "$pkgdir/usr/local/libexec/nabu-tablet-mode"
+  install -Dm644 "$srcdir/nabu-tablet-mode.service" "$pkgdir/usr/lib/systemd/system/nabu-tablet-mode.service"
+  install -Dm755 "$srcdir/nabu-sensors-resume.sh" "$pkgdir/usr/lib/systemd/system-sleep/nabu-sensors-resume.sh"
+  install -Dm644 "$srcdir/90-nabu-ssc-accelerometer.rules" "$pkgdir/usr/lib/udev/rules.d/90-nabu-ssc-accelerometer.rules"
+  install -Dm644 "$srcdir/nabu-ssc.conf" "$pkgdir/usr/lib/systemd/system/iio-sensor-proxy.service.d/nabu-ssc.conf"
+}
