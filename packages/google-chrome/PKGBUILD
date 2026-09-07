@@ -1,0 +1,56 @@
+# Maintainer: Kumar-Jy
+
+pkgname=google-chrome
+pkgver=151.0.7922.108
+pkgrel=2
+pkgdesc="The popular web browser by Google (Stable Channel)"
+arch=('aarch64')
+url="https://www.google.com/chrome"
+license=('custom:chrome')
+depends=(
+  'alsa-lib' 'ca-certificates' 'dbus' 'gtk3' 'hicolor-icon-theme'
+  'libcups' 'libxss' 'libxtst' 'mesa' 'nss' 'nspr'
+  'systemd-libs' 'ttf-liberation' 'vulkan-icd-loader' 'xdg-utils'
+)
+optdepends=(
+  'gnome-keyring: for storing passwords in GNOME keyring'
+  'pipewire: WebRTC desktop sharing under Wayland'
+)
+provides=('google-chrome-stable')
+conflicts=('google-chrome-stable')
+source=("https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb")
+sha256sums=('SKIP')
+
+pkgver() {
+  curl -sSf "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages" | \
+    grep -A1 "Package: google-chrome-stable" | awk '/Version/{print $2}' | cut -d '-' -f1 | head -n1
+}
+
+prepare() {
+  cd "${srcdir}"
+  bsdtar -xf google-chrome-stable_current_arm64.deb 2>/dev/null || true
+  mkdir -p extracted
+  bsdtar -xf data.tar.* -C extracted
+}
+
+package() {
+  cp -r "${srcdir}/extracted"/. "${pkgdir}/"
+
+  # The .deb does not ship app icons under /usr/share; install the bundled ones
+  for size in 16 24 32 48 64 128 256; do
+    install -Dm644 "${pkgdir}/opt/google/chrome/product_logo_${size}.png" \
+      "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/google-chrome.png"
+  done
+
+  # Keep the sandbox helper and mark it setuid (required when user namespaces
+  # are unavailable on the kernel)
+  chmod 4755 "${pkgdir}/opt/google/chrome/chrome-sandbox"
+
+  # Convenience alias so `chrome` works from the terminal
+  ln -s google-chrome-stable "${pkgdir}/usr/bin/chrome"
+
+  # Prefer Wayland (Ozone) when running under a Wayland compositor
+  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto|' \
+    "${pkgdir}/usr/share/applications/google-chrome.desktop" \
+    "${pkgdir}/usr/share/applications/com.google.Chrome.desktop"
+}

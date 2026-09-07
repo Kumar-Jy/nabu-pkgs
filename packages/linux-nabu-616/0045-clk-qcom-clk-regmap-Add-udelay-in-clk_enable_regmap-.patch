@@ -1,0 +1,36 @@
+From b4b1139c8a05ad1a44899bd970a81c2bc38ba2b8 Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Wed, 20 Dec 2023 19:19:34 +0300
+Subject: [PATCH 45/49] clk: qcom: clk-regmap: Add udelay in clk_enable_regmap
+ and clk_disable_regmap
+
+Attempt to fix 'clock stuck in off/on state' errors, should fix broken UFS on boot and broken DSI on suspend/resume.
+---
+ drivers/clk/qcom/clk-regmap.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/clk/qcom/clk-regmap.c b/drivers/clk/qcom/clk-regmap.c
+index 92ac4e0d7dbe..019eb25fc979 100644
+--- a/drivers/clk/qcom/clk-regmap.c
++++ b/drivers/clk/qcom/clk-regmap.c
+@@ -55,6 +55,8 @@ int clk_enable_regmap(struct clk_hw *hw)
+ 	else
+ 		val = rclk->enable_mask;
+ 
++	udelay(2500);
++
+ 	return regmap_update_bits(rclk->regmap, rclk->enable_reg,
+ 				  rclk->enable_mask, val);
+ }
+@@ -79,6 +81,8 @@ void clk_disable_regmap(struct clk_hw *hw)
+ 	else
+ 		val = 0;
+ 
++	udelay(2500);
++
+ 	regmap_update_bits(rclk->regmap, rclk->enable_reg, rclk->enable_mask,
+ 			   val);
+ }
+-- 
+2.49.0
+

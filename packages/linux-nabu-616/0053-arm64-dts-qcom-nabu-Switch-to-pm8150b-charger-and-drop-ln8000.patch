@@ -1,0 +1,67 @@
+From 1747a56f89113b8e2900da8e411703025408ea96 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Sun, 31 Aug 2026 08:33:00 +0530
+Subject: [PATCH 53/54] arm64: dts: qcom: nabu: switch to pm8150b charger and
+ drop ln8000
+
+Replace the external Lionsemi LN8000 charger with the integrated PM8150B
+SMB5 charger, wiring its power-supplies into the fuel gauge and enabling
+the charger node with the monitored battery.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 30 +------------------
+ 1 file changed, 2 insertions(+), 28 deletions(-)
+
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts	2026-08-31 08:32:18.577212813 +0530
++++ b/sm8150-xiaomi-nabu.dts	2026-08-31 08:33:39.122814592 +0530
+@@ -502,32 +502,7 @@
+ 		};
+ 	};
+ 
+-	ln8000_charger@51 {
+-		compatible = "lionsemi,ln8000";
+-		reg = <0x51>;
+-
+-		status = "okay";
+-
+-		irq-gpios = <&tlmm 36 0x2002>;
+-
+-		usb-tcpm = <&pm8150b_typec>;
+-
+-		ln8000_charger,bat-ovp-threshold = <4560>;
+-		ln8000_charger,bat-ovp-alarm-threshold = <4525>;
+-		ln8000_charger,bus-ovp-threshold = <13000>;
+-		ln8000_charger,bus-ovp-alarm-threshold = <11000>;
+-		ln8000_charger,bus-ocp-threshold = <3750>;
+-		ln8000_charger,bus-ocp-alarm-threshold = <3500>;
+-		ln8000_charger,ntc-alarm-cfg  = <226>;
+-
+-		ln8000_charger,tdie-prot-disable;
+-		ln8000_charger,tbus-mon-disable;
+-		ln8000_charger,tbat-mon-disable;
+-		ln8000_charger,iin-ocp-disable;
+-		ln8000_charger,iin-reg-disable;
+-		ln8000_charger,tdie-reg-disable;
+-		ln8000_charger,vbat-reg-disable;
+-	};
++
+ };
+ 
+ &i2c7 {
+@@ -685,7 +660,12 @@
+ &pm8150b_fg {
+ 	status = "okay";
+ 	monitored-battery = <&battery>;
+-	//power-supplies = <&ln8000_charger>;
++	power-supplies = <&pm8150b_charger>;
++};
++
++&pm8150b_charger {
++	status = "okay";
++	monitored-battery = <&battery>;
+ };
+ 
+ &pm8150b_typec {
+-- 
+2.49.0
