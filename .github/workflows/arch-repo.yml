@@ -1,4 +1,4 @@
-name: Arch repo
+name: Arch pkgs
 
 on:
   workflow_dispatch:
