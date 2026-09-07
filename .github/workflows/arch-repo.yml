@@ -50,7 +50,7 @@ on:
       build_edk2_aarch64:
         type: boolean
         default: false
-        description: Build edk2-aarch64 (disabled: mirror fetch fails)
+        description: Build edk2-aarch64 (disabled; mirror fetch fails)
       build_hexagonrpcd:
         type: boolean
         default: true
