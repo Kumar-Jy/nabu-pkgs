@@ -1,0 +1,50 @@
+From 1747a56f89113b8e2900da8e411703025408ea99 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Tue, 01 Sep 2026 15:35:00 +0530
+Subject: [PATCH] power: supply: qcom_smbx: clear USBIN suspend for any
+ attached source
+
+The type-c notifier set the USBIN suspend bit on the offline transition
+and only un-suspended it when a PD/PPS source was online.  For legacy
+USB-A to USB-C chargers (detected via APSD as SDP/CDP/DCP) the early
+return left the power path invalid, so the battery stayed at "full"
+while discharging.  Clear USBIN suspend for any attached source and let
+APSD (or the type-c path for PD sources) pick the input current limit.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -537,6 +537,17 @@
+ 	chip->pd_connected = usb_type == POWER_SUPPLY_USB_TYPE_PD ||
+ 			     usb_type == POWER_SUPPLY_USB_TYPE_PD_PPS ||
+ 			     usb_type == POWER_SUPPLY_USB_TYPE_PD_DRP;
++
++	/*
++	 * Un-suspend USBIN for any attached source.  APSD only detects
++	 * legacy SDP/CDP/DCP, so for non-PD chargers (e.g. USB-A to USB-C
++	 * adapters) the suspend bit set on the tcpm offline->online
++	 * transition was never cleared, leaving the power path invalid and
++	 * the battery stuck at "full" while discharging.
++	 */
++	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++			   USBIN_SUSPEND_BIT, 0);
++
+ 	if (!chip->pd_connected)
+ 		return;
+ 
+@@ -545,8 +556,6 @@
+ 		current_ua = DCP_CURRENT_UA;
+ 
+ 	smb_set_current_limit(chip, current_ua);
+-	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+-			   USBIN_SUSPEND_BIT, 0);
+ 	dev_info(chip->dev, "PD source connected, setting input current limit to %uuA\n",
+ 		 current_ua);
+ 	power_supply_changed(chip->chg_psy);
+-- 
+2.49.0

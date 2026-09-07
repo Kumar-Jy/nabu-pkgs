@@ -1,0 +1,34 @@
+# Maintainer: Kumar-Jy
+# VA-API driver for the Qualcomm SM8150 Iris1 decoder (Xiaomi Pad 5)
+
+pkgname=iris-vaapi
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="VA-API driver for the Qualcomm SM8150 Iris1 decoder"
+arch=('aarch64')
+url="https://github.com/CFM880/iris-vaapi"
+license=('GPL2')
+depends=('libva' 'libdrm')
+makedepends=('gcc' 'make' 'pkg-config' 'vulkan-headers' 'libva' 'libdrm')
+source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/refs/heads/main.tar.gz"
+        '99-iris-dmaheap.rules'
+        '99-iris-vaapi.conf')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/iris-vaapi-main"
+  make DRIVERDIR=/usr/lib/dri
+}
+
+package() {
+  cd "$srcdir/iris-vaapi-main"
+  make install DESTDIR="$pkgdir" DRIVERDIR=/usr/lib/dri
+
+  # Chrome needs DMA-heap surfaces; default root-only breaks EGL import.
+  install -Dm644 "$srcdir/99-iris-dmaheap.rules" \
+    "$pkgdir/usr/lib/udev/rules.d/99-iris-dmaheap.rules"
+
+  # Cacheable CAPTURE buffers keep 4K60 decode fast enough for Chrome.
+  install -Dm644 "$srcdir/99-iris-vaapi.conf" \
+    "$pkgdir/usr/lib/modprobe.d/99-iris-vaapi.conf"
+}

@@ -1,0 +1,44 @@
+pre_install() {
+    # Ensure the fastrpc user exists before the units/udev rule reference it.
+    getent passwd fastrpc >/dev/null || useradd --system --uid 962 --user-group \
+        --home /run/fastrpc --shell /usr/sbin/nologin fastrpc
+}
+
+post_install() {
+    # SLPI (static sensors PD) resolves its sensor config/registry over FastRPC;
+    # hexagonrpcd serves the hexagonfs tree. The firmware package provides the
+    # pristine config under /usr/share/qcom; mirror it to the served location.
+    FW=/usr/share/qcom/sm8150/xiaomi/nabu
+    HF=/lib/firmware/hexagonfs
+    if [ -d "$FW/sensors" ] && [ -d "$FW/socinfo" ]; then
+        rm -rf "$HF"
+        mkdir -p "$HF"
+        cp -a "$FW/sensors" "$HF/sensors"
+        cp -a "$FW/socinfo" "$HF/socinfo"
+        # Keep the DTB-framed firmware paths in sync so the kernel/DSP lookups
+        # end up at the same content.
+        mkdir -p /lib/firmware/qcom/sm8150/xiaomi/nabu
+        ln -sfn ../../../../hexagonfs/sensors /lib/firmware/qcom/sm8150/xiaomi/nabu/sensors
+        ln -sfn ../../../../hexagonfs/socinfo /lib/firmware/qcom/sm8150/xiaomi/nabu/socinfo
+        chown -R fastrpc:fastrpc "$HF"
+    fi
+
+    # SNS registry persistence path for tqftpserv.
+    install -d -o root -g root -m 0700 /var/lib/tqftpserv/sensors/registry
+
+    udevadm trigger --subsystem-match=misc --action=change || true
+    systemctl daemon-reload
+    systemctl enable hexagonrpcd.service hexagonrpcd-suspend.service hexagonrpcd-resume.service >/dev/null 2>&1 || true
+}
+
+post_upgrade() {
+    post_install
+}
+
+pre_upgrade() {
+    pre_install
+}
+
+pre_remove() {
+    systemctl disable hexagonrpcd.service hexagonrpcd-suspend.service hexagonrpcd-resume.service >/dev/null 2>&1 || true
+}
