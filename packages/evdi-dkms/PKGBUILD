@@ -1,0 +1,45 @@
+# Maintainer: Kumar-Jy
+# Builds the evdi kernel module via DKMS against the running kernel,
+# required by displaylink. Adapted from the evdi-dkms AUR package
+# (library + DKMS module only; python/pyevdi bindings omitted for nabu).
+
+_pkgname="evdi"
+pkgname="$_pkgname-dkms"
+pkgver=1.15.0
+pkgrel=1
+pkgdesc="Kernel module and library to enable management of multiple screens"
+url="https://github.com/DisplayLink/evdi"
+license=('GPL-2.0-only' 'LGPL-2.1-only' 'MIT')
+arch=('aarch64')
+depends=('dkms')
+makedepends=('libdrm')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname")
+
+_pkgsrc="$_pkgname-$pkgver"
+source=("$_pkgsrc.tar.gz"::"$url/archive/v$pkgver/$_pkgsrc.tar.gz")
+sha256sums=('c19cd1120b43a0d88e91cdd893b592a56b9a904ead25ea8299eb4b451f649899')
+
+prepare() {
+  sed -E -e '/^CLEAN=/d' -i "$_pkgsrc/module/dkms.conf"
+}
+
+build() {
+  cd "$_pkgsrc"
+  echo "Building library..."
+  (cd "library" && make)
+}
+
+package() {
+  cd "$_pkgsrc"
+
+  make -C 'library' install DESTDIR="$pkgdir" PREFIX='/usr'
+  install -Dm644 'library/evdi_lib.h' -t "$pkgdir/usr/include/"
+
+  mkdir -pm755 "$pkgdir/usr/src/$_pkgname-$pkgver"
+  cp -a module/* "$pkgdir/usr/src/$_pkgname-$pkgver/"
+
+  install -Dm644 'LICENSE' "$pkgdir/usr/share/licenses/$pkgname/LICENSE.MIT"
+  install -Dm644 'library/LICENSE' "$pkgdir/usr/share/licenses/$pkgname/LICENSE.LGPL-2.1-only"
+  install -Dm644 'module/LICENSE' "$pkgdir/usr/share/licenses/$pkgname/LICENSE.GPL-2.0-only"
+}
