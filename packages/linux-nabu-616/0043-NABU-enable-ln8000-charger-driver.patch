@@ -1,0 +1,114 @@
+From c9a8611e822818a5c83c20cdd906558111b672be Mon Sep 17 00:00:00 2001
+From: rodriguezst <2828844+rodriguezst@users.noreply.github.com>
+Date: Tue, 26 Nov 2024 10:54:51 +0000
+Subject: [PATCH 43/49] NABU: enable ln8000 charger driver
+
+---
+ .../boot/dts/qcom/sm8150-xiaomi-nabu.dts      |  4 +-
+ drivers/power/supply/ln8000_charger.c         | 41 ++++++++++---------
+ 2 files changed, 24 insertions(+), 21 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 34177e637ada..4c8d79aee81f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -506,7 +506,7 @@ ln8000_charger@51 {
+ 		compatible = "lionsemi,ln8000";
+ 		reg = <0x51>;
+ 
+-		status = "disabled";
++		status = "okay";
+ 
+ 		irq-gpios = <&tlmm 36 0x2002>;
+ 
+@@ -708,7 +708,7 @@ PDO_FIXED_USB_COMM |
+ 					 PDO_FIXED_DUAL_ROLE |
+ 					 PDO_FIXED_USB_COMM |
+ 					 PDO_FIXED_DATA_SWAP)
+-					 PDO_VAR(5000, 12000, 3000)>;
++					 PDO_VAR(5000, 9000, 3000)>;
+ 
+ 		op-sink-microwatt = <10000000>;
+ 
+diff --git a/drivers/power/supply/ln8000_charger.c b/drivers/power/supply/ln8000_charger.c
+index f4c386bf2a9f..da3d78187a80 100644
+--- a/drivers/power/supply/ln8000_charger.c
++++ b/drivers/power/supply/ln8000_charger.c
+@@ -1566,6 +1566,20 @@ static int ln8000_probe(struct i2c_client *client)
+         dev_err(&client->dev, "%s: fail to alloc devm for ln8000_info\n", __func__);
+         return -ENOMEM;
+     }
++    info->dev = &client->dev;
++    info->client = client;
++
++    info->typec_psy = power_supply_get_by_phandle(info->dev->of_node,"usb-tcpm");
++
++    if(info->typec_psy == NULL){
++	ret = -(EPROBE_DEFER);
++	return ret;
++    }
++    if (IS_ERR(info->typec_psy)) {
++	    ret = PTR_ERR(info->typec_psy);
++	    dev_warn(info->dev, "Failed to get USB Type-C: %d\n", ret);
++	    info->typec_psy = NULL;
++    }
+ 
+     info->pdata = devm_kzalloc(&client->dev, sizeof(struct ln8000_platform_data), GFP_KERNEL);
+     if (info->pdata == NULL) {
+@@ -1573,8 +1587,6 @@ static int ln8000_probe(struct i2c_client *client)
+        kfree(info);
+        return -ENOMEM;
+     }
+-    info->dev = &client->dev;
+-    info->client = client;
+     ret = ln8000_parse_dt(info);
+     if (IS_ERR_VALUE((unsigned long)ret)) {
+         ln_err("fail to parsed dt\n");
+@@ -1625,18 +1637,9 @@ static int ln8000_probe(struct i2c_client *client)
+ 
+     determine_initial_status(info);
+ 
+-    info->typec_psy = power_supply_get_by_phandle(info->dev->of_node,
+-							"usb-tcpm");
+-	if (IS_ERR(info->typec_psy)) {
+-		ret = PTR_ERR(info->typec_psy);
+-		dev_warn(info->dev, "Failed to get USB Type-C: %d\n", ret);
+-		info->typec_psy = NULL;
+-	}
+-
+ 	if (info->typec_psy) {
+-		INIT_DELAYED_WORK(&info->status_changed_work,
+-			ln8000_status_changed_worker);
+-        INIT_DELAYED_WORK(&info->charge_work, psy_chg_get_ti_alarm_status);
++		INIT_DELAYED_WORK(&info->status_changed_work,ln8000_status_changed_worker);
++		INIT_DELAYED_WORK(&info->charge_work, psy_chg_get_ti_alarm_status);
+ 
+ 		info->nb.notifier_call = ln8000_notifier_call;
+ 		ret = power_supply_reg_notifier(&info->nb);
+@@ -1646,11 +1649,11 @@ static int ln8000_probe(struct i2c_client *client)
+ 			return ret;
+ 		}
+ 
+-        if (info->volt_qual) {
+-            ln_info("start charging on init\n");
+-            psy_chg_set_charging_enable(info, true);
+-            schedule_delayed_work(&info->charge_work, msecs_to_jiffies(0));
+-        }
++		if (info->volt_qual) {
++			ln_info("start charging on init\n");
++			psy_chg_set_charging_enable(info, true);
++			schedule_delayed_work(&info->charge_work, msecs_to_jiffies(0));
++		}
+ 	}
+ 
+     return 0;
+@@ -1759,4 +1762,4 @@ module_i2c_driver(ln8000_driver);
+ MODULE_AUTHOR("sungdae choi<sungdae@lionsemi.com>");
+ MODULE_DESCRIPTION("LIONSEMI LN8000 charger driver");
+ MODULE_LICENSE("GPL v2");
+-MODULE_VERSION("0.3.0");
+\ No newline at end of file
++MODULE_VERSION("0.3.0");
+-- 
+2.49.0
+

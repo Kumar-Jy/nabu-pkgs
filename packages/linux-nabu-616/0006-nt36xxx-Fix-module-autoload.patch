@@ -1,0 +1,45 @@
+From b2c8f6adf8f8b358cf07e338ce50a495da83e68e Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Sun, 23 Jul 2023 17:32:10 +0300
+Subject: [PATCH 06/49] nt36xxx: Fix module autoload
+
+---
+ drivers/input/touchscreen/nt36523/nt36xxx.c | 2 ++
+ drivers/input/touchscreen/nt36523/nt36xxx.h | 2 +-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/input/touchscreen/nt36523/nt36xxx.c b/drivers/input/touchscreen/nt36523/nt36xxx.c
+index 69d79a871546..63c584f681d7 100644
+--- a/drivers/input/touchscreen/nt36523/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36523/nt36xxx.c
+@@ -1877,12 +1877,14 @@ static const struct spi_device_id nvt_ts_id[] = {
+ 	{ NVT_SPI_NAME, 0 },
+ 	{ }
+ };
++MODULE_DEVICE_TABLE(spi, nvt_ts_id);
+ 
+ #ifdef CONFIG_OF
+ static struct of_device_id nvt_match_table[] = {
+ 	{ .compatible = "novatek,NVT-ts-spi",},
+ 	{ },
+ };
++MODULE_DEVICE_TABLE(of, nvt_match_table);
+ #endif
+ 
+ static struct spi_driver nvt_spi_driver = {
+diff --git a/drivers/input/touchscreen/nt36523/nt36xxx.h b/drivers/input/touchscreen/nt36523/nt36xxx.h
+index 2ec9ccb3b522..8f6efc1d8735 100644
+--- a/drivers/input/touchscreen/nt36523/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36523/nt36xxx.h
+@@ -43,7 +43,7 @@
+ 
+ 
+ //---SPI driver info.---
+-#define NVT_SPI_NAME "NVT-ts"
++#define NVT_SPI_NAME "NVT-ts-spi"
+ 
+ #if NVT_DEBUG
+ #define NVT_LOG(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
+-- 
+2.49.0
+

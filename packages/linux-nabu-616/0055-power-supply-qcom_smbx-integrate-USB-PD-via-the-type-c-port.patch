@@ -1,0 +1,176 @@
+From 1747a56f89113b8e2900da8e411703025408ea98 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Tue, 01 Sep 2026 15:30:00 +0530
+Subject: [PATCH 55/56] power: supply: qcom_smbx: integrate USB-PD via the
+ type-c port
+
+The SMB5 charger block only performs APSD-based detection (SDP/CDP/DCP)
+and has no USB-PD awareness, so USB-C to USB-C PD chargers never get a
+proper input current limit or charging state and the battery stays at
+100% while discharging. Follow the LN8000 approach: reference the type-c
+port's power supply through the "usb-tcpm" phandle, register a notifier,
+and when a PD/PPS source is online pick the charging current from the
+battery info, clear the USBIN suspend bit and let hardware charge.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c            | 99 +++++++++++++++++++++++++++++
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts |  1 +
+ 2 files changed, 100 insertions(+)
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+--- a/drivers/power/supply/qcom_smbx.c	2026-08-31 08:32:18.000000000 +0530
++++ b/drivers/power/supply/qcom_smbx.c	2026-09-01 15:30:00.000000000 +0530
+@@ -248,6 +248,9 @@
+ 	struct iio_channel *usb_in_v_chan;
+ 
+ 	struct power_supply *chg_psy;
++	struct power_supply *typec_psy;
++	struct notifier_block nb;
++	bool pd_connected;
+ };
+ 
+ struct smb_match_data {
+@@ -301,6 +304,11 @@
+ 		return rc;
+ 	}
+ 
++	if (chip->pd_connected) {
++		*val = POWER_SUPPLY_USB_TYPE_PD;
++		return 0;
++	}
++
+ 	rc = regmap_read(chip->regmap, chip->base + APSD_STATUS, &apsd_stat);
+ 	if (rc < 0) {
+ 		dev_err(chip->dev, "Failed to read apsd status, rc = %d", rc);
+@@ -446,6 +454,12 @@
+ 	if (!usb_online)
+ 		return;
+ 
++	if (chip->pd_connected) {
++		/* Input limit is managed by the type-c notifier. */
++		power_supply_changed(chip->chg_psy);
++		return;
++	}
++
+ 	for (count = 0; count < 3; count++) {
+ 		dev_dbg(chip->dev, "get charger type retry %d\n", count);
+ 		rc = smb_apsd_get_charger_type(chip, &charger_type);
+@@ -485,6 +499,73 @@
+ 	power_supply_changed(chip->chg_psy);
+ }
+ 
++/*
++ * The charger block has no USB-PD awareness of its own; APSD only
++ * recognizes legacy SDP/CDP/DCP. For PD sources (e.g. USB-C to USB-C
++ * chargers) we rely on the type-c controller's power supply, referenced
++ * through the "usb-tcpm" phandle, to know the source is present and pick
++ * a sane input current limit.
++ */
++static void smb_typec_handle_state_change(struct smb_chip *chip)
++{
++	union power_supply_propval propval = { 0 };
++	unsigned int current_ua;
++	int usb_online;
++	int usb_type;
++	int rc;
++
++	rc = power_supply_get_property(chip->typec_psy, POWER_SUPPLY_PROP_ONLINE,
++				       &propval);
++	if (rc < 0)
++		return;
++
++	usb_online = propval.intval;
++	if (!usb_online) {
++		chip->pd_connected = false;
++		regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++				   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
++		power_supply_changed(chip->chg_psy);
++		return;
++	}
++
++	rc = power_supply_get_property(chip->typec_psy,
++				       POWER_SUPPLY_PROP_USB_TYPE, &propval);
++	if (rc < 0)
++		return;
++	usb_type = propval.intval;
++
++	chip->pd_connected = usb_type == POWER_SUPPLY_USB_TYPE_PD ||
++			     usb_type == POWER_SUPPLY_USB_TYPE_PD_PPS ||
++			     usb_type == POWER_SUPPLY_USB_TYPE_PD_DRP;
++	if (!chip->pd_connected)
++		return;
++
++	current_ua = chip->batt_info->constant_charge_current_max_ua;
++	if (current_ua <= 0)
++		current_ua = DCP_CURRENT_UA;
++
++	smb_set_current_limit(chip, current_ua);
++	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++			   USBIN_SUSPEND_BIT, 0);
++	dev_info(chip->dev, "PD source connected, setting input current limit to %uuA\n",
++		 current_ua);
++	power_supply_changed(chip->chg_psy);
++}
++
++static int smb_typec_notifier_call(struct notifier_block *nb, unsigned long ev,
++				   void *data)
++{
++	struct smb_chip *chip = container_of(nb, struct smb_chip, nb);
++	struct power_supply *psy = data;
++
++	if (psy != chip->typec_psy)
++		return NOTIFY_OK;
++
++	smb_typec_handle_state_change(chip);
++
++	return NOTIFY_OK;
++}
++
+ static int smb_get_iio_chan(struct smb_chip *chip, struct iio_channel *chan,
+ 			     int *val)
+ {
+@@ -716,6 +797,7 @@
+ 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_PD) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
+ 	.properties = smb_properties,
+ 	.num_properties = ARRAY_SIZE(smb_properties),
+@@ -1057,6 +1139,23 @@
+ 	if (chip->batt_info->constant_charge_current_max_ua == -EINVAL)
+ 		chip->batt_info->constant_charge_current_max_ua = DCP_CURRENT_UA;
+ 
++	if (of_property_read_bool(chip->dev->of_node, "usb-tcpm")) {
++		chip->typec_psy = power_supply_get_by_phandle(chip->dev->of_node,
++							     "usb-tcpm");
++		if (!chip->typec_psy)
++			return dev_err_probe(chip->dev, -EPROBE_DEFER,
++					     "Failed to get type-c power supply\n");
++
++		chip->nb.notifier_call = smb_typec_notifier_call;
++		rc = power_supply_reg_notifier(&chip->nb);
++		if (rc < 0)
++			return dev_err_probe(chip->dev, rc,
++					     "Failed to register type-c notifier\n");
++
++		/* A source may already be attached before we registered. */
++		smb_typec_handle_state_change(chip);
++	}
++
+ 	rc = devm_delayed_work_autocancel(chip->dev, &chip->status_change_work,
+ 					  smb_status_change_work);
+ 	if (rc)
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts	2026-08-31 08:32:18.000000000 +0530
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts	2026-09-01 15:30:00.000000000 +0530
+@@ -666,6 +666,7 @@
+ &pm8150b_charger {
+ 	status = "okay";
+ 	monitored-battery = <&battery>;
++	usb-tcpm = <&pm8150b_typec>;
+ };
+ 
+ &pm8150b_typec {
+-- 
+2.49.0

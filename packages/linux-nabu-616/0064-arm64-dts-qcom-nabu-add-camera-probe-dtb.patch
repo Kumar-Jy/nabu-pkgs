@@ -1,0 +1,54 @@
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -273,5 +273,6 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-nabu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-sony-xperia-kumano-griffin.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-iris.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-camera.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-mtp.dtb
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
+@@ -0,0 +1,12 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Xiaomi Pad 5 (nabu) camera-enabled derivative.
++ *
++ * Keep the default boot DTB (sm8150-xiaomi-nabu.dtb) fully camera-disabled;
++ * this derived DTB is booted ONLY for on-device camera probing. It enables the
++ * camss/cci camera node tree that 0063 leaves status = "disabled".
++ */
++/dts-v1/;
++
++#include "sm8150-xiaomi-nabu.dts"
++#include "sm8150-xiaomi-nabu-camera.dtsi"
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dtsi b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dtsi
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dtsi
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Camera-enable overrides for the derived camera probe DTB.
++ * 0063 defines all camera nodes status = "disabled" in the base board DTS;
++ * this file flips the probing ones to "okay". Keep cci1 (unused) disabled.
++ */
++&camcc {
++	status = "okay";
++};
++
++&camss {
++	status = "okay";
++};
++
++&cci0 {
++	status = "okay";
++};
++
++&cci1 {
++	status = "disabled";
++};
+
