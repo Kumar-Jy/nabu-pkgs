@@ -1,0 +1,19 @@
+# Maintainer: Kumar-Jy
+# Repackaged from Arch Linux extra (arch=any package not carried by ALARM)
+
+pkgname=edk2-aarch64
+pkgver=202605
+pkgrel=1
+pkgdesc="Firmware for Virtual Machines (aarch64)"
+arch=('any')
+url="https://github.com/tianocore/tianocore.github.io/wiki/ArmVirtPkg"
+license=('Apache-2.0' 'BSD-2-Clause-Patent' 'MIT')
+depends=()
+source=("https://geo.mirror.pkgbuild.com/extra/os/x86_64/${pkgname}-${pkgver}-${pkgrel}-any.pkg.tar.zst")
+sha256sums=('SKIP')
+
+package() {
+  bsdtar -xf "${srcdir}/${pkgname}-${pkgver}-${pkgrel}-any.pkg.tar.zst" \
+    --exclude .PKGINFO --exclude .MTREE --exclude .BUILDINFO --exclude .INSTALL \
+    -C "${pkgdir}"
+}

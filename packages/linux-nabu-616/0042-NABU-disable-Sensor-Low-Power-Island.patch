@@ -1,0 +1,25 @@
+From c43e57dfdbda1168ed7e50c2090abe897ed30a2b Mon Sep 17 00:00:00 2001
+From: Catmengi <138163939+catmengi@users.noreply.github.com>
+Date: Sat, 23 Nov 2024 21:59:23 +0000
+Subject: [PATCH 42/49] NABU: disable Sensor Low Power Island
+
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index dbf673b78014..34177e637ada 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -811,7 +811,7 @@ &remoteproc_mpss {
+ };
+ 
+ &remoteproc_slpi {
+- status = "okay";
++ status = "disabled";
+  firmware-name = "qcom/sm8150/xiaomi/nabu/slpi_nb.mbn";
+ };
+ 
+-- 
+2.49.0
+

@@ -1,0 +1,36 @@
+From 1747a56f89113b8e2900da8e411703025408ea99 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Tue, 01 Sep 2026 15:36:00 +0530
+Subject: [PATCH] arm64: dts: qcom: sm8150-xiaomi-nabu: only advertise
+ 5V sink PDO
+
+The SMB5 charger block only charges reliably from a 5V input.  The
+PDO_VAR(5000, 9000, 3000) sink PDO lets USB-PD sources negotiate 9V
+(or other voltages in range), and although PD negotiation succeeds the
+battery then never charges via the SMB5 path.  Advertise only the fixed
+5V/3A sink PDO so sources always negotiate a 5V contract the charger
+can use.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -688,10 +688,9 @@
+ 		sink-pdos = <PDO_FIXED(5000, 3000,
+ 					 PDO_FIXED_DUAL_ROLE |
+ 					 PDO_FIXED_USB_COMM |
+-					 PDO_FIXED_DATA_SWAP)
+-					 PDO_VAR(5000, 9000, 3000)>;
++					 PDO_FIXED_DATA_SWAP)>;
+ 
+-		op-sink-microwatt = <10000000>;
++		op-sink-microwatt = <15000000>;
+ 
+ 		ports {
+ 			#address-cells = <1>;
+-- 
+2.49.0

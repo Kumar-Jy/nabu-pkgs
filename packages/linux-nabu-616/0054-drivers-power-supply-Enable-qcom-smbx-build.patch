@@ -1,0 +1,26 @@
+From 1747a56f89113b8e2900da8e411703025408ea97 Mon Sep 17 00:00:00 2001
+From: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+Date: Sun, 31 Aug 2026 07:11:00 +0530
+Subject: [PATCH 54/54] drivers: power: supply: enable qcom smbx build
+
+Build qcom_smbx.o instead of the old qcom_pmi8998_charger.o for
+CONFIG_CHARGER_QCOM_SMB2.
+
+Signed-off-by: Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+---
+ drivers/power/supply/Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/power/supply/Makefile	2026-08-31 08:32:18.514368677 +0530
++++ b/drivers/power/supply/Makefile	2026-08-31 07:11:31.610943712 +0530
+@@ -120,7 +120,7 @@
+ obj-$(CONFIG_BATTERY_SURFACE)	+= surface_battery.o
+ obj-$(CONFIG_CHARGER_SURFACE)	+= surface_charger.o
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
+-obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_pmi8998_charger.o
++obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_smbx.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
+ obj-$(CONFIG_BATTERY_QCOM_FG)	+= qcom_fg.o
+ obj-$(CONFIG_CHARGER_LN8000)	+= ln8000_charger.o
+-- 
+2.49.0
