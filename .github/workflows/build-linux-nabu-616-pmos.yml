@@ -1,0 +1,62 @@
+name: Build linux-nabu-616-pmos (CFM880 iris+camera+SLPI)
+
+# Minimal build-only job: compiles the linux-nabu-616-pmos kernel on a native
+# aarch64 runner using the postmarketOS sm8150/6.16.0 base @ 6810a5d6
+# (fetched from GitLab archive) + the CFM880 nabu-camera/nabu-iris/
+# nabu-accelerometer source overlays (incl. FastRPC/PDR patch), building the
+# derived sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb and
+# the qcom-iris/ov13b10/ov8856/cn3927/camss/fastrpc/qcom_pd_mapper modules.
+# Charging (SMB5/pm8150b) is native in the 6.16 sm8150 tree. Uploads the
+# resulting .pkg.tar.* as an artifact. Does NOT touch the pacman repo - install
+# manually with `pacman -U`. Images stay on linux-nabu-614.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packages/linux-nabu-616-pmos/**'
+
+jobs:
+  build-linux-nabu-616-pmos:
+    name: Build linux-nabu-616-pmos
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman git
+
+      - name: Build package
+        run: |
+          mkdir -p pkg-out
+          echo "::group::Building linux-nabu-616-pmos (pmOS 6.16.0-sm8150 baseline + iris + camera + SLPI)..."
+          podman run --rm \
+            -v "$(pwd)/packages/linux-nabu-616-pmos:/work" \
+            -v "$(pwd)/pkg-out:/output" \
+            -w /work \
+            menci/archlinuxarm:base \
+            sh -c "
+              sed -i '/^#DisableSandbox/s/^#//' /etc/pacman.conf
+              echo 'DisableSandbox' >> /etc/pacman.conf
+              pacman-key --init
+              pacman-key --populate archlinuxarm
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc libelf
+              useradd -m builder
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+              chown -R builder:builder /work
+              su builder -c 'cd /work && makepkg -s --noconfirm --skipchecksums' || exit 1
+              cp /work/*.pkg.tar.* /output/
+            "
+          echo "::endgroup::"
+          ls -la pkg-out/
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-nabu-616-pmos
+          path: pkg-out/*.pkg.tar.*
+          if-no-files-found: error

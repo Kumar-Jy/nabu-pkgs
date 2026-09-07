@@ -1,0 +1,393 @@
+name: Arch repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_upower_nncc:
+        type: boolean
+        default: true
+        description: Build upower-nncc
+      build_bootc:
+        type: boolean
+        default: true
+        description: Build bootc
+      build_code:
+        type: boolean
+        default: true
+        description: Build code
+      build_python2:
+        type: boolean
+        default: true
+        description: Build python2
+      build_widevine:
+        type: boolean
+        default: true
+        description: Build widevine
+      build_linux_nabu_614:
+        type: boolean
+        default: true
+        description: Build linux-nabu 6.14
+      build_linux_nabu_616:
+        type: boolean
+        default: true
+        description: Build linux-nabu 6.16
+      build_linux_nabu_618:
+        type: boolean
+        default: true
+        description: Build linux-nabu 6.18
+      build_nabu_pmac:
+        type: boolean
+        default: true
+        description: Build nabu-pmac
+      build_nabu_tablet_mode:
+        type: boolean
+        default: true
+        description: Build nabu-tablet-mode
+      build_google_chrome:
+        type: boolean
+        default: true
+        description: Build google-chrome
+      build_edk2_aarch64:
+        type: boolean
+        default: true
+        description: Build edk2-aarch64
+      build_hexagonrpcd:
+        type: boolean
+        default: true
+        description: Build hexagonrpcd
+
+jobs:
+  resolve-packages:
+    name: Resolve package matrix
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      pkg: ${{ steps.set-matrix.outputs.pkg }}
+    steps:
+      - name: Resolve which packages to build
+        id: set-matrix
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            jq -n -c \
+              --argjson upower_nncc "${{ inputs.build_upower_nncc }}" \
+              --argjson bootc "${{ inputs.build_bootc }}" \
+              --argjson code "${{ inputs.build_code }}" \
+              --argjson python2 "${{ inputs.build_python2 }}" \
+              --argjson widevine "${{ inputs.build_widevine }}" \
+              --argjson linux_nabu_618 "${{ inputs.build_linux_nabu_618 }}" \
+              --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
+              --argjson linux_nabu_614 "${{ inputs.build_linux_nabu_614 }}" \
+              --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
+              --argjson nabu_tablet_mode "${{ inputs.build_nabu_tablet_mode }}" \
+              --argjson google_chrome "${{ inputs.build_google_chrome }}" \
+              --argjson edk2_aarch64 "${{ inputs.build_edk2_aarch64 }}" \
+              --argjson hexagonrpcd "${{ inputs.build_hexagonrpcd }}" \
+              '[ if $upower_nncc then "upower-nncc" else empty end,
+                 if $bootc then "bootc" else empty end,
+                 if $code then "code" else empty end,
+                 if $python2 then "python2" else empty end,
+                 if $widevine then "widevine" else empty end,
+                 if $linux_nabu_618 then "linux-nabu-618" else empty end,
+                 if $linux_nabu_614 then "linux-nabu-614" else empty end,
+                 if $nabu_pmac then "nabu-pmac" else empty end,
+                 if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
+                 if $google_chrome then "google-chrome" else empty end,
+                 if $edk2_aarch64 then "edk2-aarch64" else empty end,
+                 if $linux_nabu_616 then "linux-nabu-616" else empty end,
+                 if $hexagonrpcd then "hexagonrpcd" else empty end ]' > matrix.json
+          else
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-618","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","edk2-aarch64","linux-nabu-616","hexagonrpcd"]' > matrix.json
+          fi
+          pkg=$(cat matrix.json)
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+
+  build-packages:
+    name: Build ${{ matrix.pkg }}
+    needs: resolve-packages
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.resolve-packages.outputs.pkg) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman git
+
+      - name: Compute source signature
+        id: sig
+        run: |
+          pkg="${{ matrix.pkg }}"
+          pkgver=$(grep -m1 '^pkgver=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
+          pkgrel=$(grep -m1 '^pkgrel=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
+          case "$pkg" in
+            linux-nabu-618)
+              rev=$(git ls-remote https://github.com/TwinbornPlate75/linux-nabu refs/heads/sm8150/6.18 2>/dev/null | awk '{print $1}' | cut -c1-12)
+              sig="$pkg-$rev-$pkgver-$pkgrel"
+              ;;
+            upower-nncc)
+              rev=$(git ls-remote https://gitlab.freedesktop.org/upower/upower.git HEAD 2>/dev/null | awk '{print $1}' | cut -c1-12)
+              sig="$pkg-$rev-$pkgver-$pkgrel"
+              ;;
+            nabu-pmac)
+              sig="$pkg-$pkgver-$pkgrel"
+              ;;
+            *)
+              sig="$pkg-$pkgver-$pkgrel"
+              ;;
+          esac
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+          echo "Source signature: $sig"
+
+      - name: Restore cached build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: pkg-cache
+          key: ${{ matrix.pkg }}-${{ steps.sig.outputs.sig }}
+
+      - name: Decide whether to build
+        id: decide
+        run: |
+          if [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]] && ls pkg-cache/*.pkg.tar.* >/dev/null 2>&1; then
+            echo "need-build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "need-build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build package
+        if: steps.decide.outputs.need-build == 'true'
+        run: |
+          mkdir -p pkg-cache
+          echo "::group::Building ${{ matrix.pkg }}..."
+          podman run --rm \
+            -v "$(pwd)/packages/${{ matrix.pkg }}:/work" \
+            -v "$(pwd)/pkg-cache:/output" \
+            -w /work \
+            menci/archlinuxarm:base \
+            sh -c "
+              sed -i '/^#DisableSandbox/s/^#//' /etc/pacman.conf
+              echo 'DisableSandbox' >> /etc/pacman.conf
+              printf '\n[nabu]\nSigLevel = Never\nServer = https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo\n' >> /etc/pacman.conf
+              pacman-key --init
+              pacman-key --populate archlinuxarm
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc systemd-ukify libelf
+              useradd -m builder
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+              chown -R builder:builder /work
+              su builder -c 'cd /work && makepkg -s --noconfirm --skipchecksums' || exit 1
+              cp /work/*.pkg.tar.* /output/
+            "
+          echo "::endgroup::"
+          ls -la pkg-cache/
+
+      - name: Save cache
+        if: steps.decide.outputs.need-build == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: pkg-cache
+          key: ${{ matrix.pkg }}-${{ steps.sig.outputs.sig }}
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-${{ matrix.pkg }}
+          path: pkg-cache/*
+          if-no-files-found: error
+
+  assemble-repo:
+    name: Assemble pacman repository
+    runs-on: ubuntu-24.04-arm
+    needs: build-packages
+    if: ${{ needs.build-packages.result == 'success' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman gnupg
+          (type -p wget >/dev/null || sudo apt-get install wget -y) \
+            && sudo mkdir -p -m 755 /etc/apt/keyrings \
+            && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+            && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+            && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+            && sudo apt update \
+            && sudo apt install gh -y
+
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.REPO_GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.REPO_GPG_KEY_ID }}
+        run: |
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          gpgconf --reload gpg-agent
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-keys
+
+      - name: Setup repo structure
+        run: |
+          mkdir -p repo/aarch64
+          cp repo/nabu-repo.asc repo/aarch64/ 2>/dev/null || true
+
+      - name: Download existing repo packages (baseline)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd repo/aarch64
+          echo "Fetching previous release packages as baseline..."
+          gh release download repo -R "$GITHUB_REPOSITORY" \
+            --pattern "*.pkg.tar.zst" \
+            --pattern "*.pkg.tar.xz" \
+            --pattern "*.sig" \
+            --dir . 2>/dev/null || echo "  No previous release packages"
+          ls -la *.pkg.tar.* 2>/dev/null || echo "  (empty baseline)"
+
+      - name: Download generic rootfs tarball
+        run: |
+          cd repo/aarch64
+          if ! wget --timeout=30 --tries=2 --waitretry=5 "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz; then
+            echo "Primary mirror failed, falling back"
+            wget --timeout=30 --tries=2 "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz 2>/dev/null || true
+          fi
+
+      - name: Download local package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: repo/aarch64
+          pattern: pkg-*
+          merge-multiple: true
+
+      - name: Fetch packages from rodriguezst
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching packages from rodriguezst/arch-repo..."
+          mkdir -p repo/staging-rodriguezst
+          cd repo/staging-rodriguezst
+          gh release list -R rodriguezst/arch-repo --json tagName -q '.[].tagName' 2>/dev/null | while read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "  Release: $tag"
+            gh release download "$tag" -R rodriguezst/arch-repo \
+              --pattern "*.pkg.tar.zst" \
+              --pattern "*.pkg.tar.xz" \
+              --pattern "*.sig" \
+              --dir . 2>/dev/null || true
+          done
+          rm -f visual-studio-code-bin*.pkg.tar.* visual-studio-code-bin*.sig 2>/dev/null || true
+          rm -f python2*.pkg.tar.* python2*.sig 2>/dev/null || true
+          rm -f widevine*.pkg.tar.* widevine*.sig 2>/dev/null || true
+          rm -f reboot2android*.pkg.tar.* reboot2android*.sig 2>/dev/null || true
+          rm -f refind-nabu*.pkg.tar.* refind-nabu*.sig 2>/dev/null || true
+          # Keep rodriguezst's linux-nabu kernel as a backup version in the repo.
+          cp *.pkg.tar.* *.sig ../aarch64/ 2>/dev/null || true
+          echo "Copied rodriguezst packages:"
+          ls -la ../aarch64/*.pkg.tar.* 2>/dev/null || echo "  none"
+
+      - name: Drop superseded versions of rebuilt packages
+        run: |
+          cd repo/aarch64
+          # Remove 6.16 packages to prevent autoupdate (both .pkg and .sig).
+          rm -f linux-nabu-6.16.* linux-nabu-headers-6.16.* linux-nabu-uki-6.16.* \
+                 linux-nabu-6.16.*.sig linux-nabu-headers-6.16.*.sig linux-nabu-uki-6.16.*.sig 2>/dev/null || true
+          shopt -s nullglob
+          for f in *.pkg.tar.zst *.pkg.tar.xz; do
+            pkgname=$(bsdtar -xOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgname = //p' | tr -d '\r' | head -n1)
+            [ -z "$pkgname" ] && continue
+            # Keep multiple kernel versions (backup + current); never prune linux-nabu.
+            case "$pkgname" in
+              linux-nabu|linux-nabu-headers) echo "Keeping kernel: $f"; continue ;;
+            esac
+            echo "Keeping rebuilt package: $f (pkgname: $pkgname)"
+            for old in "${pkgname}"-*.pkg.tar.*; do
+              [ "$old" = "$f" ] && continue
+              echo "  removing superseded $old"
+              rm -f "$old" "${old}.sig"
+            done
+          done
+
+      - name: Fix permissions
+        run: sudo chown -R "$USER:$USER" repo/aarch64/
+
+      - name: Re-sign packages
+        run: |
+          cd repo/aarch64
+          GPG_KEY_ID="${{ secrets.REPO_GPG_KEY_ID }}"
+          shopt -s nullglob
+          for pkg in *.pkg.tar.zst *.pkg.tar.xz; do
+            echo "Signing $pkg..."
+            gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$GPG_KEY_ID" \
+              --detach-sign --output "${pkg}.sig" "$pkg"
+          done
+
+      - name: Create pacman database
+        run: |
+          podman run --rm \
+            -v "$(pwd)/repo/aarch64:/repo" \
+            -w /repo \
+            menci/archlinuxarm:base \
+            sh -c "
+              sed -i '/^#DisableSandbox/s/^#//' /etc/pacman.conf
+              echo 'DisableSandbox' >> /etc/pacman.conf
+              pacman-key --init
+              pacman-key --populate
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm pacman-contrib
+              shopt -s nullglob
+              rm -f nabu.db* nabu.files*
+              repo-add nabu.db.tar.gz *.pkg.tar.zst *.pkg.tar.xz
+            " || true
+          if [ ! -f repo/aarch64/nabu.db.tar.gz ]; then
+            touch repo/aarch64/nabu.db.tar.gz
+          fi
+
+      - name: Fix permissions
+        run: sudo chown -R "$USER:$USER" repo/aarch64/
+
+      - name: Sign database files
+        run: |
+          GPG_KEY_ID="${{ secrets.REPO_GPG_KEY_ID }}"
+          cd repo/aarch64
+          for db in nabu.db.tar.gz nabu.files.tar.gz; do
+            [ -f "$db" ] && gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$GPG_KEY_ID" \
+              --detach-sign --output "${db}.sig" "$db"
+          done
+
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd repo/aarch64
+          gh release delete repo --yes 2>/dev/null || true
+          git push --delete origin repo 2>/dev/null || true
+
+          shopt -s nullglob
+          ASSETS=(
+            nabu.db
+            nabu.db.tar.gz
+            nabu.db.tar.gz.sig
+            nabu.files
+            nabu.files.tar.gz
+            nabu.files.tar.gz.sig
+            *.pkg.tar.zst
+            *.pkg.tar.zst.sig
+            *.pkg.tar.xz
+            *.pkg.tar.xz.sig
+            ArchLinuxARM-aarch64-latest.tar.gz
+          )
+          [ -f nabu-repo.asc ] && ASSETS+=(nabu-repo.asc)
+          gh release create repo \
+            --title "Pacman Repository" \
+            --notes "Automated build of the nabu pacman repository" \
+            "${ASSETS[@]}"

@@ -1,0 +1,49 @@
+# Maintainer: Kumar-Jy
+# FastRPC reverse-listener server serving the SLPI sensors filesystem on
+# Xiaomi Pad 5 (nabu). The DSP sensors (SSC) connect back over FastRPC on the
+# sdsp channel; hexagonrpcd serves the sensor config/registry over that
+# channel and re-synchronizes sensor state on suspend/resume.
+
+pkgname=hexagonrpcd
+pkgver=0.4.0
+pkgrel=1
+pkgdesc="FastRPC reverse-listener server exposing the SLPI sensors filesystem on Xiaomi Pad 5 (nabu)"
+arch=('aarch64')
+url="https://github.com/linux-msm/hexagonrpc"
+license=('GPL3')
+depends=('glibc' 'linux-firmware-xiaomi-nabu' 'tqftpserv')
+makedepends=('meson' 'ninja' 'pkg-config')
+install=hexagonrpcd.install
+source=("hexagonrpc-${pkgver}.tar.gz::https://github.com/linux-msm/hexagonrpc/archive/refs/tags/v${pkgver}.tar.gz"
+        'hexagonrpcd-wrapper'
+        'hexagonrpcd.service'
+        'hexagonrpcd-suspend.service'
+        'hexagonrpcd-resume.service'
+        '60-hexagonrpcd.rules'
+        'nabu-slpi-hexagonrpcd.conf'
+        'hexagonrpcd.install')
+sha256sums=('fe742549a2672902d59a90dafd741a9a0acbeca059e07ff5130e2b525a66574f'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/hexagonrpc-${pkgver}"
+  meson setup build --prefix=/usr --buildtype=release
+  meson compile -C build
+}
+
+package() {
+  cd "$srcdir/hexagonrpc-${pkgver}"
+  DESTDIR="$pkgdir" meson install -C build
+
+  # Move the daemon out of /usr/bin and let the wrapper live there instead.
+  install -d "$pkgdir/usr/libexec/hexagonrpc"
+  mv "$pkgdir/usr/bin/hexagonrpcd" "$pkgdir/usr/libexec/hexagonrpc/hexagonrpcd"
+  install -Dm755 "$srcdir/hexagonrpcd-wrapper" "$pkgdir/usr/bin/hexagonrpcd"
+
+  install -Dm644 "$srcdir/hexagonrpcd.service" "$pkgdir/usr/lib/systemd/system/hexagonrpcd.service"
+  install -Dm644 "$srcdir/hexagonrpcd-suspend.service" "$pkgdir/usr/lib/systemd/system/hexagonrpcd-suspend.service"
+  install -Dm644 "$srcdir/hexagonrpcd-resume.service" "$pkgdir/usr/lib/systemd/system/hexagonrpcd-resume.service"
+  install -Dm644 "$srcdir/60-hexagonrpcd.rules" "$pkgdir/usr/lib/udev/rules.d/60-hexagonrpcd.rules"
+  install -Dm644 "$srcdir/nabu-slpi-hexagonrpcd.conf" \
+    "$pkgdir/usr/lib/systemd/system/hexagonrpcd.service.d/nabu-slpi.conf"
+}

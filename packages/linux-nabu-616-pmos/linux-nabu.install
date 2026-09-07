@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# linux-nabu.install - regenerate the UKI whenever the kernel is installed/upgraded.
+# Works for both atomic (bootc) and non-atomic (pacman -U) installs.
+
+regenerate_uki() {
+    local kernver
+    kernver=$(ls /usr/lib/modules/ 2>/dev/null | sort -V | tail -1)
+    [ -n "$kernver" ] || return 0
+    [ -f "/boot/vmlinuz-${kernver}" ] || return 0
+
+    # Only run on a real device; skip inside container/image builds.
+    if ! mountpoint -q /boot/efi 2>/dev/null; then
+        return 0
+    fi
+
+    # Ensure a kernel command line exists for the UKI. iris/venus video decode
+    # is enabled by default, fw_devlink is permissive for the fastrpc/SLPI
+    # probe ordering.
+    if [ ! -f /etc/cmdline.d/root.conf ]; then
+        mkdir -p /etc/cmdline.d
+        printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive\n' > /etc/cmdline.d/root.conf
+    fi
+
+    # Point the UKI DeviceTree at the stable dtb symlink (always current).
+    if [ -f /usr/lib/kernel/uki.conf ]; then
+        sed -i 's|^DeviceTree=.*|DeviceTree=/boot/dtb-linux-nabu|' /usr/lib/kernel/uki.conf
+    fi
+
+    mkinitcpio -P
+}
+
+pre_upgrade() {
+    # 1. Preserve currently running/working UKI as arch-linux-nabu-old.efi
+    if [ -f /boot/efi/EFI/arch/arch-linux-nabu.efi ]; then
+        cp -f /boot/efi/EFI/arch/arch-linux-nabu.efi /boot/efi/EFI/arch/arch-linux-nabu-old.efi
+    fi
+
+    # 2. Preserve previous kernel modules so WiFi/BT/audio/touch work if booting arch-linux-nabu-old.efi
+    for moddir in /usr/lib/modules/*; do
+        [ -d "$moddir" ] && [ ! -L "$moddir" ] || continue
+        base=$(basename "$moddir")
+        case "$base" in
+            *.old) continue ;;
+            *)
+                rm -rf "/usr/lib/modules/${base}.old" 2>/dev/null || true
+                cp -an "$moddir" "/usr/lib/modules/${base}.old" 2>/dev/null || true
+                ;;
+        esac
+    done
+}
+
+post_install() {
+    regenerate_uki
+}
+
+post_upgrade() {
+    # Re-link any preserved old module directories if removed by pacman
+    for olddir in /usr/lib/modules/*.old; do
+        [ -d "$olddir" ] || continue
+        base=$(basename "$olddir" .old)
+        if [ ! -e "/usr/lib/modules/${base}" ]; then
+            ln -sf "${base}.old" "/usr/lib/modules/${base}" 2>/dev/null || true
+        fi
+    done
+
+    regenerate_uki
+}
+
+post_remove() {
+    :
+}

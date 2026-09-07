@@ -1,0 +1,110 @@
+From 915567de2f4867da01819561dbe6e51bc4e6f136 Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Fri, 4 Aug 2023 01:40:44 +0300
+Subject: [PATCH 21/49] NABU: Add wcd9340 and microphone dais
+
+---
+ .../boot/dts/qcom/sm8150-xiaomi-nabu.dts      | 52 ++++++++++++++++++-
+ 1 file changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+index 89658efc2875..17f7aeb5e99f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
+@@ -11,6 +11,7 @@
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
+ #include "sm8150.dtsi"
++#include "sm8150-wcd9340.dtsi"
+ #include "pm8150.dtsi"
+ #include "pm8150b.dtsi"
+ #include "pm8150l.dtsi"
+@@ -671,6 +672,10 @@ &q6asmdai {
+ 	dai@0 {
+ 		reg = <0>;
+ 	};
++
++	dai@1 {
++		reg = <1>;
++	};
+ };
+ 
+ &qupv3_id_0 {
+@@ -707,7 +712,9 @@ &sound {
+ 	pinctrl-names = "default";
+ 	model = "Xiaomi Pad 5";
+ 
+-	audio-routing =
++	audio-routing =	"RX_BIAS", "MCLK",
++		"AMIC1", "MIC BIAS3",
++		"AMIC3", "MIC BIAS4",
+ 		"MultiMedia1 Playback", "BR SPK",
+ 		"MultiMedia1 Playback", "TR SPK",
+ 		"MultiMedia1 Playback", "BL SPK",
+@@ -720,6 +727,13 @@ cpu {
+ 		};
+ 	};
+ 
++	mm2-dai-link {
++		link-name = "MultiMedia2";
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++		};
++	};
++
+ 	speaker-dai-link {
+ 		link-name = "Speaker Playback";
+ 		cpu {
+@@ -735,6 +749,22 @@ codec {
+ 				<&cs35l41_bl 0>, <&cs35l41_tl 0>;
+ 		};
+ 	};
++
++	//Bottom & Top internal microphones
++	slimcap-dai-link {
++		link-name = "SLIM Capture 1";
++		cpu {
++			sound-dai = <&q6afedai SLIMBUS_0_TX>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&wcd9340 1>; /* AIF1_CAP */
++		};
++	};
+ };
+ 
+ &spi18 {
+@@ -900,6 +930,26 @@ &usb_1_hsphy {
+ 	status = "okay";
+ };
+ 
++&wcd9340 {
++	reset-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
++	vdd-buck-sido-supply = <&vreg_s4a_1p8>;
++	vdd-buck-supply = <&vreg_s4a_1p8>;
++	vdd-tx-supply = <&vreg_s4a_1p8>;
++	vdd-rx-supply = <&vreg_s4a_1p8>;
++	vdd-io-supply = <&vreg_s4a_1p8>;
++
++	qcom,micbias1-microvolt = <1800000>;
++	qcom,micbias2-microvolt = <2750000>;
++	qcom,micbias3-microvolt = <1800000>;
++	qcom,micbias4-microvolt = <1800000>;
++
++	qcom,hphl-jack-type-normally-open;
++	qcom,ground-jack-type-normally-open;
++	qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++	qcom,mbhc-headset-vthreshold-microvolt = <2600000>;
++	qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++};
++
+ &wifi {
+ 	status = "okay";
+ 
+-- 
+2.49.0
+

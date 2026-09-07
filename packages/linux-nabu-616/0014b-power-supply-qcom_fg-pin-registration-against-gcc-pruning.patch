@@ -1,0 +1,43 @@
+Subject: [PATCH] power: supply: pin qcom_fg registration against GCC pruning
+
+CI GCC 16.1.1 dead-code eliminates the static qcom_fg_probe and the
+module_platform_driver registration of the built-in CONFIG_BATTERY_QCOM_FG
+fuel-gauge / battery driver at link time, so qcom-battery (the fuel gauge)
+never binds and the charger cannot read battery status. This mirrors the
+identical fix applied to qcom_smbx (0051): mark qcom_fg_probe __used and
+replace module_platform_driver with an explicit __used device_initcall
+(qcom_fg_init/qcom_fg_exit) anchored in the initcall section.
+---
+ drivers/power/supply/qcom_fg.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_fg.c b/drivers/power/supply/qcom_fg.c
+--- a/drivers/power/supply/qcom_fg.c
++++ b/drivers/power/supply/qcom_fg.c
+@@ -1134,7 +1134,7 @@
+ 	return NOTIFY_OK;
+ }
+ 
+-static int qcom_fg_probe(struct platform_device *pdev)
++static int __used qcom_fg_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config supply_config = {};
+ 	struct qcom_fg_chip *chip;
+@@ -1357,7 +1357,16 @@
+ 	},
+ };
+ 
+-module_platform_driver(qcom_fg_driver);
++static int __used qcom_fg_init(void)
++{
++	return platform_driver_register(&qcom_fg_driver);
++}
++device_initcall(qcom_fg_init);
++
++static void __exit qcom_fg_exit(void)
++{
++	platform_driver_unregister(&qcom_fg_driver);
++}
+ 
+ MODULE_AUTHOR("Caleb Connolly <caleb@connolly.tech>");
+ MODULE_AUTHOR("Joel Selvaraj <jo@jsfamily.in>");
