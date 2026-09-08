@@ -11,9 +11,6 @@ name: Build linux-nabu-614 (iris+camera)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'packages/linux-nabu-614/**'
 
 jobs:
   build-linux-nabu-614:
