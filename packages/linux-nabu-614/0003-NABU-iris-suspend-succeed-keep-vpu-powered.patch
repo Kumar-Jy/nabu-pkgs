@@ -1,0 +1,33 @@
+--- a/drivers/media/platform/qcom/iris/iris_hfi_common.c	2026-09-08 13:46:08.656423988 +0530
++++ b/drivers/media/platform/qcom/iris/iris_hfi_common.c	2026-09-08 13:49:33.914631378 +0530
+@@ -144,6 +144,16 @@
+ {
+ 	int ret;
+ 
++	/* The SM8150 VPU5 power-collapse sequence is not implemented, so
++	 * iris_vpu_prepare_pc() keeps returning -EAGAIN.  Under runtime PM that
++	 * merely keeps the controller powered; but the system-suspend path reuses
++	 * this callback via pm_runtime_force_suspend(), and the PM core treats any
++	 * nonzero return as fatal, aborting every s2idle.  Keep the controller
++	 * powered and succeed instead.
++	 */
++	if (core->iris_platform_data->legacy_vpu5)
++		return 0;
++
+ 	ret = iris_vpu_prepare_pc(core);
+ 	if (ret) {
+ 		pm_runtime_mark_last_busy(core->dev);
+@@ -171,6 +181,13 @@
+ 	const struct iris_hfi_command_ops *ops = core->hfi_ops;
+ 	int ret;
+ 
++	/* Nothing was powered off while suspended, so there is nothing to bring
++	 * back up.  Re-running the power-on/firmware-boot sequence over an already
++	 * running VPU would only corrupt the sessions Chrome may still hold.
++	 */
++	if (core->iris_platform_data->legacy_vpu5)
++		return 0;
++
+ 	ret = iris_vpu_power_on(core);
+ 	if (ret)
+ 		goto error;

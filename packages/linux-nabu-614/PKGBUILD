@@ -19,7 +19,7 @@
 
 pkgbase=linux-nabu
 pkgver=6.14.11
-pkgrel=5
+pkgrel=6
 arch=('aarch64')
 url="https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux"
 license=('GPL2')
@@ -38,8 +38,9 @@ source=(
   "https://github.com/CFM880/nabu-accelerometer/archive/25bc5c3050e2f50827b31ff724aad5fb79004786.tar.gz"
   "0001-NABU-remove-reset-and-change-freq-table-hz-of-ufs_mem_hc.patch"
   "0002-NABU-add-SMB5-pm8150b-charger-driver-and-DTS.patch"
+  "0003-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd "${srcdir}/${_srcname}"
@@ -59,6 +60,8 @@ prepare() {
   patch -p1 < "${srcdir}/0001-NABU-remove-reset-and-change-freq-table-hz-of-ufs_mem_hc.patch"
   echo "Applying SMB5 (pm8150b) charger driver and DTS port..."
   patch -p1 < "${srcdir}/0002-NABU-add-SMB5-pm8150b-charger-driver-and-DTS.patch"
+  echo "Applying iris suspend fix (succeed s2idle, keep VPU powered)..."
+  patch -p1 < "${srcdir}/0003-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
 
   make ARCH=arm64 defconfig
   cat arch/arm64/configs/sm8150.config >> .config
