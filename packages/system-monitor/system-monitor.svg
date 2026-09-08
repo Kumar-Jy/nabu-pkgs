@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2a3342"/>
+      <stop offset="100%" stop-color="#141a22"/>
+    </linearGradient>
+    <linearGradient id="chipGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3584e4"/>
+      <stop offset="100%" stop-color="#1c71d8"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#33d17a"/>
+      <stop offset="50%" stop-color="#3584e4"/>
+      <stop offset="100%" stop-color="#f6d32d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App Icon Base Squircle -->
+  <rect x="8" y="10" width="112" height="108" rx="26" fill="url(#bgGrad)" stroke="#3e4a5e" stroke-width="2"/>
+  
+  <!-- Subtle Inner Top Highlight -->
+  <path d="M 34 12 L 94 12 A 24 24 0 0 1 118 36 L 118 40" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Chip Body (Snapdragon / Adreno Core) -->
+  <rect x="36" y="32" width="56" height="56" rx="12" fill="#181f2a" stroke="#2d3748" stroke-width="2.5"/>
+  
+  <!-- Circuit Traces / Pins -->
+  <path d="M 46 22 L 46 32 M 64 20 L 64 32 M 82 22 L 82 32" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 46 88 L 46 98 M 64 88 L 64 100 M 82 88 L 82 98" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 22 46 L 36 46 M 20 60 L 36 60 M 22 74 L 36 74" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 92 46 L 106 46 M 92 60 L 108 60 M 92 74 L 106 74" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Glowing Core Die -->
+  <rect x="44" y="40" width="40" height="40" rx="8" fill="url(#chipGrad)" opacity="0.3"/>
+
+  <!-- Telemetry / Activity Pulse Waveform -->
+  <path d="M 22 62 L 40 62 L 48 48 L 56 74 L 64 42 L 72 78 L 80 56 L 88 62 L 106 62" 
+        fill="none" 
+        stroke="url(#accentGrad)" 
+        stroke-width="3.5" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+
+  <!-- Hardware Indicators (LEDs) -->
+  <circle cx="48" cy="46" r="2.5" fill="#33d17a"/>
+  <circle cx="80" cy="46" r="2.5" fill="#f6d32d"/>
+  <circle cx="48" cy="74" r="2.5" fill="#3584e4"/>
+  <circle cx="80" cy="74" r="2.5" fill="#e01b24"/>
+</svg>

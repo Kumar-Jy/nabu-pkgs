@@ -1,0 +1,32 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Universal Hardware & System Monitor for Linux across all DEs
+
+pkgname=system-monitor
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Universal Hardware & System Monitor for Linux across all DEs (GNOME, KDE Plasma, XFCE)"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'hicolor-icon-theme')
+provides=('nabu-system-monitor' 'nabu-gpu-monitor' 'sysmon')
+replaces=('nabu-system-monitor' 'nabu-gpu-monitor')
+source=('system-monitor'
+        'system-monitor.desktop'
+        'system-monitor.svg'
+        'LICENSE')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/system-monitor" "$pkgdir/usr/bin/system-monitor"
+  ln -sf system-monitor "$pkgdir/usr/bin/sysmon"
+  ln -sf system-monitor "$pkgdir/usr/bin/nabu-system-monitor"
+  ln -sf system-monitor "$pkgdir/usr/bin/nabu-gpu-monitor"
+  install -Dm644 "$srcdir/system-monitor.desktop" "$pkgdir/usr/share/applications/system-monitor.desktop"
+  install -Dm644 "$srcdir/system-monitor.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/system-monitor.svg"
+  install -Dm644 "$srcdir/system-monitor.svg" "$pkgdir/usr/share/pixmaps/system-monitor.svg"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
