@@ -1,0 +1,92 @@
+--- src/decode.c
++++ src/decode.c
+@@ -1217,7 +1217,7 @@
+ 			return 0;
+ 		}
+ 	}
+-	ret = v4l2_dec_open(&ctx->dec, "/dev/video0", ctx->width,
++	ret = v4l2_dec_open(&ctx->dec, NULL, ctx->width,
+ 			    ctx->height, ctx->out_pixfmt, ctx->cap_pixfmt);
+ 	if (ret)
+ 		return ret;
+--- src/iris_vaapi.c
++++ src/iris_vaapi.c
+@@ -1443,7 +1443,7 @@
+ 		if (!dd)
+ 			return VA_STATUS_ERROR_ALLOCATION_FAILED;
+ 		dd->p010_supported = v4l2_dec_supports_capture_format(
+-			"/dev/video0", V4L2_PIX_FMT_P010);
++			NULL, V4L2_PIX_FMT_P010);
+ 		if (!dd->p010_supported)
+ 			fprintf(stderr,
+ 				"iris-vaapi: kernel does not advertise P010; hiding HEVC Main10 and VP9 Profile 2\n");
+--- src/v4l2_dec.c
++++ src/v4l2_dec.c
+@@ -48,13 +48,44 @@
+ 	return r;
+ }
+ 
++/* Resolve the stateful M2M iris decoder node.  When @dev is given it is
++ * used verbatim; otherwise /dev/video* is scanned for the node whose Card
++ * reports "Iris Decoder", so the driver never binds the camera (VFE) or the
++ * encoder node when termination order pushes iris off video0.  Returns a
++ * static buffer or falls back to the historical "/dev/video0". */
++static const char *v4l2_dec_resolve_dev(const char *dev)
++{
++	static char node[16];
++	struct v4l2_capability cap;
++	int i, fd;
++
++	if (dev)
++		return dev;
++
++	for (i = 0; i < 64; i++) {
++		snprintf(node, sizeof(node), "/dev/video%d", i);
++		fd = open(node, O_RDWR | O_NONBLOCK);
++		if (fd < 0)
++			continue;
++		if (xioctl(fd, VIDIOC_QUERYCAP, &cap) == 0 &&
++		    strstr((char *)cap.card, "Iris Decoder")) {
++			close(fd);
++			return node;
++		}
++		close(fd);
++	}
++
++	return "/dev/video0";
++}
++
+ int v4l2_dec_supports_capture_format(const char *dev,
+ 				      unsigned int pixelformat)
+ {
+ 	struct v4l2_fmtdesc fmt;
+ 	int fd;
+ 
+-	fd = open(dev ? dev : "/dev/video0", O_RDWR | O_NONBLOCK);
++	dev = v4l2_dec_resolve_dev(dev);
++	fd = open(dev, O_RDWR | O_NONBLOCK);
+ 	if (fd < 0)
+ 		return 0;
+ 
+@@ -310,9 +341,10 @@
+ 	memset(d, 0, sizeof(*d));
+ 	d->cap_memory = V4L2_MEMORY_MMAP;
+ 	d->fd = -1;
+-	d->fd = open(dev ? dev : "/dev/video0", O_RDWR | O_NONBLOCK);
++	dev = v4l2_dec_resolve_dev(dev);
++	d->fd = open(dev, O_RDWR | O_NONBLOCK);
+ 	if (d->fd < 0) {
+-		perror("open /dev/video0");
++		perror(dev);
+ 		return -errno;
+ 	}
+ 
+@@ -327,7 +359,7 @@
+ 		ret = -EINVAL;
+ 		goto error;
+ 	}
+-	printf("v4l2-dec: device %s driver '%s' card '%s'\n", dev ? dev : "/dev/video0",
++	printf("v4l2-dec: device %s driver '%s' card '%s'\n", dev,
+ 	       (char *)cap.driver, (char *)cap.card);
+ 
+ 	memset(&sub, 0, sizeof(sub));
