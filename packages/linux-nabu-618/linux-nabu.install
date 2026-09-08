@@ -14,6 +14,15 @@ regenerate_uki() {
         return 0
     fi
 
+    # If a PostTransaction pacman hook exists, let it regenerate the UKI cleanly
+    # after depmod has updated module dependencies.
+    if [ -f /etc/pacman.d/hooks/90-linux-nabu.uki.hook ] || [ -f /usr/share/libalpm/hooks/90-linux-nabu*.hook ]; then
+        return 0
+    fi
+
+    # Standalone fallback: ensure module dependencies exist so mkinitcpio autodetect succeeds
+    depmod -a "${kernver}" 2>/dev/null || true
+
     # Ensure a kernel command line exists for the UKI.
     if [ ! -f /etc/cmdline.d/root.conf ]; then
         mkdir -p /etc/cmdline.d

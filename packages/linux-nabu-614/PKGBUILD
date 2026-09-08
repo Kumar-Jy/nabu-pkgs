@@ -19,7 +19,7 @@
 
 pkgbase=linux-nabu
 pkgver=6.14.11
-pkgrel=6
+pkgrel=7
 arch=('aarch64')
 url="https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux"
 license=('GPL2')
@@ -120,7 +120,6 @@ _package() {
   depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7' 'ukify')
   optdepends=('wireless-regdb: to set the correct wireless channels of your country'
               'linux-firmware-xiaomi-nabu: camera/iris/SLPI firmware (venus.mbn, slpi_nb.mbn) - not in standard repos')
-  optdepends=('wireless-regdb: to set the correct wireless channels of your country')
   provides=("linux=${pkgver}")
   conflicts=('linux')
   install="linux-nabu.install"
