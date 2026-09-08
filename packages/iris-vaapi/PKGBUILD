@@ -3,7 +3,7 @@
 
 pkgname=iris-vaapi
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="VA-API driver for the Qualcomm SM8150 Iris1 decoder"
 arch=('aarch64')
 url="https://github.com/CFM880/iris-vaapi"
@@ -11,18 +11,9 @@ license=('GPL2')
 depends=('libva' 'libdrm')
 makedepends=('gcc' 'make' 'pkg-config' 'vulkan-headers' 'libva' 'libdrm')
 source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/refs/heads/main.tar.gz"
-        '0001-iris-vaapi-autodetect-iris-decoder.patch'
         '99-iris-dmaheap.rules'
         '99-iris-vaapi.conf')
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
-
-prepare() {
-  cd "$srcdir/iris-vaapi-main"
-  # The iris decoder does not always land on /dev/video0: qcom-camss VFE may
-  # claim video0 first (as on nabu with cameras probed).  Auto-detect the
-  # "Iris Decoder" node instead of hardcoding the old path.
-  patch -p0 < "$srcdir/0001-iris-vaapi-autodetect-iris-decoder.patch"
-}
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 build() {
   cd "$srcdir/iris-vaapi-main"
@@ -41,9 +32,12 @@ package() {
   install -Dm644 "$srcdir/99-iris-vaapi.conf" \
     "$pkgdir/usr/lib/modprobe.d/99-iris-vaapi.conf"
 
-  # libva locates the driver from the DRM device's driver name (msm_dpu lead),
-  # so make the iris driver reachable WITHOUT LIBVA_DRIVER_NAME=iris.  Chrome's
-  # zygote/sandbox env propagation is unreliable; auto-detection must work.
-  ln -s /usr/lib/dri/iris_drv_video.so \
-    "$pkgdir/usr/lib/dri/msm_drm_drv_video.so"
+  # Upstream builds the driver as vpu_drv_video.so and auto-detects the
+  # "qcom-iris-decoder" node natively.  Provide the legacy iris name (the
+  # google-chrome wrapper still sets LIBVA_DRIVER_NAME=iris) plus the DRI
+  # device-name links libva uses for auto-discovery on the msm driver.
+  drv="$pkgdir/usr/lib/dri/vpu_drv_video.so"
+  ln -s /usr/lib/dri/vpu_drv_video.so "$pkgdir/usr/lib/dri/iris_drv_video.so"
+  ln -s /usr/lib/dri/vpu_drv_video.so "$pkgdir/usr/lib/dri/msm_drm_drv_video.so"
+  ln -s /usr/lib/dri/vpu_drv_video.so "$pkgdir/usr/lib/dri/msm_drv_video.so"
 }
