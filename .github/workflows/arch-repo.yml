@@ -67,6 +67,10 @@ on:
         type: boolean
         default: true
         description: Build displaylink
+      build_system_monitor:
+        type: boolean
+        default: true
+        description: Build system-monitor
 
 jobs:
   resolve-packages:
@@ -96,6 +100,7 @@ jobs:
               --argjson iris_vaapi "${{ inputs.build_iris_vaapi }}" \
               --argjson evdi_dkms "${{ inputs.build_evdi_dkms }}" \
               --argjson displaylink "${{ inputs.build_displaylink }}" \
+              --argjson system_monitor "${{ inputs.build_system_monitor }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -111,9 +116,10 @@ jobs:
                  if $hexagonrpcd then "hexagonrpcd" else empty end,
                  if $iris_vaapi then "iris-vaapi" else empty end,
                  if $evdi_dkms then "evdi-dkms" else empty end,
-                 if $displaylink then "displaylink" else empty end ]' > matrix.json
+                 if $displaylink then "displaylink" else empty end,
+                 if $system_monitor then "system-monitor" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
