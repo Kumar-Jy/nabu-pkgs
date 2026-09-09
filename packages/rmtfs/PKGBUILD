@@ -1,0 +1,31 @@
+# Maintainer: Kumar-Jy
+# Qualcomm remote filesystem (EFS) service used with the QRTR bus on
+# Qualcomm SoCs. Built from linux-msm/rmtfs at the same revision previously
+# shipped by the third-party provider.
+
+pkgname=rmtfs
+pkgver=r69.b61c22b
+pkgrel=1
+pkgdesc="Remote filesystem (EFS) service for Qualcomm platforms"
+arch=('aarch64')
+url="https://github.com/linux-msm/rmtfs"
+license=('BSD-3-Clause')
+depends=('qrtr' 'libudev.so=1-64')
+makedepends=('make')
+source=("rmtfs-${pkgver}.tar.gz::https://github.com/linux-msm/rmtfs/archive/b61c22b1cd01f4b1f5f48192f0700aa398de31a3.tar.gz"
+        '65-rmtfs.rules')
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/rmtfs-b61c22b1cd01f4b1f5f48192f0700aa398de31a3"
+  make
+}
+
+package() {
+  cd "$srcdir/rmtfs-b61c22b1cd01f4b1f5f48192f0700aa398de31a3"
+  make DESTDIR="$pkgdir" prefix=/usr \
+    servicedir=/usr/lib/systemd/system \
+    rulesdir=/usr/lib/udev/rules.d install
+  install -Dm644 "$srcdir/65-rmtfs.rules" "$pkgdir/usr/lib/udev/rules.d/65-rmtfs.rules"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+}

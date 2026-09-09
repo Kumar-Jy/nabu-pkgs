@@ -1,0 +1,23 @@
+# Maintainer: Kumar-Jy
+# Qualcomm/DSP firmware blobs for Xiaomi Pad 5 (nabu).
+#
+# The blobs are proprietary binaries extracted from the device and have no
+# redistribution terms upstream. Their canonical snapshot lives in this
+# repository's own release, so the package is self-hosted: the build source
+# is the previously published package, repacked as-is. To update the blobs,
+# replace the source asset and bump pkgrel.
+
+pkgname=linux-firmware-xiaomi-nabu
+pkgver=25.04.26
+pkgrel=1
+pkgdesc="Qualcomm/DSP firmware for Xiaomi Pad 5 (nabu)"
+arch=('any')
+url="https://github.com/linux-msm/linux-firmware-msm"
+license=('custom:proprietary')
+depends=('linux-firmware')
+source=("$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz")
+sha256sums=('SKIP')
+
+package() {
+  cp -a "$srcdir/usr" "$pkgdir/"
+}

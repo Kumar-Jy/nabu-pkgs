@@ -1,0 +1,29 @@
+# Maintainer: Kumar-Jy
+# Userspace service manager for the Qualcomm QRTR (QMI Routing) bus:
+# qrtr-ns registration daemon + libqrtr. Built from linux-msm/qrtr at the
+# same revision previously shipped by the third-party provider.
+
+pkgname=qrtr
+pkgver=r117.5923eea
+pkgrel=1
+pkgdesc="Userspace service for managing QMI/QRTR services on Qualcomm platforms"
+arch=('aarch64')
+url="https://github.com/linux-msm/qrtr"
+license=('BSD-3-Clause')
+depends=('glibc')
+makedepends=('meson' 'ninja' 'pkg-config' 'systemd')
+source=("qrtr-${pkgver}.tar.gz::https://github.com/linux-msm/qrtr/archive/5923eea97377f4a3ed9121b358fd919e3659db7b.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/qrtr-5923eea97377f4a3ed9121b358fd919e3659db7b"
+  meson setup build --prefix=/usr --buildtype=release \
+    -Dqrtr-ns=enabled -Dsystemd-service=enabled
+  meson compile -C build
+}
+
+package() {
+  cd "$srcdir/qrtr-5923eea97377f4a3ed9121b358fd919e3659db7b"
+  DESTDIR="$pkgdir" meson install -C build
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+}

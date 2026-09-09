@@ -71,6 +71,30 @@ on:
         type: boolean
         default: true
         description: Build system-monitor
+      build_qrtr:
+        type: boolean
+        default: true
+        description: Build qrtr
+      build_rmtfs:
+        type: boolean
+        default: true
+        description: Build rmtfs
+      build_tqftpserv:
+        type: boolean
+        default: true
+        description: Build tqftpserv
+      build_brave_bin:
+        type: boolean
+        default: true
+        description: Build brave-bin
+      build_alsa_ucm_conf_xiaomi_nabu:
+        type: boolean
+        default: true
+        description: Build alsa-ucm-conf-xiaomi-nabu
+      build_linux_firmware_xiaomi_nabu:
+        type: boolean
+        default: true
+        description: Build linux-firmware-xiaomi-nabu
 
 jobs:
   resolve-packages:
@@ -101,6 +125,12 @@ jobs:
               --argjson evdi_dkms "${{ inputs.build_evdi_dkms }}" \
               --argjson displaylink "${{ inputs.build_displaylink }}" \
               --argjson system_monitor "${{ inputs.build_system_monitor }}" \
+              --argjson qrtr "${{ inputs.build_qrtr }}" \
+              --argjson rmtfs "${{ inputs.build_rmtfs }}" \
+              --argjson tqftpserv "${{ inputs.build_tqftpserv }}" \
+              --argjson brave_bin "${{ inputs.build_brave_bin }}" \
+              --argjson alsa_ucm_conf_xiaomi_nabu "${{ inputs.build_alsa_ucm_conf_xiaomi_nabu }}" \
+              --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -117,9 +147,15 @@ jobs:
                  if $iris_vaapi then "iris-vaapi" else empty end,
                  if $evdi_dkms then "evdi-dkms" else empty end,
                  if $displaylink then "displaylink" else empty end,
-                 if $system_monitor then "system-monitor" else empty end ]' > matrix.json
+                 if $system_monitor then "system-monitor" else empty end,
+                 if $qrtr then "qrtr" else empty end,
+                 if $rmtfs then "rmtfs" else empty end,
+                 if $tqftpserv then "tqftpserv" else empty end,
+                 if $brave_bin then "brave-bin" else empty end,
+                 if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
+                 if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -237,7 +273,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman gnupg
+          sudo apt-get install -y podman gnupg libarchive-tools
           (type -p wget >/dev/null || sudo apt-get install wget -y) \
             && sudo mkdir -p -m 755 /etc/apt/keyrings \
             && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -289,35 +325,9 @@ jobs:
       - name: Download local package artifacts
         uses: actions/download-artifact@v8
         with:
-          path: repo/aarch64
+          path: repo/new-pkgs
           pattern: pkg-*
           merge-multiple: true
-
-      - name: Fetch packages from rodriguezst
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Fetching packages from rodriguezst/arch-repo..."
-          mkdir -p repo/staging-rodriguezst
-          cd repo/staging-rodriguezst
-          gh release list -R rodriguezst/arch-repo --json tagName -q '.[].tagName' 2>/dev/null | while read -r tag; do
-            [ -z "$tag" ] && continue
-            echo "  Release: $tag"
-            gh release download "$tag" -R rodriguezst/arch-repo \
-              --pattern "*.pkg.tar.zst" \
-              --pattern "*.pkg.tar.xz" \
-              --pattern "*.sig" \
-              --dir . 2>/dev/null || true
-          done
-          rm -f visual-studio-code-bin*.pkg.tar.* visual-studio-code-bin*.sig 2>/dev/null || true
-          rm -f python2*.pkg.tar.* python2*.sig 2>/dev/null || true
-          rm -f widevine*.pkg.tar.* widevine*.sig 2>/dev/null || true
-          rm -f reboot2android*.pkg.tar.* reboot2android*.sig 2>/dev/null || true
-          rm -f refind-nabu*.pkg.tar.* refind-nabu*.sig 2>/dev/null || true
-          # Keep rodriguezst's linux-nabu kernel as a backup version in the repo.
-          cp *.pkg.tar.* *.sig ../aarch64/ 2>/dev/null || true
-          echo "Copied rodriguezst packages:"
-          ls -la ../aarch64/*.pkg.tar.* 2>/dev/null || echo "  none"
 
       - name: Drop superseded versions of rebuilt packages
         run: |
@@ -325,21 +335,26 @@ jobs:
           # Remove 6.16 packages to prevent autoupdate (both .pkg and .sig).
           rm -f linux-nabu-6.16.* linux-nabu-headers-6.16.* linux-nabu-uki-6.16.* \
                  linux-nabu-6.16.*.sig linux-nabu-headers-6.16.*.sig linux-nabu-uki-6.16.*.sig 2>/dev/null || true
+          # Packages rebuilt in this run supersede every older version of the
+          # same pkgname (including third-party binaries the same filename
+          # previously carried). Never prune the kernel backup versions.
           shopt -s nullglob
+          cd ../new-pkgs
           for f in *.pkg.tar.zst *.pkg.tar.xz; do
             pkgname=$(bsdtar -xOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgname = //p' | tr -d '\r' | head -n1)
             [ -z "$pkgname" ] && continue
-            # Keep multiple kernel versions (backup + current); never prune linux-nabu.
             case "$pkgname" in
-              linux-nabu|linux-nabu-headers) echo "Keeping kernel: $f"; continue ;;
+              linux-nabu|linux-nabu-headers|linux-nabu-uki) echo "Keeping kernel: $f"; continue ;;
             esac
-            echo "Keeping rebuilt package: $f (pkgname: $pkgname)"
-            for old in "${pkgname}"-*.pkg.tar.*; do
-              [ "$old" = "$f" ] && continue
-              echo "  removing superseded $old"
+            echo "Rebuilt $pkgname ($(basename "$f"))"
+            for old in ../aarch64/"${pkgname}"-*.pkg.tar.*; do
+              [ "$old" = "../aarch64/$f" ] && continue
+              echo "  removing superseded $(basename "$old")"
               rm -f "$old" "${old}.sig"
             done
           done
+          # Overlay newly built packages onto the repo.
+          cp ../new-pkgs/*.pkg.tar.* ../aarch64/
 
       - name: Fix permissions
         run: sudo chown -R "$USER:$USER" repo/aarch64/
@@ -371,10 +386,9 @@ jobs:
               shopt -s nullglob
               rm -f nabu.db* nabu.files*
               repo-add nabu.db.tar.gz *.pkg.tar.zst *.pkg.tar.xz
-            " || true
-          if [ ! -f repo/aarch64/nabu.db.tar.gz ]; then
-            touch repo/aarch64/nabu.db.tar.gz
-          fi
+            "
+          # Fail (never publish) if the database could not be built: an empty
+          # db must not replace the working release below.
 
       - name: Fix permissions
         run: sudo chown -R "$USER:$USER" repo/aarch64/

@@ -1,0 +1,29 @@
+# Maintainer: Kumar-Jy
+# Userspace TFTP server over QRTR/QMI, used to populate the read-write
+# firmware partition (/usr/share/qcom/adsp_ramdump.bin) on Qualcomm SoCs.
+# Built from linux-msm/tqftpserv at the same revision previously shipped by
+# the third-party provider.
+
+pkgname=tqftpserv
+pkgver=r44.533779c
+pkgrel=1
+pkgdesc="Userspace TFTP server for Qualcomm QRTR/QMI"
+arch=('aarch64')
+url="https://github.com/linux-msm/tqftpserv"
+license=('BSD-3-Clause')
+depends=('qrtr' 'libzstd.so')
+makedepends=('meson' 'ninja' 'pkg-config' 'systemd')
+source=("tqftpserv-${pkgver}.tar.gz::https://github.com/linux-msm/tqftpserv/archive/533779cb8a1843581d5422a7f0aae1a35e6ab956.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/tqftpserv-533779cb8a1843581d5422a7f0aae1a35e6ab956"
+  meson setup build --prefix=/usr --buildtype=release
+  meson compile -C build
+}
+
+package() {
+  cd "$srcdir/tqftpserv-533779cb8a1843581d5422a7f0aae1a35e6ab956"
+  DESTDIR="$pkgdir" meson install -C build
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+}

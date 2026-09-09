@@ -1,0 +1,19 @@
+# Maintainer: Kumar-Jy
+# ALSA UCM profiles for Xiaomi Pad 5 (nabu), vendored from the working
+# configuration previously shipped by the third-party provider.
+
+pkgname=alsa-ucm-conf-xiaomi-nabu
+pkgver=1.0
+pkgrel=1
+pkgdesc="ALSA UCM profiles for Xiaomi Pad 5 (nabu)"
+arch=('aarch64')
+url="https://github.com/linux-msm/alsa-ucm-conf"
+license=('custom:ucm')
+depends=('alsa-ucm-conf')
+source=("HiFi.conf" "sm8150.conf")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm644 HiFi.conf "$pkgdir/usr/share/alsa/ucm2/Xiaomi/nabu/HiFi.conf"
+  install -Dm644 sm8150.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8150/sm8150.conf"
+}
