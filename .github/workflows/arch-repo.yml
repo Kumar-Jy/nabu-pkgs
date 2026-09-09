@@ -256,6 +256,16 @@ jobs:
           pattern: pkg-*
           merge-multiple: true
 
+      - name: Exclude WIP 6.16 kernel from release repo
+        run: |
+          cd repo/aarch64
+          shopt -s nullglob
+          rm -f linux-nabu-6.16*.pkg.tar.* linux-nabu-6.16*.sig \
+                linux-nabu-headers-6.16*.pkg.tar.* linux-nabu-headers-6.16*.sig \
+                linux-nabu-uki-6.16*.pkg.tar.* linux-nabu-uki-6.16*.sig
+          echo "Packages kept for the repo:"
+          ls -1 *.pkg.tar.* 2>/dev/null | grep -E "linux-nabu" || echo "  (no linux-nabu in repo)"
+
       - name: Fetch packages from rodriguezst
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
