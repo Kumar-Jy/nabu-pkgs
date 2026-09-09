@@ -85,7 +85,8 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0055-power-supply-qcom_smbx-integrate-USB-PD-via-the-type-c-port.patch'
         '0056-power-supply-qcom_smbx-clear-USBIN-suspend-for-any-attached-source.patch'
         '0057-arm64-dts-qcom-sm8150-xiaomi-nabu-only-advertise-5V-sink-PDO.patch'
-        '0058-NABU-iris-suspend-succeed-keep-vpu-powered.patch')
+        '0058-NABU-iris-suspend-succeed-keep-vpu-powered.patch'
+        '0059-nabu-accel-fastrpc-pdr-6.16.patch')
 sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
@@ -93,7 +94,7 @@ sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-  'SKIP' 'SKIP'
+  'SKIP' 'SKIP' 'SKIP'
 )
 
 prepare() {
@@ -108,8 +109,8 @@ prepare() {
     src="${src%%::*}"
     src="${src##*/}"
     [[ $src = *.patch ]] || continue
-    # 0058 modifies files from the nabu-iris overlay, so apply it after overlays
-    [[ $src = *iris-suspend* ]] && continue
+    # 0058 & 0059 modify files from the overlays, so apply them after overlays
+    [[ $src = *iris-suspend* || $src = *accel-fastrpc* ]] && continue
     msg2 "Applying patch: $src..."
     patch -Np1 < "../$src"
   done
@@ -120,8 +121,8 @@ prepare() {
   cp -R "${srcdir}/${_iris}/kernel-overlay/." ./
   echo "Applying nabu-accelerometer overlay..."
   cp -R "${srcdir}/${_accel}/kernel-overlay/." ./
-  echo "Applying nabu-accelerometer FastRPC/PDR patch..."
-  patch -p1 < "${srcdir}/${_accel}/patches/0001-sm8150-slpi-fastrpc-pdr.patch"
+  echo "Applying nabu-accelerometer FastRPC/PDR patch (6.16 refresh)..."
+  patch -p1 < "${srcdir}/0059-nabu-accel-fastrpc-pdr-6.16.patch"
   echo "Applying iris suspend fix (succeed s2idle, keep VPU powered)..."
   patch -p1 < "${srcdir}/0058-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
 
