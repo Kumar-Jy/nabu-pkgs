@@ -1,0 +1,12 @@
+# Force LF line endings on all platforms for kernel packaging and scripts
+* text=auto eol=lf
+PKGBUILD text eol=lf
+*.install text eol=lf
+*.patch text eol=lf
+*.sh text eol=lf
+*.preset text eol=lf
+*.conf text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
