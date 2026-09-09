@@ -15,7 +15,7 @@ arch=('any')
 url="https://github.com/linux-msm/linux-firmware-msm"
 license=('custom:proprietary')
 depends=('linux-firmware')
-source=("$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz")
+source=("fw-src.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz")
 sha256sums=('SKIP')
 
 package() {
