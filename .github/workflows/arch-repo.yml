@@ -58,7 +58,10 @@ jobs:
       - name: Resolve which packages to build
         id: set-matrix
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+              # WIP kernel branches: only build the kernel under test
+              echo '["linux-nabu-616"]' > matrix.json
+            elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             jq -n -c \
               --argjson upower_nncc "${{ inputs.build_upower_nncc }}" \
               --argjson bootc "${{ inputs.build_bootc }}" \
@@ -190,7 +193,7 @@ jobs:
     name: Assemble pacman repository
     runs-on: ubuntu-24.04-arm
     needs: build-packages
-    if: ${{ needs.build-packages.result == 'success' }}
+    if: ${{ github.ref == 'refs/heads/main' && needs.build-packages.result == 'success' }}
     permissions:
       contents: write
     steps:
