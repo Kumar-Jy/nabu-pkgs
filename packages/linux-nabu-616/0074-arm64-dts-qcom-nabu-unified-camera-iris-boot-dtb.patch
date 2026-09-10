@@ -1,7 +1,6 @@
-diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
-@@ -1,10 +1,11 @@
+@@ -1,12 +1,14 @@
  // SPDX-License-Identifier: BSD-3-Clause
  /*
 - * Xiaomi Pad 5 (nabu) camera-enabled derivative.
@@ -17,4 +16,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts b/arch/arm64
   */
  /dts-v1/;
  
+ #include "sm8150-xiaomi-nabu.dts"
++#include "sm8150-xiaomi-nabu-iris.dtsi"
+ #include "sm8150-xiaomi-nabu-camera.dtsi"
 
