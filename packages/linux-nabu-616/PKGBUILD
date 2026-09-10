@@ -13,7 +13,7 @@ pkgver=6.16.0
 _kernelname=${pkgbase#linux}
 _desc="AArch64 Xiaomi Pad 5"
 _srcname="linux-${pkgver/%.0/}"
-_dtbfile='qcom/sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb'
+_dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
 _camera=nabu-camera-c0e4fdb82809fd31357ed1f32604b81238591971
 _iris=nabu-iris-ed09ef4dff8e6a41e98feb81b2efee1d1f66f214
 _accel=nabu-accelerometer-25bc5c3050e2f50827b31ff724aad5fb79004786
@@ -85,8 +85,22 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0055-power-supply-qcom_smbx-integrate-USB-PD-via-the-type-c-port.patch'
         '0056-power-supply-qcom_smbx-clear-USBIN-suspend-for-any-attached-source.patch'
         '0057-arm64-dts-qcom-sm8150-xiaomi-nabu-only-advertise-5V-sink-PDO.patch'
-        '0058-NABU-iris-suspend-succeed-keep-vpu-powered.patch'
-        '0059-nabu-accel-fastrpc-pdr-6.16.patch')
+        '0058-video-iris-CFM880-fork-v154-SM8150-platform-videocc-trigger-DTS.patch'
+        '0059-media-camss-Add-SM8150-camss-port.patch'
+        '0060-media-camss-Add-SM8150-camss-yaml-binding.patch'
+        '0061-arm64-dts-qcom-sm8150-add-camss-and-cci-nodes.patch'
+        '0062-media-i2c-ov13b10-Add-DT-compatible.patch'
+        '0063-arm64-dts-qcom-nabu-add-camera-sensor-nodes-disabled-by-default.patch'
+        '0064-arm64-dts-qcom-nabu-add-camera-probe-dtb.patch'
+        '0065-arm64-dts-qcom-nabu-add-cci-probe-dtb.patch'
+        '0066-media-i2c-Add-Chipnext-CN3927-lens-driver.patch'
+        '0067-arm64-dts-qcom-nabu-add-rear-camera-probe-dtb.patch'
+        '0068-media-camss-camss-trace.patch'
+        '0069-arm64-dts-qcom-nabu-fix-camss-pinctrl-conflict.patch'
+        '0070-media-i2c-ov13b10-ov8856-handle-missing-link-frequencies.patch'
+        '0071-nabu-accel-fastrpc-pdr-6.16.patch'
+        '0072-arm64-dts-qcom-nabu-enable-slpi-fastrpc-accelerometer.patch'
+        '0073-NABU-iris-suspend-succeed-keep-vpu-powered.patch')
 sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
@@ -94,7 +108,8 @@ sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-  'SKIP' 'SKIP' 'SKIP'
+  'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+  'SKIP' 'SKIP' 'SKIP' 'SKIP'
 )
 
 prepare() {
@@ -109,29 +124,26 @@ prepare() {
     src="${src%%::*}"
     src="${src##*/}"
     [[ $src = *.patch ]] || continue
-    # 0058 & 0059 modify files from the overlays, so apply them after overlays
-    [[ $src = *iris-suspend* || $src = *accel-fastrpc* ]] && continue
     msg2 "Applying patch: $src..."
     patch -Np1 < "../$src"
   done
 
-  echo "Applying nabu-camera source overlay..."
-  cp -R "${srcdir}/${_camera}/kernel-overlay/." ./
-  echo "Applying nabu-iris source overlay..."
-  cp -R "${srcdir}/${_iris}/kernel-overlay/." ./
-  echo "Applying nabu-accelerometer overlay..."
-  cp -R "${srcdir}/${_accel}/kernel-overlay/." ./
-  echo "Applying nabu-accelerometer FastRPC/PDR patch (6.16 refresh)..."
-  patch -p1 < "${srcdir}/0059-nabu-accel-fastrpc-pdr-6.16.patch"
-  echo "Applying iris suspend fix (succeed s2idle, keep VPU powered)..."
-  patch -p1 < "${srcdir}/0058-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
-
-  # Register the unified DTB in Kbuild so it compiles with symbols (-@)
-  echo 'dtb-$(CONFIG_ARCH_QCOM) += sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb' >> arch/arm64/boot/dts/qcom/Makefile
-
   cat "${srcdir}/config" > ./.config
-  cat "${srcdir}/${_camera}/config/nabu-camera.config" >> .config
-  cat "${srcdir}/${_iris}/config/nabu-iris.config" >> .config
+  echo 'CONFIG_MEDIA_SUPPORT=m' >> .config
+  echo 'CONFIG_MEDIA_CAMERA_SUPPORT=y' >> .config
+  echo 'CONFIG_VIDEO_DEV=m' >> .config
+  echo 'CONFIG_I2C_QCOM_CCI=m' >> .config
+  echo 'CONFIG_SM_CAMCC_8150=m' >> .config
+  echo 'CONFIG_VIDEO_QCOM_CAMSS=m' >> .config
+  echo 'CONFIG_VIDEO_OV13B10=m' >> .config
+  echo 'CONFIG_VIDEO_OV8856=m' >> .config
+  echo 'CONFIG_VIDEO_CN3927=m' >> .config
+  echo 'CONFIG_CMA_SIZE_MBYTES=256' >> .config
+  echo 'CONFIG_FW_LOADER_COMPRESS=y' >> .config
+  echo 'CONFIG_FW_LOADER_COMPRESS_XZ=y' >> .config
+  echo 'CONFIG_FW_LOADER_COMPRESS_ZSTD=y' >> .config
+  echo 'CONFIG_VIDEO_QCOM_IRIS=m' >> .config
+  
   echo 'CONFIG_QCOM_PD_MAPPER=m' >> .config
   echo 'CONFIG_CHARGER_QCOM_SMB2=y' >> .config
   echo '# CONFIG_CHARGER_LN8000 is not set' >> .config
@@ -157,8 +169,7 @@ build() {
   make ${MAKEFLAGS} ARCH=arm64 Image Image.gz modules
   # Generate device tree blobs with symbols to support applying device tree overlays in U-Boot
   make ${MAKEFLAGS} ARCH=arm64 DTC_FLAGS="-@" dtbs
-  # Build derived iris+camera+SLPI DTB
-  make ARCH=arm64 DTC_FLAGS="-@" qcom/sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb
+
 }
 
 _package_common() {

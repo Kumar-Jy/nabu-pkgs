@@ -1,0 +1,55 @@
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -274,4 +274,5 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-iris.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-camera.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-xiaomi-nabu-cci.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-hdk.dtb
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dts
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dts
+@@ -0,0 +1,14 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Xiaomi Pad 5 (nabu) CCI-only probe derivative.
++ *
++ * A2 diagnostic: enables ONLY the CCI I2C controllers (+ camcc as their
++ * clock/power parent) so tools can scan the sensor buses (i2cdetect) and
++ * read OV13B10 / OV8856 / CN3927 IDs. camass DMA block and the sensor
++ * child nodes stay disabled: no SMMU/DMA path, no camss port config.
++ * Boot ONLY for CCI bus enumeration; the default DTB stays camera-inert.
++ */
++/dts-v1/;
++
++#include "sm8150-xiaomi-nabu.dts"
++#include "sm8150-xiaomi-nabu-cci.dtsi"
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dtsi b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dtsi
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-cci.dtsi
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * A2 CCI-only overrides. camcc must be "okay" to clock cci's
++ * CAM_CC_CCI_*_CLK / TITAN_TOP_GDSC power-domain; cci0/cci1 become i2c
++ * adapters for bus scanning. camss + sensor children stay "disabled".
++ */
++&camcc {
++	status = "okay";
++};
++
++&cci0 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++};
++
++&cci1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++};
+
