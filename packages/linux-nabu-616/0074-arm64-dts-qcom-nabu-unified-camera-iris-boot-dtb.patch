@@ -1,0 +1,20 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dts
+@@ -1,10 +1,11 @@
+ // SPDX-License-Identifier: BSD-3-Clause
+ /*
+- * Xiaomi Pad 5 (nabu) camera-enabled derivative.
++ * Xiaomi Pad 5 (nabu) unified boot DTB: base + iris/Venus + camera.
+  *
+- * Keep the default boot DTB (sm8150-xiaomi-nabu.dtb) fully camera-disabled;
+- * this derived DTB is booted ONLY for on-device camera probing. It enables the
+- * camss/cci camera node tree that 0063 leaves status = "disabled".
++ * The default sm8150-xiaomi-nabu.dtb keeps camera/iris disabled (0063/0058);
++ * this derived DTB is the one actually booted (PKGBUILD _dtbfile) and enables
++ * the iris/video decode node plus the camss/cci camera node tree, so the
++ * device boots with camera + iris decode as the default target.
+  */
+ /dts-v1/;
+ 
+
