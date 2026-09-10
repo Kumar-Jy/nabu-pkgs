@@ -1,7 +1,7 @@
 diff --git aa/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
-@@ -1151,3 +1151,245 @@
+@@ -1151,3 +1151,252 @@
  		reg = <0xbc 0x4>;
  	};
  };
@@ -59,6 +59,13 @@ diff --git aa/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/b/arch/arm64/boo
 +	};
 +};
 +
++/* Camera I/O rail (DOVDD) must stay powered so the sensors' I2C pads
++ * keep the CCI bus high; unpowered pads clamp SDA/SCL low and lock up
++ * the bus with master timeouts. Upstream ov13b10 only drives avdd. */
++&vreg_l1c_1p8 {
++	regulator-always-on;
++};
++
 +&tlmm {
 +	cam_sensor_mclk0_default: cam-sensor-mclk0-default {
 +		function = "cam_mclk";
@@ -105,28 +112,28 @@ diff --git aa/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/b/arch/arm64/boo
 +	};
 +
 +	cci0_default: cci0-default {
-+		pins = "gpio17", "gpio18";
++		pins = "gpio17", "gpio18", "gpio19", "gpio20";
 +		function = "cci_i2c";
 +		bias-pull-up;
 +		drive-strength = <2>;
 +	};
 +
 +	cci0_sleep: cci0-sleep {
-+		pins = "gpio17", "gpio18";
++		pins = "gpio17", "gpio18", "gpio19", "gpio20";
 +		function = "cci_i2c";
 +		bias-pull-up;
 +		drive-strength = <2>;
 +	};
 +
 +	cci1_default: cci1-default {
-+		pins = "gpio19", "gpio20";
++		pins = "gpio31", "gpio32", "gpio33", "gpio34";
 +		function = "cci_i2c";
 +		bias-pull-up;
 +		drive-strength = <2>;
 +	};
 +
 +	cci1_sleep: cci1-sleep {
-+		pins = "gpio19", "gpio20";
++		pins = "gpio31", "gpio32", "gpio33", "gpio34";
 +		function = "cci_i2c";
 +		bias-pull-up;
 +		drive-strength = <2>;
