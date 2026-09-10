@@ -1,16 +1,11 @@
 diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
-index 0e441ab..7c5a935 100644
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts
-@@ -791,8 +791,26 @@
- };
- 
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu.dts	2026-09-10 06:16:16.745823816 +0530
+@@ -793,6 +793,24 @@
  &remoteproc_slpi {
-- status = "disabled";
-- firmware-name = "qcom/sm8150/xiaomi/nabu/slpi_nb.mbn";
-+	firmware-name = "qcom/sm8150/xiaomi/nabu/slpi_nb.mbn";
-+	status = "okay";
-+
+  status = "okay";
+  firmware-name = "qcom/sm8150/xiaomi/nabu/slpi_nb.mbn";
 +	glink-edge {
 +		fastrpc {
 +			qcom,protection-domain = "tms/servreg", "msm/slpi/root_pd";
@@ -28,6 +23,7 @@ index 0e441ab..7c5a935 100644
 +			};
 +		};
 +	};
++
  };
  
  &sound {
