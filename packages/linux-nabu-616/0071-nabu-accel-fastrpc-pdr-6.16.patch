@@ -368,7 +368,9 @@ diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper
 index 154ca5beb471..6fc06b08499e 100644
 --- a/drivers/soc/qcom/qcom_pd_mapper.c
 +++ b/drivers/soc/qcom/qcom_pd_mapper.c
-@@ -484,6 +484,8 @@ static const struct qcom_pdm_domain_data *sm8150_domains[] = {
+@@ -501,8 +501,10 @@ static const struct qcom_pdm_domain_data *sm8150_domains[] = {
+ 	&adsp_audio_pd,
+ 	&adsp_root_pd,
  	&cdsp_root_pd,
  	&mpss_root_pd_gps,
  	&mpss_wlan_pd,
