@@ -175,7 +175,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman git
+          sudo apt-get install -y podman git curl
 
       - name: Compute source signature
         id: sig
@@ -191,6 +191,14 @@ jobs:
             upower-nncc)
               rev=$(git ls-remote https://gitlab.freedesktop.org/upower/upower.git HEAD 2>/dev/null | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$rev-$pkgver-$pkgrel"
+              ;;
+            google-chrome)
+              ver=$(curl -sL "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages" 2>/dev/null | awk '/^Package: google-chrome-stable$/ {p=1; next} p && /^Version:/ {print $2; exit}' | cut -d '-' -f1)
+              sig="$pkg-${ver:-$pkgver}-$pkgrel"
+              ;;
+            code)
+              ver=$(curl -s "https://update.code.visualstudio.com/api/update/linux-arm64/stable/0000000000000000000000000000000000000000" 2>/dev/null | sed -n 's/.*"productVersion":"\([^"]*\)".*/\1/p')
+              sig="$pkg-${ver:-$pkgver}-$pkgrel"
               ;;
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"

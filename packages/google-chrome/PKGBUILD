@@ -1,8 +1,8 @@
 # Maintainer: Kumar-Jy
 
 pkgname=google-chrome
-pkgver=152.0.7977.82
-pkgrel=2
+pkgver=153.0.8010.36
+pkgrel=1
 pkgdesc="The popular web browser by Google (Stable Channel)"
 arch=('aarch64')
 url="https://www.google.com/chrome"
@@ -22,8 +22,8 @@ source=("https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.d
 sha256sums=('SKIP')
 
 pkgver() {
-  curl -sSf "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages" | \
-    grep -A1 "Package: google-chrome-stable" | awk '/Version/{print $2}' | cut -d '-' -f1 | head -n1
+  curl -sL "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages" 2>/dev/null | \
+    awk '/^Package: google-chrome-stable$/ {p=1; next} p && /^Version:/ {print $2; exit}' | cut -d '-' -f1
 }
 
 prepare() {
