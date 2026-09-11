@@ -2,13 +2,14 @@
 # Universal Hardware & System Monitor for Linux across all DEs
 
 pkgname=system-monitor
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
-pkgdesc="Universal Hardware & System Monitor for Linux across all DEs (GNOME, KDE Plasma, XFCE)"
+pkgdesc="Universal Hardware & System Monitor for Linux across all DEs (GPU, CPU, RAM, Battery/Charging & Sensors)"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('MIT')
 depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'hicolor-icon-theme')
+optdepends=('lm_sensors: CLI sensors and thermal diagnostics support')
 provides=('nabu-system-monitor' 'nabu-gpu-monitor' 'sysmon')
 replaces=('nabu-system-monitor' 'nabu-gpu-monitor')
 source=('system-monitor'

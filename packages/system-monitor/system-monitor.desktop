@@ -1,13 +1,13 @@
 [Desktop Entry]
 Name=System Monitor
 GenericName=Hardware & System Monitor
-Comment=Universal Hardware and System Monitor for Linux - GPU, CPU, RAM & Battery
+Comment=Universal Hardware and System Monitor for Linux - GPU, CPU, RAM, Battery/Charging & Sensors
 Exec=system-monitor
 Icon=system-monitor
 Terminal=false
 Type=Application
 Categories=System;Monitor;GTK;Qt;KDE;GNOME;XFCE;Settings;HardwareSettings;
-Keywords=system;gpu;adreno;cpu;ram;memory;battery;thermal;temperature;clock;frequency;nabu;plasma;kde;gnome;xfce;monitor;diagnostics;
+Keywords=system;gpu;adreno;cpu;ram;memory;battery;charging;charger;power;sensors;thermal;temperature;clock;frequency;nabu;plasma;kde;gnome;xfce;monitor;diagnostics;
 StartupWMClass=org.local.system_monitor
 StartupNotify=true
 X-KDE-SubstituteUID=false

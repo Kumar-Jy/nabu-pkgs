@@ -2,7 +2,7 @@
 
 A lightweight, universal hardware and system monitor built for Arch Linux and Linux devices, with dedicated support for the **Xiaomi Pad 5 (`nabu`)** as well as standard PCs, laptops, and ARM single-board computers.
 
-Most Linux system monitors do not expose Adreno GPU frequency/thermals, per-process DRM GPU render loads, or SoC big.LITTLE core metrics. This tool hooks directly into kernel `devfreq`, DRM `fdinfo`, and hardware thermal zones to give you instant hardware telemetry without unnecessary CPU overhead.
+Most Linux system monitors do not expose Adreno GPU clock/thermals, per-process DRM GPU render loads, Qualcomm PMIC thermals, battery charge rate in Watts, or big.LITTLE core metrics. This tool hooks directly into kernel `devfreq`, DRM `fdinfo`, `power_supply`, and hardware thermal zones to give you real-time hardware telemetry without CPU overhead.
 
 ---
 
@@ -20,79 +20,79 @@ Most Linux system monitors do not expose Adreno GPU frequency/thermals, per-proc
   - RAM usage, available headroom, cache/buffers breakdown.
   - Compressed ZRAM swap usage on `/dev/zram0` (or standard swap).
   - Top memory-consuming processes.
-- **Device & Power**:
-  - Battery percentage, charge status, charging rate in Watts, and battery temperature (supports `qcom-battery`, `BAT0`, `BAT1`).
-  - Automatically identifies AC wall power on desktop systems without batteries.
-  - Disk storage utilization.
-  - Real-time upload and download speeds on the active network interface.
-- **System Info**:
-  - Live desktop environment detection (GNOME, KDE Plasma, XFCE, Cinnamon, Hyprland, Sway, etc.).
+- **Battery & Charging Monitor**:
+  - State of charge with live visual level gauge.
+  - Real-time charging / discharging power rate in Watts ($V \times I$).
+  - High-precision voltage ($V$) and current ($mA$) telemetry.
+  - Battery capacity and design energy (8,720 mAh / 33.6 Wh on Pad 5).
+  - Cell temperature and battery health condition.
+  - Runtime remaining and time-to-full estimation.
+  - Charger connection status, hardware controller (`PM8150B Charger IC`), and protocol detection (`USB-PD PPS Fast Charge`, `DCP`, `CDP`, `SDP`).
+  - Charger input voltage, current limits, and charger IC temperature.
+- **Comprehensive Sensor & Thermal Monitor**:
+  - Dynamic grouping of 28+ SoC and board thermal sensors:
+    - **CPU & Compute**: Silver Little cores (0-3), Gold Big cores (4-6 Top/Bottom), Gold Prime Super core (7 Top/Bottom), Silicon Clusters, AI Compute DSP & Hexagon HVX.
+    - **Graphics & Multimedia**: Adreno 640 GPU, Iris Video Processor (VPU), CamSS ISP Camera Subsystem.
+    - **PMIC & System**: PM8150 Master PMIC, PM8150B Charger PMIC, PM8150L Secondary PMIC, DRAM Memory, Wi-Fi WLAN, Cellular Modem, Always-On Subsystem (AOSS).
+    - **Hardware State**: Tablet Mode switch sensor, 3.5mm Headset Jack detection, PMIC ADC channels.
+  - Universal fallback for generic Linux PCs/laptops scanning all `/sys/class/thermal` and `/sys/class/hwmon` nodes.
+  - Visual color-coded temperature badges (🟢 Cool, 🔵 Normal, 🟡 Warm, 🔴 Hot).
+- **Device & Storage**:
+  - Storage telemetry for root (`/`) and EFI system partition (`/boot/efi`).
+  - Real-time network throughput (upload and download speeds) on the active interface.
+  - Input hardware detection (Touchscreen, Stylus pen, Keyboard dock).
+- **System Information & Diagnostics**:
+  - Desktop environment detection (GNOME, KDE Plasma, XFCE, Cinnamon, Hyprland, Sway, etc.).
   - Kernel release, architecture, uptime, and load averages.
-- **Diagnostic Logging**:
-  - In-app **Export Log** button to save instant diagnostic snapshots to `~/Documents`.
-  - CLI diagnostic mode via `--log` or `-l` for fast terminal dumps.
-
----
-
-## Desktop Environment Support
-
-Built with GTK4 and Libadwaita to adhere to modern FreeDesktop standards:
-- **GNOME**: Native adaptive layout, header bar, and smooth view switcher.
-- **KDE Plasma**: Auto-switches dark/light mode following the FreeDesktop appearance portal (`org.freedesktop.appearance.color-scheme`). Correct window grouping and launcher icon via `StartupWMClass`.
-- **XFCE / Other DEs**: Standard window decorations, dual-installed icons in both `hicolor` and `/usr/share/pixmaps`.
-- **Wayland & X11**: Works out of the box on both session types.
+  - One-click and CLI export for full diagnostics or category-specific reports (`~/Documents/sysmon-*-log-*.txt`).
 
 ---
 
 ## Installation
 
-Build and install using `makepkg`:
+### From Arch Linux Package (`nabu-pkgs` repository)
 
 ```bash
 cd packages/system-monitor
 makepkg -si
 ```
 
-### Dependencies
-- `python`
-- `python-gobject`
-- `libadwaita`
-- `gtk4`
-- `hicolor-icon-theme`
+### CLI Symlinks Provided
+
+The package provides the following symlinks:
+- `system-monitor`
+- `sysmon`
+- `nabu-system-monitor`
+- `nabu-gpu-monitor`
 
 ---
 
-## Usage
+## Command-Line Interface (Diagnostics)
 
-Launch it from your desktop app drawer (**"System Monitor"**) or from terminal:
-
-```bash
-# Full command
-system-monitor
-
-# Short aliases
-sysmon
-nabu-system-monitor
-```
-
-### CLI Diagnostics
-
-Dump diagnostic logs directly to stdout without launching the GUI:
+Generate instant diagnostic text reports from the terminal:
 
 ```bash
-# Print GPU stats
-system-monitor --log gpu
+# Print complete system diagnostic report
+sysmon --log all
 
-# Print CPU per-core info
-system-monitor --log cpu
+# Print battery and charging telemetry
+sysmon --log power
 
-# Dump full system diagnostics to a file
-system-monitor --log all > ~/system-report.txt
+# Print all thermal zones and hardware sensors
+sysmon --log sensors
+
+# Print GPU clocks, temperatures, and active DRM clients
+sysmon --log gpu
+
+# Print CPU load and per-core frequencies
+sysmon --log cpu
+
+# Print memory and swap allocation
+sysmon --log memory
 ```
 
 ---
 
-## License & Copyright
+## License
 
-Licensed under the **MIT License**.  
-Copyright (c) 2026 Kumar-Jy and nabu-pkgs contributors. See [LICENSE](LICENSE) for details.
+MIT License &copy; 2026 Kumar-Jy.
