@@ -17,7 +17,7 @@ _dtbfile='qcom/sm8150-xiaomi-nabu-camera.dtb'
 _camera=nabu-camera-c0e4fdb82809fd31357ed1f32604b81238591971
 _iris=nabu-iris-ed09ef4dff8e6a41e98feb81b2efee1d1f66f214
 _accel=nabu-accelerometer-25bc5c3050e2f50827b31ff724aad5fb79004786
-pkgrel=11
+pkgrel=12
 arch=('aarch64')
 url="http://www.kernel.org/"
 license=('GPL2')
@@ -101,7 +101,8 @@ source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
         '0071-nabu-accel-fastrpc-pdr-6.16.patch'
         '0072-arm64-dts-qcom-nabu-enable-slpi-fastrpc-accelerometer.patch'
         '0073-NABU-iris-suspend-succeed-keep-vpu-powered.patch'
-        '0074-arm64-dts-qcom-nabu-unified-camera-iris-boot-dtb.patch')
+        '0074-arm64-dts-qcom-nabu-unified-camera-iris-boot-dtb.patch'
+        '0075-media-i2c-ov13b10-enable-all-power-rails.patch')
 sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
@@ -110,7 +111,7 @@ sha256sums=(
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
   'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-  'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+  'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
 )
 
 prepare() {

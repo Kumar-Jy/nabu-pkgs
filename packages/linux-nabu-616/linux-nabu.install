@@ -5,7 +5,9 @@
 
 regenerate_uki() {
     local kernver
-    kernver=$(ls /usr/lib/modules/ 2>/dev/null | sort -V | tail -1)
+    # Ignore preserved .old/.safe module dirs so we never try to build a UKI
+    # against a vmlinuz that no longer exists (sort -V puts "x.old" last).
+    kernver=$(ls -d /usr/lib/modules/*/ 2>/dev/null | xargs -n1 basename | grep -vE '\.(old|safe)$' | sort -V | tail -1)
     [ -n "$kernver" ] || return 0
     [ -f "/boot/vmlinuz-${kernver}" ] || return 0
 
