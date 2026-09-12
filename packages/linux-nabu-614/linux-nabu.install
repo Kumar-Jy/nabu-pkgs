@@ -40,8 +40,20 @@ regenerate_uki() {
     fi
 
     # Point the UKI DeviceTree at the stable dtb symlink (always current).
-    if [ -f /usr/lib/kernel/uki.conf ]; then
-        sed -i 's|^DeviceTree=.*|DeviceTree=/boot/dtb-linux-nabu|' /usr/lib/kernel/uki.conf
+    mkdir -p /etc/kernel
+    if [ ! -f /etc/kernel/uki.conf ]; then
+        if [ -f /usr/lib/kernel/uki.conf ]; then
+            cp /usr/lib/kernel/uki.conf /etc/kernel/uki.conf
+        else
+            printf '[UKI]\n' > /etc/kernel/uki.conf
+        fi
+    fi
+    if grep -q '^DeviceTree=' /etc/kernel/uki.conf; then
+        sed -i 's|^DeviceTree=.*|DeviceTree=/boot/dtb-linux-nabu|' /etc/kernel/uki.conf
+    elif grep -q '^\\[UKI\\]' /etc/kernel/uki.conf; then
+        sed -i '/^\\[UKI\\]/a DeviceTree=/boot/dtb-linux-nabu' /etc/kernel/uki.conf
+    else
+        printf '\n[UKI]\nDeviceTree=/boot/dtb-linux-nabu\n' >> /etc/kernel/uki.conf
     fi
 
     mkinitcpio -P

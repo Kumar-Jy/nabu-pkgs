@@ -3,7 +3,7 @@
 
 pkgbase=linux-nabu
 pkgver=6.18.42
-pkgrel=2
+pkgrel=3
 arch=('aarch64')
 url="https://github.com/TwinbornPlate75/linux-nabu"
 license=('GPL2')
