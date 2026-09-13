@@ -3,3 +3,5 @@
 **/*.pkg.tar.*
 **/*.tar.*
 **/stable
+**/__pycache__/
+*.pyc

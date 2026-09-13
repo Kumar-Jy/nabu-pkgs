@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Camera Studio
+GenericName=Camera & Image Processor
+Comment=Full-fledged hardware camera with real-time color grading, filters, and resolution controls
+Exec=camera-studio
+Icon=camera-studio
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Photography;GTK;GNOME;Qt;KDE;
+Keywords=camera;photo;webcam;video;snapshot;studio;image;filter;grading;resolution;adreno;nabu;
+StartupWMClass=org.local.camera_studio
+StartupNotify=true

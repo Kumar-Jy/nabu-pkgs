@@ -1,0 +1,38 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Full-fledged Camera & Image Processing Studio for Linux
+
+pkgname=camera-studio
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Full-fledged hardware camera with real-time color grading, filters, and resolution controls"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugin-gtk4' 'gst-plugin-libcamera' 'libcamera' 'v4l-utils' 'iio-sensor-proxy' 'hicolor-icon-theme')
+optdepends=('pipewire: audio shutter feedback'
+            'libcanberra: system camera shutter sounds')
+provides=('pro-camera' 'cam-studio')
+source=('camera-studio'
+        'camera-studio.desktop'
+        'camera-studio.svg'
+        '90-camera-flash.rules'
+        'LICENSE'
+        'README.md')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/camera-studio" "$pkgdir/usr/bin/camera-studio"
+  ln -sf camera-studio "$pkgdir/usr/bin/pro-camera"
+  ln -sf camera-studio "$pkgdir/usr/bin/cam-studio"
+  install -Dm644 "$srcdir/camera-studio.desktop" "$pkgdir/usr/share/applications/camera-studio.desktop"
+  install -Dm644 "$srcdir/camera-studio.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/camera-studio.svg"
+  install -Dm644 "$srcdir/camera-studio.svg" "$pkgdir/usr/share/pixmaps/camera-studio.svg"
+  install -Dm644 "$srcdir/90-camera-flash.rules" "$pkgdir/usr/lib/udev/rules.d/90-camera-flash.rules"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

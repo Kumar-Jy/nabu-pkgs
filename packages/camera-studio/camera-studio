@@ -1,0 +1,1993 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Kumar-Jy <https://github.com/Kumar-Jy>
+# Part of nabu-pkgs (Camera Studio with Real-time & Post-Capture Image Processing)
+
+import os
+import sys
+import time
+import glob
+import subprocess
+from datetime import datetime
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+gi.require_version('Gst', '1.0')
+gi.require_version('GdkPixbuf', '2.0')
+gi.require_version('Gio', '2.0')
+from gi.repository import Gtk, Adw, Gst, GdkPixbuf, GLib, Gdk, Gio
+
+Gst.init(None)
+
+def find_focus_device():
+    for subdev in sorted(glob.glob('/dev/v4l-subdev*')):
+        try:
+            out = subprocess.run(['v4l2-ctl', '-d', subdev, '-C', 'focus_absolute'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if 'focus_absolute' in out.stdout:
+                return subdev
+        except Exception:
+            pass
+    return None
+
+# Discover Available Cameras
+def discover_cameras():
+    cameras = []
+    # 1. Probe libcamera cameras (mainline sm8150 nabu)
+    try:
+        res = subprocess.run(['cam', '-l'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if ':' in line:
+                idx_part, rest = line.split(':', 1)
+                if idx_part.strip().isdigit():
+                    if '(' in rest and rest.endswith(')'):
+                        name_part, path_part = rest.rsplit('(', 1)
+                        cam_name = name_part.strip()
+                        cam_path = path_part.rstrip(')').strip()
+                    else:
+                        cam_name = rest.strip()
+                        cam_path = rest.strip()
+                    
+                    is_front = 'front' in cam_name.lower() or 'bus@1' in cam_path
+                    sensor = 'OmniVision OV8856 (Front 8MP)' if is_front else 'OmniVision OV13B10 (Rear 13MP)'
+                    max_w, max_h = (3272, 2464) if is_front else (4200, 3120)
+                    cameras.append({
+                        'type': 'libcamera',
+                        'id': cam_path,
+                        'name': 'Front Selfie Camera' if is_front else 'Rear Main Camera',
+                        'sensor': sensor,
+                        'max_res': (max_w, max_h),
+                        'megapixels': '8 MP' if is_front else '13 MP',
+                        'is_front': is_front
+                    })
+    except Exception:
+        pass
+
+    # 2. Probe V4L2 USB devices if no libcamera detected or additional external webcams exist
+    if not cameras:
+        for dev in sorted(glob.glob('/dev/video*')):
+            try:
+                out = subprocess.run(['v4l2-ctl', '--device', dev, '--all'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout
+                if 'Video Capture' in out and 'platform:' not in out:
+                    cameras.append({
+                        'type': 'v4l2',
+                        'id': dev,
+                        'name': f"V4L2 Camera ({os.path.basename(dev)})",
+                        'sensor': 'USB / External Webcam',
+                        'max_res': (1920, 1080),
+                        'megapixels': 'FHD',
+                        'is_front': False
+                    })
+            except Exception:
+                pass
+
+    # 3. Fallback virtual source if no hardware present
+    if not cameras:
+        cameras.append({
+            'type': 'test',
+            'id': 'videotestsrc',
+            'name': 'Virtual Studio Camera (Test Pattern)',
+            'sensor': 'Software Video Pattern',
+            'max_res': (1920, 1080),
+            'megapixels': '2 MP',
+            'is_front': False
+        })
+
+    return cameras
+
+
+COLOR_PRESETS = [
+    {
+        'id': 'natural',
+        'name': '🌿 Natural',
+        'desc': 'Standard neutral colors',
+        'brightness': 0.0,
+        'contrast': 1.0,
+        'saturation': 1.0,
+        'hue': 0.0,
+        'gamma': 1.0
+    },
+    {
+        'id': 'vivid',
+        'name': '🌈 Vivid',
+        'desc': 'Punchy vibrant colors & crisp contrast',
+        'brightness': 0.04,
+        'contrast': 1.25,
+        'saturation': 1.35,
+        'hue': 0.0,
+        'gamma': 1.0
+    },
+    {
+        'id': 'cinematic',
+        'name': '🎬 Cinematic',
+        'desc': 'Moody teal & filmic contrast',
+        'brightness': 0.02,
+        'contrast': 1.20,
+        'saturation': 1.15,
+        'hue': 0.08,
+        'gamma': 1.05
+    },
+    {
+        'id': 'warm',
+        'name': '🌅 Warm Sunset',
+        'desc': 'Golden hour warmth and rich tones',
+        'brightness': 0.05,
+        'contrast': 1.10,
+        'saturation': 1.20,
+        'hue': -0.08,
+        'gamma': 0.95
+    },
+    {
+        'id': 'vintage',
+        'name': '🎞️ Vintage Sepia',
+        'desc': 'Retro faded nostalgic photo look',
+        'brightness': 0.06,
+        'contrast': 0.90,
+        'saturation': 0.60,
+        'hue': -0.15,
+        'gamma': 1.15
+    },
+    {
+        'id': 'bw',
+        'name': '🖤 B&W Classic',
+        'desc': 'Timeless pure monochrome',
+        'brightness': 0.02,
+        'contrast': 1.25,
+        'saturation': 0.0,
+        'hue': 0.0,
+        'gamma': 1.0
+    },
+    {
+        'id': 'noir',
+        'name': '🌌 Noir High-Contrast',
+        'desc': 'Dramatic shadows & stark highlights',
+        'brightness': -0.05,
+        'contrast': 1.60,
+        'saturation': 0.0,
+        'hue': 0.0,
+        'gamma': 0.85
+    },
+    {
+        'id': 'cool',
+        'name': '❄️ Nordic Cool',
+        'desc': 'Crisp blue tones with clear whites',
+        'brightness': 0.03,
+        'contrast': 1.10,
+        'saturation': 1.10,
+        'hue': 0.20,
+        'gamma': 1.0
+    }
+]
+
+RESOLUTION_PRESETS = [
+    {'name': 'Full Sensor Native', 'w': 0, 'h': 0, 'desc': 'Maximum camera resolution'},
+    {'name': '4K UHD (16:9)', 'w': 3840, 'h': 2160, 'desc': '3840 × 2160 • 8.3 MP'},
+    {'name': '2K QHD (16:9)', 'w': 2560, 'h': 1440, 'desc': '2560 × 1440 • 3.7 MP'},
+    {'name': 'Full HD (16:9)', 'w': 1920, 'h': 1080, 'desc': '1920 × 1080 • 2.1 MP'},
+    {'name': 'HD (16:9)', 'w': 1280, 'h': 720, 'desc': '1280 × 720 • 0.9 MP'},
+    {'name': '4:3 Standard', 'w': 2048, 'h': 1536, 'desc': '2048 × 1536 • 3.1 MP'},
+    {'name': '1:1 Square (Avatar)', 'w': 2160, 'h': 2160, 'desc': '2160 × 2160 • Square'}
+]
+
+
+class CameraStudioWindow(Adw.ApplicationWindow):
+    __gtype_name__ = "CameraStudioWindow"
+
+    def __init__(self, app):
+        super().__init__(application=app, title="Camera Studio")
+        self.set_default_size(960, 720)
+
+        # Style & Dark theme
+        style_mgr = Adw.StyleManager.get_default()
+        style_mgr.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+
+        # Icons search paths
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        theme.add_search_path('/home/user/.local/share/icons/hicolor')
+        theme.add_search_path('/usr/share/pixmaps')
+        self.set_icon_name("camera-studio")
+
+        # Save Directory
+        self.save_dir = os.path.expanduser('~/Pictures/Camera')
+        os.makedirs(self.save_dir, exist_ok=True)
+
+        # Camera state
+        self.cameras = discover_cameras()
+        self.cur_cam_idx = 0
+        self.pipeline = None
+        self.paintable_sink = None
+        self.bal_elem = None
+        self.gam_elem = None
+        self.flip_elem = None
+
+        # Flashlight & Flash mode: 'off', 'auto', 'torch'
+        self.flash_mode = 'off'
+        self.flash_brightness = 255
+        self.torch_on = False
+
+        # Image processing states
+        self.brightness = 0.0
+        self.contrast = 1.0
+        self.saturation = 1.0
+        self.hue = 0.0
+        self.gamma = 1.0
+        self.mirrored = False
+        self.rotation_degrees = 0
+        self.auto_rotate = True
+        self.device_orientation = 'normal'
+        self.sensor_proxy = None
+
+        # Hardware Lens Focus (Voice Coil Motor on cn3927)
+        self.focus_subdev = find_focus_device()
+        self.current_focus = 380 # Hyperfocal distance default
+        if self.focus_subdev:
+            self.set_focus(self.current_focus)
+
+        self.current_applied_rot = None
+        self.init_sensor_proxy()
+        self.orient_timer_id = GLib.timeout_add(200, self.check_screen_and_sensor_orientation)
+
+        # Custom resolution & output state
+        self.target_res_idx = 0
+        self.output_format = 'jpeg' # 'jpeg', 'png', 'webp'
+        self.jpeg_quality = 95
+
+        # Viewfinder features
+        self.grid_mode = 0 # 0=Off, 1=Rule of Thirds (3x3), 2=Golden Ratio, 3=Center Cross
+        self.timer_seconds = 0 # 0=Instant, 3=3s, 5=5s, 10=10s
+        self.countdown_remaining = 0
+        self.countdown_source_id = None
+        self.fill_light_active = False
+
+        # Gallery / recent captures
+        self.recent_photos = self.scan_recent_photos()
+        self.last_saved_path = self.recent_photos[0] if self.recent_photos else None
+
+        # Build UI
+        self.build_ui()
+
+        # Keyboard shortcuts
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect('key-pressed', self.on_key_pressed)
+        self.add_controller(key_controller)
+
+        # Start Camera Pipeline
+        self.start_camera_pipeline()
+
+    def scan_recent_photos(self):
+        files = glob.glob(os.path.join(self.save_dir, 'IMG_*.*'))
+        files.sort(key=os.path.getmtime, reverse=True)
+        return files[:20]
+
+    def set_hardware_led(self, state: bool, brightness: int = 255):
+        """Controls the physical rear camera LED flash/torch."""
+        nodes = ['/sys/class/leds/white:flash/brightness'] + glob.glob('/sys/class/leds/*flash*/brightness') + glob.glob('/sys/class/leds/*torch*/brightness')
+        val = str(brightness if state else 0)
+        for path in nodes:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'w') as f:
+                        f.write(val)
+                    return True, "OK"
+                except PermissionError:
+                    return False, "PermissionError"
+                except Exception as e:
+                    return False, str(e)
+        return False, "NotFound"
+
+    def build_ui(self):
+        # Toast Overlay
+        self.toast_overlay = Adw.ToastOverlay()
+        self.set_content(self.toast_overlay)
+
+        # Main Viewport Container (Stack / Overlay)
+        self.overlay = Gtk.Overlay()
+        self.toast_overlay.set_child(self.overlay)
+
+        # 1. Base Child: Viewfinder Picture
+        self.pic_viewfinder = Gtk.Picture()
+        self.pic_viewfinder.set_hexpand(True)
+        self.pic_viewfinder.set_vexpand(True)
+        self.pic_viewfinder.set_can_shrink(True)
+        self.pic_viewfinder.set_content_fit(Gtk.ContentFit.CONTAIN)
+
+        # Tap-to-focus gesture on viewfinder
+        focus_gesture = Gtk.GestureClick()
+        focus_gesture.connect('pressed', self.on_viewfinder_tapped)
+        self.pic_viewfinder.add_controller(focus_gesture)
+        self.overlay.set_child(self.pic_viewfinder)
+
+        # Focus Reticle Target Indicator
+        self.focus_reticle = Gtk.Box()
+        self.focus_reticle.add_css_class("focus-reticle")
+        self.focus_reticle.set_visible(False)
+        self.focus_reticle.set_can_target(False)
+        self.focus_reticle.set_halign(Gtk.Align.START)
+        self.focus_reticle.set_valign(Gtk.Align.START)
+        self.overlay.add_overlay(self.focus_reticle)
+
+        # 2. Overlay: Framing Grid
+        self.grid_overlay_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.grid_overlay_box.set_hexpand(True)
+        self.grid_overlay_box.set_vexpand(True)
+        self.grid_overlay_box.set_can_target(False)
+        self.overlay.add_overlay(self.grid_overlay_box)
+        self.update_grid_ui()
+
+        # 3. Overlay: Timer Countdown Label
+        self.countdown_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.countdown_box.set_halign(Gtk.Align.CENTER)
+        self.countdown_box.set_valign(Gtk.Align.CENTER)
+        self.countdown_box.set_visible(False)
+        self.lbl_countdown = Gtk.Label(label="3")
+        self.lbl_countdown.add_css_class("timer-countdown-label")
+        self.countdown_box.append(self.lbl_countdown)
+        self.overlay.add_overlay(self.countdown_box)
+
+        # 4. Overlay: Screen Flash Box (on capture)
+        self.flash_box = Gtk.Box()
+        self.flash_box.add_css_class("camera-flash-overlay")
+        self.flash_box.set_visible(False)
+        self.flash_box.set_can_target(False)
+        self.overlay.add_overlay(self.flash_box)
+
+        # 5. Overlay: Fill Light / White Screen for Low Light Selfies
+        self.fill_light_box = Gtk.Box()
+        self.fill_light_box.add_css_class("fill-light-screen")
+        self.fill_light_box.set_visible(False)
+        self.fill_light_box.set_can_target(False)
+        self.overlay.add_overlay(self.fill_light_box)
+
+        # 6. Main UI Controls Overlay (Top Bar + Preset Strip + Bottom Bar + Slide-in Drawer)
+        controls_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        controls_layout.set_hexpand(True)
+        controls_layout.set_vexpand(True)
+        self.overlay.add_overlay(controls_layout)
+
+        # --- Top Floating Bar ---
+        top_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        top_bar_wrapper.set_halign(Gtk.Align.FILL)
+        top_bar_wrapper.set_margin_top(12)
+        top_bar_wrapper.set_margin_start(16)
+        top_bar_wrapper.set_margin_end(16)
+
+        top_capsule = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        top_capsule.add_css_class("floating-capsule")
+        top_capsule.set_hexpand(True)
+        top_capsule.set_valign(Gtk.Align.CENTER)
+
+        # 1. Prominent Camera Switcher Pill (Click to flip between Rear 13MP and Front 8MP)
+        self.btn_camera_switcher = Gtk.Button()
+        self.btn_camera_switcher.add_css_class("cam-badge-btn")
+        self.btn_camera_switcher.set_valign(Gtk.Align.CENTER)
+        self.btn_camera_switcher.set_tooltip_text("Click to Switch between Rear and Front Camera (C)")
+        self.btn_camera_switcher.connect('clicked', self.on_switch_camera)
+        top_capsule.append(self.btn_camera_switcher)
+        self.update_camera_switcher_button()
+
+        # 2. Dedicated Flash Light & Torch Button (Off / Auto Flash / Torch ON)
+        self.btn_flash = Gtk.Button()
+        self.btn_flash.add_css_class("flash-mode-btn")
+        self.btn_flash.set_valign(Gtk.Align.CENTER)
+        self.btn_flash.set_tooltip_text("Flash Light Mode: Off / Auto Flash / Flashlight Torch Always ON")
+        self.btn_flash.connect('clicked', self.on_cycle_flash)
+        top_capsule.append(self.btn_flash)
+        self.update_flash_button()
+
+        spacer_top = Gtk.Box()
+        spacer_top.set_hexpand(True)
+        top_capsule.append(spacer_top)
+
+        # Timer Button
+        self.btn_timer = Gtk.Button(icon_name="alarm-symbolic")
+        self.btn_timer.add_css_class("top-tool-btn")
+        self.btn_timer.set_valign(Gtk.Align.CENTER)
+        self.btn_timer.set_tooltip_text("Shutter Timer (Off / 3s / 5s / 10s)")
+        self.btn_timer.connect('clicked', self.on_cycle_timer)
+        top_capsule.append(self.btn_timer)
+
+        # Grid Button
+        self.btn_grid = Gtk.Button(icon_name="view-grid-symbolic")
+        self.btn_grid.add_css_class("top-tool-btn")
+        self.btn_grid.set_valign(Gtk.Align.CENTER)
+        self.btn_grid.set_tooltip_text("Framing Grid (Off / Rule of Thirds / Golden / Crosshair)")
+        self.btn_grid.connect('clicked', self.on_cycle_grid)
+        top_capsule.append(self.btn_grid)
+
+        # Mirror Toggle
+        self.btn_mirror = Gtk.Button(icon_name="object-flip-horizontal-symbolic")
+        self.btn_mirror.add_css_class("top-tool-btn")
+        self.btn_mirror.set_valign(Gtk.Align.CENTER)
+        self.btn_mirror.set_tooltip_text("Mirror Viewfinder (Selfie Flip)")
+        self.btn_mirror.connect('clicked', self.on_toggle_mirror)
+        top_capsule.append(self.btn_mirror)
+        self.update_mirror_button()
+
+        # Rotate / Auto-Rotation Button
+        self.btn_rotate = Gtk.Button()
+        self.btn_rotate.add_css_class("top-tool-btn")
+        self.btn_rotate.set_valign(Gtk.Align.CENTER)
+        self.btn_rotate.connect('clicked', self.on_rotate_camera)
+        top_capsule.append(self.btn_rotate)
+        self.update_rotate_button()
+
+        # Customization Sheet Toggle
+        self.btn_settings = Gtk.Button(icon_name="emblem-system-symbolic")
+        self.btn_settings.add_css_class("top-tool-btn")
+        self.btn_settings.set_valign(Gtk.Align.CENTER)
+        self.btn_settings.set_tooltip_text("Resolution & Image Processing Controls")
+        self.btn_settings.connect('clicked', lambda _: self.drawer_revealer.set_reveal_child(not self.drawer_revealer.get_reveal_child()))
+        top_capsule.append(self.btn_settings)
+
+        # Window Controls Divider
+        sep_capsule = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        sep_capsule.set_valign(Gtk.Align.CENTER)
+        sep_capsule.set_size_request(-1, 20)
+        sep_capsule.set_margin_start(4)
+        sep_capsule.set_margin_end(4)
+        top_capsule.append(sep_capsule)
+
+        # Fullscreen Toggle Button
+        self.btn_fullscreen = Gtk.Button(icon_name="view-fullscreen-symbolic")
+        self.btn_fullscreen.set_tooltip_text("Toggle Fullscreen (F11)")
+        self.btn_fullscreen.add_css_class("top-tool-btn")
+        self.btn_fullscreen.set_valign(Gtk.Align.CENTER)
+        self.btn_fullscreen.connect('clicked', self.on_toggle_fullscreen)
+        top_capsule.append(self.btn_fullscreen)
+
+        # Prominent Close Button
+        self.btn_close = Gtk.Button(icon_name="window-close-symbolic")
+        self.btn_close.set_tooltip_text("Close Camera Studio (Esc / Ctrl+Q)")
+        self.btn_close.add_css_class("camera-close-btn")
+        self.btn_close.set_valign(Gtk.Align.CENTER)
+        self.btn_close.connect('clicked', lambda _: self.close())
+        top_capsule.append(self.btn_close)
+
+        top_bar_wrapper.append(top_capsule)
+        controls_layout.append(top_bar_wrapper)
+
+        # Center Spacer (leaves viewfinder visible)
+        center_spacer = Gtk.Box()
+        center_spacer.set_vexpand(True)
+        controls_layout.append(center_spacer)
+
+        # --- Middle Filter Presets Strip ---
+        filter_scroll = Gtk.ScrolledWindow()
+        filter_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        filter_scroll.set_margin_bottom(10)
+        filter_scroll.set_margin_start(16)
+        filter_scroll.set_margin_end(16)
+        filter_scroll.set_halign(Gtk.Align.CENTER)
+        filter_scroll.set_valign(Gtk.Align.CENTER)
+
+        preset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        preset_box.add_css_class("preset-pill-strip")
+        preset_box.set_valign(Gtk.Align.CENTER)
+
+        self.preset_buttons = {}
+        for p in COLOR_PRESETS:
+            btn = Gtk.Button(label=p['name'])
+            btn.set_tooltip_text(p['desc'])
+            btn.add_css_class("preset-pill")
+            btn.set_valign(Gtk.Align.CENTER)
+            if p['id'] == 'natural':
+                btn.add_css_class("preset-pill-active")
+            btn.connect('clicked', self.on_preset_clicked, p)
+            preset_box.append(btn)
+            self.preset_buttons[p['id']] = btn
+
+        filter_scroll.set_child(preset_box)
+        controls_layout.append(filter_scroll)
+
+        # --- Bottom Shutter & Controls Bar ---
+        bottom_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        bottom_bar_wrapper.set_halign(Gtk.Align.CENTER)
+        bottom_bar_wrapper.set_valign(Gtk.Align.CENTER)
+        bottom_bar_wrapper.set_margin_bottom(20)
+        bottom_bar_wrapper.set_margin_start(20)
+        bottom_bar_wrapper.set_margin_end(20)
+
+        # CenterBox guarantees the Shutter Button is at the true geometric horizontal center
+        bottom_capsule = Gtk.CenterBox()
+        bottom_capsule.add_css_class("floating-bottom-bar")
+        bottom_capsule.set_valign(Gtk.Align.CENTER)
+
+        # 1. Left Flank: Gallery Thumbnail & Image Fine-Tuning Drawer Button
+        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        left_box.set_halign(Gtk.Align.START)
+        left_box.set_valign(Gtk.Align.CENTER)
+
+        self.btn_gallery = Gtk.Button()
+        self.btn_gallery.set_tooltip_text("Open Gallery & Photo Inspector")
+        self.btn_gallery.add_css_class("thumbnail-button")
+        self.btn_gallery.set_valign(Gtk.Align.CENTER)
+        self.btn_gallery.set_halign(Gtk.Align.CENTER)
+        self.img_thumb = Gtk.Image(icon_name="image-x-generic-symbolic")
+        self.img_thumb.set_pixel_size(44)
+        self.img_thumb.set_valign(Gtk.Align.CENTER)
+        self.img_thumb.set_halign(Gtk.Align.CENTER)
+        self.btn_gallery.set_child(self.img_thumb)
+        self.btn_gallery.connect('clicked', self.on_open_gallery)
+        left_box.append(self.btn_gallery)
+        self.update_thumbnail_preview()
+
+        self.btn_adjust_color = Gtk.Button(icon_name="color-select-symbolic")
+        self.btn_adjust_color.set_tooltip_text("Fine-tune Image Colors & Resolution Controls")
+        self.btn_adjust_color.add_css_class("action-circle-btn")
+        self.btn_adjust_color.set_valign(Gtk.Align.CENTER)
+        self.btn_adjust_color.set_halign(Gtk.Align.CENTER)
+        self.btn_adjust_color.connect('clicked', lambda _: self.drawer_revealer.set_reveal_child(not self.drawer_revealer.get_reveal_child()))
+        left_box.append(self.btn_adjust_color)
+
+        # 2. Center: Large Concentric Circular Shutter Button
+        center_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        center_box.set_halign(Gtk.Align.CENTER)
+        center_box.set_valign(Gtk.Align.CENTER)
+        center_box.set_margin_start(24)
+        center_box.set_margin_end(24)
+
+        self.btn_shutter = Gtk.Button()
+        self.btn_shutter.set_tooltip_text("Capture Photo (Space)")
+        self.btn_shutter.add_css_class("shutter-button")
+        self.btn_shutter.set_valign(Gtk.Align.CENTER)
+        self.btn_shutter.set_halign(Gtk.Align.CENTER)
+        shutter_inner = Gtk.Box()
+        shutter_inner.add_css_class("shutter-inner-circle")
+        shutter_inner.set_valign(Gtk.Align.CENTER)
+        shutter_inner.set_halign(Gtk.Align.CENTER)
+        self.btn_shutter.set_child(shutter_inner)
+        self.btn_shutter.connect('clicked', self.on_shutter_clicked)
+        center_box.append(self.btn_shutter)
+
+        # 3. Right Flank: Flash Light Quick Toggle & Camera Flip Button
+        right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        right_box.set_halign(Gtk.Align.END)
+        right_box.set_valign(Gtk.Align.CENTER)
+
+        self.btn_flash_quick = Gtk.Button()
+        self.btn_flash_quick.add_css_class("action-circle-btn")
+        self.btn_flash_quick.set_valign(Gtk.Align.CENTER)
+        self.btn_flash_quick.set_halign(Gtk.Align.CENTER)
+        self.btn_flash_quick.connect('clicked', self.on_cycle_flash)
+        right_box.append(self.btn_flash_quick)
+
+        self.btn_switch_cam = Gtk.Button(icon_name="camera-switch-symbolic")
+        self.btn_switch_cam.set_tooltip_text("Switch Front / Rear Camera (C)")
+        self.btn_switch_cam.add_css_class("action-circle-btn")
+        self.btn_switch_cam.add_css_class("switch-cam-btn-prominent")
+        self.btn_switch_cam.set_valign(Gtk.Align.CENTER)
+        self.btn_switch_cam.set_halign(Gtk.Align.CENTER)
+        self.btn_switch_cam.connect('clicked', self.on_switch_camera)
+        right_box.append(self.btn_switch_cam)
+
+        # SizeGroup locks left and right flanks to identical pixel widths for absolute horizontal centering
+        flank_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        flank_group.add_widget(left_box)
+        flank_group.add_widget(right_box)
+
+        bottom_capsule.set_start_widget(left_box)
+        bottom_capsule.set_center_widget(center_box)
+        bottom_capsule.set_end_widget(right_box)
+
+        bottom_bar_wrapper.append(bottom_capsule)
+        controls_layout.append(bottom_bar_wrapper)
+
+        # --- 7. Slide-In Customization Drawer (Bottom / Side Panel) ---
+        self.drawer_revealer = Gtk.Revealer()
+        self.drawer_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.drawer_revealer.set_reveal_child(False)
+        self.drawer_revealer.set_valign(Gtk.Align.END)
+        self.drawer_revealer.set_halign(Gtk.Align.CENTER)
+        self.drawer_revealer.set_margin_bottom(20)
+        self.drawer_revealer.set_margin_start(20)
+        self.drawer_revealer.set_margin_end(20)
+
+        drawer_content = self.build_customization_drawer()
+        self.drawer_revealer.set_child(drawer_content)
+        self.overlay.add_overlay(self.drawer_revealer)
+
+        # Load Custom CSS styling
+        self.apply_css()
+
+    def build_customization_drawer(self):
+        card = Adw.PreferencesPage()
+        card.set_size_request(580, -1)
+        card.add_css_class("customization-drawer-card")
+
+        # Top Drawer Header
+        header_group = Adw.PreferencesGroup()
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header_box.set_valign(Gtk.Align.CENTER)
+        
+        lbl_drawer_title = Gtk.Label(label="Image Processing &amp; Resolution")
+        lbl_drawer_title.set_use_markup(True)
+        lbl_drawer_title.add_css_class("title-2")
+        lbl_drawer_title.set_hexpand(True)
+        lbl_drawer_title.set_halign(Gtk.Align.START)
+        lbl_drawer_title.set_valign(Gtk.Align.CENTER)
+        header_box.append(lbl_drawer_title)
+
+        btn_close_drawer = Gtk.Button(icon_name="window-close-symbolic")
+        btn_close_drawer.add_css_class("flat")
+        btn_close_drawer.set_valign(Gtk.Align.CENTER)
+        btn_close_drawer.connect('clicked', lambda _: self.drawer_revealer.set_reveal_child(False))
+        header_box.append(btn_close_drawer)
+        header_group.set_header_suffix(header_box)
+        card.add(header_group)
+
+        # --- SECTION: CAMERA & FLASHLIGHT ILLUMINATION ---
+        cam_group = Adw.PreferencesGroup(title="Camera Hardware &amp; Flashlight", description="Toggle sensors and illumination modes")
+
+        # Camera Switcher Row
+        self.row_active_cam = Adw.ActionRow(title="Active Camera Sensor")
+        btn_cam_toggle_drawer = Gtk.Button(label="Switch Camera (⇄)")
+        btn_cam_toggle_drawer.add_css_class("suggested-action")
+        btn_cam_toggle_drawer.set_valign(Gtk.Align.CENTER)
+        btn_cam_toggle_drawer.connect('clicked', self.on_switch_camera)
+        self.row_active_cam.add_suffix(btn_cam_toggle_drawer)
+        cam_group.add(self.row_active_cam)
+
+        # Flashlight Mode Row
+        self.row_flash_ctrl = Adw.ActionRow(title="Flash Light Mode")
+        btn_flash_drawer = Gtk.Button(label="Cycle Flash Mode")
+        btn_flash_drawer.set_valign(Gtk.Align.CENTER)
+        btn_flash_drawer.connect('clicked', self.on_cycle_flash)
+        self.row_flash_ctrl.add_suffix(btn_flash_drawer)
+        cam_group.add(self.row_flash_ctrl)
+
+        # Screen Fill Light Softbox Toggle
+        row_fill = Adw.ActionRow(title="Screen Fill Light (Selfie Softbox)", subtitle="Turns screen bright warm white for face lighting")
+        self.switch_fill_light = Gtk.Switch()
+        self.switch_fill_light.set_valign(Gtk.Align.CENTER)
+        self.switch_fill_light.set_active(False)
+        self.switch_fill_light.connect('notify::active', lambda s, _: self.set_fill_light_state(s.get_active()))
+        row_fill.add_suffix(self.switch_fill_light)
+        cam_group.add(row_fill)
+
+        # Auto-Rotation Toggle Row
+        row_auto_rotate = Adw.ActionRow(title="Auto-Rotate with Screen", subtitle="Dynamically adjusts viewfinder as tablet rotates")
+        self.switch_auto_rotate = Gtk.Switch()
+        self.switch_auto_rotate.set_valign(Gtk.Align.CENTER)
+        self.switch_auto_rotate.set_active(self.auto_rotate)
+        self.switch_auto_rotate.connect('notify::active', self.on_auto_rotate_switch_changed)
+        row_auto_rotate.add_suffix(self.switch_auto_rotate)
+        cam_group.add(row_auto_rotate)
+
+        card.add(cam_group)
+
+        # --- SECTION: CAMERA LENS FOCUS (VOICE COIL MOTOR) ---
+        if self.focus_subdev:
+            self.focus_group = Adw.PreferencesGroup(title="Camera Lens Focus (VCM)", description="Voice coil motor control for crisp focus on near and far subjects")
+
+            # Focus Slider
+            self.row_focus = Adw.ActionRow(title="Focal Distance", subtitle="0 = Infinity (Landscape) ↔ 1023 = Macro (Close-up)")
+            self.scale_focus = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1023, 10)
+            self.scale_focus.set_value(self.current_focus)
+            self.scale_focus.set_size_request(200, -1)
+            self.scale_focus.connect('value-changed', self.on_focus_slider_changed)
+            self.lbl_focus_val = Gtk.Label(label=str(self.current_focus))
+            self.lbl_focus_val.set_width_chars(5)
+            box_f = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box_f.append(self.scale_focus)
+            box_f.append(self.lbl_focus_val)
+            self.row_focus.add_suffix(box_f)
+            self.focus_group.add(self.row_focus)
+
+            # Focus Presets Row
+            row_f_presets = Adw.ActionRow(title="Focus Presets", subtitle="One-tap focal distances")
+            box_fp = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box_fp.set_valign(Gtk.Align.CENTER)
+
+            presets = [
+                ("🎯 Auto", 380, "Hyperfocal (~1m–10m sharp)"),
+                ("👤 Portrait", 520, "Portrait distance (~0.5m–1m)"),
+                ("🔍 Macro", 850, "Macro close-up (10cm–30cm)"),
+                ("⛰️ Infinity", 0, "Distant Landscape (Infinity)"),
+            ]
+            for label, fval, tip in presets:
+                btn_p = Gtk.Button(label=label)
+                btn_p.set_tooltip_text(tip)
+                btn_p.add_css_class("flat")
+                btn_p.connect('clicked', lambda _, v=fval: self.apply_focus_preset(v))
+                box_fp.append(btn_p)
+
+            row_f_presets.add_suffix(box_fp)
+            self.focus_group.add(row_f_presets)
+
+            card.add(self.focus_group)
+
+        # --- SECTION: COLOR ADJUSTMENTS ---
+        color_group = Adw.PreferencesGroup(title="Live Color Tuning", description="Adjust real-time image sensor parameters")
+
+        # Brightness Slider
+        self.row_brightness = Adw.ActionRow(title="Brightness")
+        self.scale_brightness = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.05)
+        self.scale_brightness.set_value(0.0)
+        self.scale_brightness.set_size_request(200, -1)
+        self.scale_brightness.connect('value-changed', self.on_color_slider_changed)
+        self.lbl_brightness_val = Gtk.Label(label="0.00")
+        self.lbl_brightness_val.set_width_chars(5)
+        box_b = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_b.append(self.scale_brightness)
+        box_b.append(self.lbl_brightness_val)
+        self.row_brightness.add_suffix(box_b)
+        color_group.add(self.row_brightness)
+
+        # Contrast Slider
+        self.row_contrast = Adw.ActionRow(title="Contrast")
+        self.scale_contrast = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.05)
+        self.scale_contrast.set_value(1.0)
+        self.scale_contrast.set_size_request(200, -1)
+        self.scale_contrast.connect('value-changed', self.on_color_slider_changed)
+        self.lbl_contrast_val = Gtk.Label(label="1.00")
+        self.lbl_contrast_val.set_width_chars(5)
+        box_c = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_c.append(self.scale_contrast)
+        box_c.append(self.lbl_contrast_val)
+        self.row_contrast.add_suffix(box_c)
+        color_group.add(self.row_contrast)
+
+        # Saturation Slider
+        self.row_saturation = Adw.ActionRow(title="Saturation")
+        self.scale_saturation = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.05)
+        self.scale_saturation.set_value(1.0)
+        self.scale_saturation.set_size_request(200, -1)
+        self.scale_saturation.connect('value-changed', self.on_color_slider_changed)
+        self.lbl_saturation_val = Gtk.Label(label="1.00")
+        self.lbl_saturation_val.set_width_chars(5)
+        box_s = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_s.append(self.scale_saturation)
+        box_s.append(self.lbl_saturation_val)
+        self.row_saturation.add_suffix(box_s)
+        color_group.add(self.row_saturation)
+
+        # Hue Slider
+        self.row_hue = Adw.ActionRow(title="Hue Tint")
+        self.scale_hue = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.05)
+        self.scale_hue.set_value(0.0)
+        self.scale_hue.set_size_request(200, -1)
+        self.scale_hue.connect('value-changed', self.on_color_slider_changed)
+        self.lbl_hue_val = Gtk.Label(label="0.00")
+        self.lbl_hue_val.set_width_chars(5)
+        box_h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_h.append(self.scale_hue)
+        box_h.append(self.lbl_hue_val)
+        self.row_hue.add_suffix(box_h)
+        color_group.add(self.row_hue)
+
+        # Gamma Slider
+        self.row_gamma = Adw.ActionRow(title="Gamma Curve")
+        self.scale_gamma = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.2, 2.5, 0.05)
+        self.scale_gamma.set_value(1.0)
+        self.scale_gamma.set_size_request(200, -1)
+        self.scale_gamma.connect('value-changed', self.on_color_slider_changed)
+        self.lbl_gamma_val = Gtk.Label(label="1.00")
+        self.lbl_gamma_val.set_width_chars(5)
+        box_g = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_g.append(self.scale_gamma)
+        box_g.append(self.lbl_gamma_val)
+        self.row_gamma.add_suffix(box_g)
+        color_group.add(self.row_gamma)
+
+        # Reset Colors Row
+        row_reset = Adw.ActionRow(title="Reset Image Adjustments")
+        btn_reset_colors = Gtk.Button(label="Reset Defaults")
+        btn_reset_colors.add_css_class("suggested-action")
+        btn_reset_colors.set_valign(Gtk.Align.CENTER)
+        btn_reset_colors.connect('clicked', self.on_reset_colors)
+        row_reset.add_suffix(btn_reset_colors)
+        color_group.add(row_reset)
+
+        card.add(color_group)
+
+        # --- SECTION: RESOLUTION & CAPTURE FORMAT ---
+        res_group = Adw.PreferencesGroup(title="Resolution &amp; Image Format", description="Customize photo dimensions and file encoding")
+
+        # Resolution Dropdown
+        row_res = Adw.ActionRow(title="Capture Resolution")
+        self.combo_res = Gtk.DropDown.new_from_strings([f"{p['name']} ({p['desc']})" for p in RESOLUTION_PRESETS])
+        self.combo_res.set_valign(Gtk.Align.CENTER)
+        self.combo_res.set_selected(0)
+        self.combo_res.connect('notify::selected', self.on_resolution_changed)
+        row_res.add_suffix(self.combo_res)
+        res_group.add(row_res)
+
+        # Output Format Selector (JPEG, PNG, WebP)
+        row_fmt = Adw.ActionRow(title="Image File Format")
+        self.combo_fmt = Gtk.DropDown.new_from_strings(["JPEG (.jpg - Standard)", "PNG (.png - Lossless)", "WebP (.webp - Compact)"])
+        self.combo_fmt.set_valign(Gtk.Align.CENTER)
+        self.combo_fmt.set_selected(0)
+        self.combo_fmt.connect('notify::selected', self.on_format_changed)
+        row_fmt.add_suffix(self.combo_fmt)
+        res_group.add(row_fmt)
+
+        # Compression Quality Slider
+        self.row_quality = Adw.ActionRow(title="Compression Quality")
+        self.scale_quality = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 50, 100, 1)
+        self.scale_quality.set_value(95)
+        self.scale_quality.set_size_request(160, -1)
+        self.lbl_quality_val = Gtk.Label(label="95%")
+        self.lbl_quality_val.set_width_chars(4)
+        self.scale_quality.connect('value-changed', lambda s: self.lbl_quality_val.set_label(f"{int(s.get_value())}%"))
+        box_q = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_q.set_valign(Gtk.Align.CENTER)
+        box_q.append(self.scale_quality)
+        box_q.append(self.lbl_quality_val)
+        self.row_quality.add_suffix(box_q)
+        res_group.add(self.row_quality)
+
+        card.add(res_group)
+        return card
+
+    def apply_css(self):
+        css = """
+        .floating-capsule {
+            background-color: rgba(22, 26, 33, 0.86);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 26px;
+            padding: 6px 14px;
+            min-height: 48px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+        }
+        .floating-bottom-bar {
+            background-color: rgba(18, 21, 28, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 46px;
+            padding: 10px 24px;
+            min-height: 90px;
+            min-width: 480px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
+        }
+        .cam-badge-btn {
+            font-weight: 700;
+            font-size: 13px;
+            color: #38bdf8;
+            background-color: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.28);
+            border-radius: 18px;
+            padding: 4px 14px;
+            min-height: 36px;
+            transition: all 120ms ease;
+        }
+        .cam-badge-btn:hover {
+            background-color: rgba(56, 189, 248, 0.25);
+            border-color: #38bdf8;
+        }
+        .flash-mode-btn {
+            font-weight: 600;
+            font-size: 12px;
+            color: #facc15;
+            background-color: rgba(250, 204, 21, 0.12);
+            border: 1px solid rgba(250, 204, 21, 0.28);
+            border-radius: 18px;
+            padding: 4px 12px;
+            min-height: 36px;
+            transition: all 120ms ease;
+        }
+        .flash-mode-btn:hover {
+            background-color: rgba(250, 204, 21, 0.25);
+        }
+        .flash-active-torch {
+            background-color: #facc15;
+            color: #0f172a;
+            font-weight: 700;
+            box-shadow: 0 0 14px rgba(250, 204, 21, 0.7);
+        }
+        .top-tool-btn {
+            border-radius: 9999px;
+            min-width: 36px;
+            min-height: 36px;
+            padding: 0;
+            background-color: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #f1f5f9;
+            transition: all 120ms ease;
+        }
+        .top-tool-btn:hover {
+            background-color: rgba(255, 255, 255, 0.18);
+            border-color: rgba(255, 255, 255, 0.28);
+            color: #ffffff;
+        }
+        .top-tool-btn:active {
+            transform: scale(0.92);
+        }
+        .rotate-manual-active {
+            color: #38bdf8;
+            background-color: rgba(56, 189, 248, 0.25);
+            border-color: #38bdf8;
+        }
+        .focus-reticle {
+            min-width: 54px;
+            min-height: 54px;
+            border: 2px solid #38bdf8;
+            border-radius: 9999px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+            transition: all 180ms ease;
+        }
+        .focus-reticle-locked {
+            border-color: #22c55e;
+            box-shadow: 0 0 12px rgba(34, 197, 94, 0.8);
+            transform: scale(0.85);
+        }
+        .camera-close-btn {
+            background-color: rgba(239, 68, 68, 0.20);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.45);
+            border-radius: 9999px;
+            min-width: 36px;
+            min-height: 36px;
+            padding: 0;
+            transition: all 120ms ease;
+        }
+        .camera-close-btn:hover {
+            background-color: #ef4444;
+            color: #ffffff;
+            border-color: #ef4444;
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.70);
+        }
+        .camera-close-btn:active {
+            transform: scale(0.92);
+        }
+        .shutter-button {
+            border-radius: 9999px;
+            min-width: 72px;
+            min-height: 72px;
+            padding: 0;
+            background: transparent;
+            border: 4px solid #ffffff;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+            transition: all 120ms ease-out;
+        }
+        .shutter-button:hover {
+            border-color: #38bdf8;
+        }
+        .shutter-button:active {
+            transform: scale(0.92);
+            border-color: #38bdf8;
+        }
+        .shutter-inner-circle {
+            background-color: #ffffff;
+            border-radius: 9999px;
+            min-width: 56px;
+            min-height: 56px;
+            transition: all 120ms ease;
+        }
+        .shutter-button:active .shutter-inner-circle {
+            background-color: #38bdf8;
+        }
+        .action-circle-btn {
+            border-radius: 9999px;
+            min-width: 46px;
+            min-height: 46px;
+            padding: 0;
+            background-color: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            color: #f1f5f9;
+            transition: all 120ms ease;
+        }
+        .action-circle-btn:hover {
+            background-color: rgba(255, 255, 255, 0.18);
+            color: #ffffff;
+        }
+        .action-circle-btn:active {
+            transform: scale(0.92);
+        }
+        .switch-cam-btn-prominent {
+            background-color: rgba(56, 189, 248, 0.18);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            color: #38bdf8;
+        }
+        .switch-cam-btn-prominent:hover {
+            background-color: rgba(56, 189, 248, 0.32);
+            color: #ffffff;
+        }
+        .thumbnail-button {
+            border-radius: 14px;
+            min-width: 48px;
+            min-height: 48px;
+            padding: 0;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            background: #111115;
+            transition: all 120ms ease;
+        }
+        .thumbnail-button:hover {
+            border-color: #38bdf8;
+            transform: scale(1.04);
+        }
+        .preset-pill-strip {
+            background-color: rgba(18, 21, 28, 0.80);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            padding: 4px 8px;
+        }
+        .preset-pill {
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 12px;
+            min-height: 28px;
+            background: transparent;
+            border: none;
+            color: #d1d5db;
+            transition: all 120ms ease;
+        }
+        .preset-pill:hover {
+            background-color: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+        }
+        .preset-pill-active {
+            background-color: #38bdf8;
+            color: #0f172a;
+            font-weight: 700;
+        }
+        .customization-drawer-card {
+            background-color: rgba(26, 30, 40, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 24px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+            padding: 16px;
+        }
+        .camera-flash-overlay {
+            background-color: #ffffff;
+        }
+        .fill-light-screen {
+            background-color: #fffff2;
+            opacity: 0.92;
+        }
+        .timer-countdown-label {
+            font-size: 96px;
+            font-weight: 900;
+            color: #ffffff;
+            text-shadow: 0 4px 20px rgba(0, 0, 0, 0.85);
+        }
+        .grid-line-horizontal {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.28);
+        }
+        .grid-line-vertical {
+            border-right: 1px solid rgba(255, 255, 255, 0.28);
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode())
+        Gtk.StyleContext.add_provider_for_display(self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    # --- Framing Grid Overlay UI ---
+    def update_grid_ui(self):
+        while child := self.grid_overlay_box.get_first_child():
+            self.grid_overlay_box.remove(child)
+
+        if self.grid_mode == 0:
+            self.grid_overlay_box.set_visible(False)
+            return
+
+        self.grid_overlay_box.set_visible(True)
+
+        if self.grid_mode == 1: # Rule of Thirds (3x3)
+            grid = Gtk.Grid()
+            grid.set_hexpand(True)
+            grid.set_vexpand(True)
+            for r in range(3):
+                for c in range(3):
+                    b = Gtk.Box()
+                    b.set_hexpand(True)
+                    b.set_vexpand(True)
+                    if r < 2:
+                        b.add_css_class("grid-line-horizontal")
+                    if c < 2:
+                        b.add_css_class("grid-line-vertical")
+                    grid.attach(b, c, r, 1, 1)
+            self.grid_overlay_box.append(grid)
+        elif self.grid_mode == 2: # Golden Ratio
+            grid = Gtk.Grid()
+            grid.set_hexpand(True)
+            grid.set_vexpand(True)
+            for r in range(3):
+                for c in range(3):
+                    b = Gtk.Box()
+                    b.set_hexpand(True)
+                    b.set_vexpand(True)
+                    if r < 2:
+                        b.add_css_class("grid-line-horizontal")
+                    if c < 2:
+                        b.add_css_class("grid-line-vertical")
+                    grid.attach(b, c, r, 1, 1)
+            self.grid_overlay_box.append(grid)
+        elif self.grid_mode == 3: # Crosshair
+            cross_grid = Gtk.Grid()
+            cross_grid.set_hexpand(True)
+            cross_grid.set_vexpand(True)
+            for r in range(2):
+                for c in range(2):
+                    b = Gtk.Box()
+                    b.set_hexpand(True)
+                    b.set_vexpand(True)
+                    if r == 0:
+                        b.add_css_class("grid-line-horizontal")
+                    if c == 0:
+                        b.add_css_class("grid-line-vertical")
+                    cross_grid.attach(b, c, r, 1, 1)
+            self.grid_overlay_box.append(cross_grid)
+
+    def on_cycle_grid(self, _btn):
+        self.grid_mode = (self.grid_mode + 1) % 4
+        names = ["Off", "Rule of Thirds (3×3)", "Golden Ratio", "Center Crosshair"]
+        self.show_toast(f"Grid: {names[self.grid_mode]}")
+        self.update_grid_ui()
+
+    def on_cycle_timer(self, _btn):
+        timer_steps = [0, 3, 5, 10]
+        curr_idx = timer_steps.index(self.timer_seconds) if self.timer_seconds in timer_steps else 0
+        self.timer_seconds = timer_steps[(curr_idx + 1) % len(timer_steps)]
+        if self.timer_seconds == 0:
+            self.show_toast("Timer: Off (Instant)")
+        else:
+            self.show_toast(f"Timer: {self.timer_seconds} seconds countdown")
+
+    def on_toggle_mirror(self, _btn):
+        self.mirrored = not self.mirrored
+        self.show_toast(f"Mirror (Selfie Flip): {'Enabled' if self.mirrored else 'Disabled'}")
+        self.update_mirror_button()
+        self.update_video_direction()
+
+    def update_mirror_button(self):
+        if not hasattr(self, 'btn_mirror'):
+            return
+        if self.mirrored:
+            self.btn_mirror.add_css_class("rotate-manual-active")
+            self.btn_mirror.set_tooltip_text("Mirror Viewfinder (Selfie Flip): ON (Click to Disable)")
+        else:
+            self.btn_mirror.remove_css_class("rotate-manual-active")
+            self.btn_mirror.set_tooltip_text("Mirror Viewfinder (Selfie Flip): OFF (Click to Enable)")
+
+    def init_sensor_proxy(self):
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self.sensor_proxy = Gio.DBusProxy.new_sync(
+                bus,
+                Gio.DBusProxyFlags.NONE,
+                None,
+                'net.hadess.SensorProxy',
+                '/net/hadess/SensorProxy',
+                'net.hadess.SensorProxy',
+                None
+            )
+            self.sensor_proxy.connect('g-properties-changed', self.on_sensor_properties_changed)
+            cached = self.sensor_proxy.get_cached_property('AccelerometerOrientation')
+            if cached:
+                self.device_orientation = cached.get_string()
+
+            # Claim accelerometer for continuous orientation monitoring
+            self.sensor_proxy.call_sync(
+                'ClaimAccelerometer',
+                None,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None
+            )
+        except Exception as e:
+            print("SensorProxy setup error:", e)
+
+    def on_sensor_properties_changed(self, proxy, changed_props, invalidated_props):
+        orient = None
+        try:
+            unpacked = changed_props.unpack()
+            if 'AccelerometerOrientation' in unpacked:
+                orient = unpacked['AccelerometerOrientation']
+        except Exception:
+            pass
+        if not orient:
+            cached = proxy.get_cached_property('AccelerometerOrientation')
+            if cached:
+                orient = cached.get_string()
+        if orient and orient != self.device_orientation:
+            self.device_orientation = orient
+            if self.auto_rotate:
+                self.check_screen_and_sensor_orientation()
+
+    def compute_auto_rotation(self) -> int:
+        # Determine screen/display aspect ratio
+        display = self.get_display()
+        monitors = display.get_monitors() if display else None
+        is_landscape = False
+        if monitors and monitors.get_n_items() > 0:
+            geom = monitors.get_item(0).get_geometry()
+            is_landscape = (geom.width > geom.height)
+        else:
+            is_landscape = (self.get_width() > self.get_height())
+
+        # Accelerometer orientation on Xiaomi Pad 5 (nabu):
+        # - 'normal': Portrait upright -> 90°
+        # - 'right-up': Standard Landscape (front camera / volume at top, USB on right) -> 0°
+        # - 'left-up': Inverted Landscape (USB on left) -> 180°
+        # - 'bottom-up': Inverted Portrait (USB on top) -> 270°
+        orient = self.device_orientation
+
+        if is_landscape:
+            # Screen is in Landscape
+            if orient == 'left-up':
+                return 180
+            else:
+                return 0
+        else:
+            # Screen is in Portrait
+            if orient == 'bottom-up':
+                return 270
+            else:
+                return 90
+
+    def check_screen_and_sensor_orientation(self):
+        if not self.auto_rotate or not self.flip_elem:
+            return True
+
+        if self.sensor_proxy:
+            try:
+                cached = self.sensor_proxy.get_cached_property('AccelerometerOrientation')
+                if cached:
+                    orient = cached.get_string()
+                    if orient != self.device_orientation:
+                        self.device_orientation = orient
+            except Exception:
+                pass
+
+        target_rot = self.compute_auto_rotation()
+        if target_rot != self.current_applied_rot:
+            self.update_video_direction()
+            self.update_rotate_button()
+        return True
+
+    def on_auto_rotate_switch_changed(self, switch, _param):
+        self.auto_rotate = switch.get_active()
+        self.update_rotate_button()
+        self.update_video_direction()
+        self.show_toast(f"Auto-Rotate: {'ON' if self.auto_rotate else 'Locked'}")
+
+    def on_rotate_camera(self, _btn):
+        # Cycle: Auto -> 0° -> 90° -> 180° -> 270° -> Auto
+        if self.auto_rotate:
+            self.auto_rotate = False
+            current = self.current_applied_rot if self.current_applied_rot is not None else 0
+            self.rotation_degrees = (current + 90) % 360
+            self.show_toast(f"Manual Rotation: {self.rotation_degrees}° (Locked)")
+        else:
+            next_rot = (self.rotation_degrees + 90) % 360
+            if next_rot == 0 and self.rotation_degrees == 270:
+                self.auto_rotate = True
+                self.show_toast(f"Auto-Rotation: Active ({self.device_orientation})")
+            else:
+                self.rotation_degrees = next_rot
+                self.show_toast(f"Manual Rotation: {self.rotation_degrees}°")
+
+        if hasattr(self, 'switch_auto_rotate') and self.switch_auto_rotate.get_active() != self.auto_rotate:
+            self.switch_auto_rotate.set_active(self.auto_rotate)
+        self.update_rotate_button()
+        self.update_video_direction()
+
+    def update_rotate_button(self):
+        if not hasattr(self, 'btn_rotate'):
+            return
+        if self.auto_rotate:
+            rot = self.current_applied_rot if self.current_applied_rot is not None else self.compute_auto_rotation()
+            self.btn_rotate.set_icon_name("rotation-allowed-symbolic")
+            self.btn_rotate.set_tooltip_text(f"Auto-Rotation: {rot}° ({self.device_orientation}) - Click for Manual Lock")
+            self.btn_rotate.remove_css_class("rotate-manual-active")
+        else:
+            self.btn_rotate.set_icon_name("object-rotate-right-symbolic")
+            self.btn_rotate.set_tooltip_text(f"Manual Rotation: {self.rotation_degrees}° - Click to Cycle")
+            self.btn_rotate.add_css_class("rotate-manual-active")
+
+    def update_video_direction(self):
+        if not self.flip_elem:
+            return
+
+        cam = self.cameras[self.cur_cam_idx] if self.cameras else {}
+        is_front = cam.get('is_front', False)
+
+        rot = self.compute_auto_rotation() if self.auto_rotate else self.rotation_degrees
+        self.current_applied_rot = rot
+
+        if is_front:
+            if self.mirrored:
+                # Front camera mirrored (natural selfie mode)
+                # Raw sensor on Xiaomi Pad 5 (nabu) is 180° inverted:
+                # 0° (landscape normal) -> 5 (vert: inverts Y to upright, keeps X mirrored)
+                # 90° (portrait upright) -> 6 (ul-lr)
+                # 180° (landscape inverted) -> 4 (horiz)
+                # 270° (portrait inverted) -> 7 (ur-ll)
+                dirs = {0: 5, 90: 6, 180: 4, 270: 7}
+                val = dirs.get(rot, 5)
+            else:
+                # Front camera non-mirrored (rear-style perspective)
+                dirs = {0: 2, 90: 1, 180: 0, 270: 3}
+                val = dirs.get(rot, 2)
+        else:
+            if not self.mirrored:
+                # Rear camera normal view
+                dirs = {0: 0, 90: 1, 180: 2, 270: 3}
+                val = dirs.get(rot, 0)
+            else:
+                # Rear camera mirrored
+                dirs = {0: 4, 90: 7, 180: 5, 270: 6}
+                val = dirs.get(rot, 4)
+
+        try:
+            self.flip_elem.set_property('video-direction', val)
+        except Exception as e:
+            print("Failed to update video-direction:", e)
+
+    def set_focus(self, val: int):
+        val = max(0, min(1023, int(val)))
+        self.current_focus = val
+        if self.focus_subdev:
+            try:
+                subprocess.run(['v4l2-ctl', '-d', self.focus_subdev, '-c', f'focus_absolute={val}'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                print("Focus error:", e)
+        if hasattr(self, 'scale_focus') and int(self.scale_focus.get_value()) != val:
+            self.scale_focus.set_value(val)
+        if hasattr(self, 'lbl_focus_val'):
+            self.lbl_focus_val.set_label(str(val))
+
+    def on_focus_slider_changed(self, scale):
+        val = int(scale.get_value())
+        self.set_focus(val)
+
+    def apply_focus_preset(self, val: int):
+        self.set_focus(val)
+        mode_names = {380: "Auto/Hyperfocal", 520: "Portrait", 850: "Macro", 0: "Infinity"}
+        self.show_toast(f"Focus: {mode_names.get(val, str(val))}")
+
+    def on_viewfinder_tapped(self, _gesture, _n_press, x, y):
+        # Position reticle at tap location
+        self.focus_reticle.set_margin_start(max(0, int(x - 27)))
+        self.focus_reticle.set_margin_top(max(0, int(y - 27)))
+        self.focus_reticle.remove_css_class("focus-reticle-locked")
+        self.focus_reticle.set_visible(True)
+
+        if self.focus_subdev:
+            GLib.timeout_add(150, lambda: self.focus_reticle.add_css_class("focus-reticle-locked"))
+            self.show_toast(f"Focus target locked (Focal: {self.current_focus})")
+        else:
+            self.show_toast("Point targeted")
+
+        GLib.timeout_add(1000, lambda: self.focus_reticle.set_visible(False))
+
+    # --- Flashlight & Torch Controls ---
+    def update_flash_button(self):
+        cam = self.cameras[self.cur_cam_idx] if self.cameras else {}
+        is_front = cam.get('is_front', False)
+
+        self.btn_flash.remove_css_class("flash-active-torch")
+
+        if self.flash_mode == 'auto':
+            self.btn_flash.set_label("⚡ Flash: Auto")
+            subtitle_desc = "Auto flash during photo capture"
+        elif self.flash_mode == 'torch':
+            self.btn_flash.set_label("💡 Torch: ON")
+            self.btn_flash.add_css_class("flash-active-torch")
+            subtitle_desc = "Continuous flashlight illumination active"
+        else:
+            self.btn_flash.set_label("⚡ Flash: Off")
+            subtitle_desc = "Flash disabled"
+
+        if hasattr(self, 'btn_flash_quick'):
+            self.btn_flash_quick.remove_css_class("flash-active-torch")
+            if self.flash_mode == 'auto':
+                self.btn_flash_quick.set_icon_name("weather-storm-symbolic")
+                self.btn_flash_quick.set_tooltip_text("Flash Light Mode: Auto (F)")
+            elif self.flash_mode == 'torch':
+                self.btn_flash_quick.set_icon_name("weather-clear-symbolic")
+                self.btn_flash_quick.add_css_class("flash-active-torch")
+                self.btn_flash_quick.set_tooltip_text("Flashlight Torch: ON (F)")
+            else:
+                self.btn_flash_quick.set_icon_name("weather-storm-symbolic")
+                self.btn_flash_quick.set_tooltip_text("Flash Light Mode: Off (F)")
+
+        if hasattr(self, 'row_flash_ctrl'):
+            cam_type_str = "Screen Fill Flash" if is_front else "Hardware Rear Flash"
+            self.row_flash_ctrl.set_subtitle(f"{subtitle_desc} ({cam_type_str})")
+
+    def on_cycle_flash(self, _btn):
+        modes = ['off', 'auto', 'torch']
+        curr_idx = modes.index(self.flash_mode) if self.flash_mode in modes else 0
+        self.flash_mode = modes[(curr_idx + 1) % len(modes)]
+
+        cam = self.cameras[self.cur_cam_idx] if self.cameras else {}
+        is_front = cam.get('is_front', False)
+
+        if self.flash_mode == 'torch':
+            if is_front:
+                # Front camera uses screen fill light as torch
+                self.set_fill_light_state(True)
+                self.show_toast("💡 Flashlight: Screen Softbox Fill Light ON (Front Camera)")
+            else:
+                # Rear camera uses physical LED
+                ok, err = self.set_hardware_led(True, self.flash_brightness)
+                if ok:
+                    self.torch_on = True
+                    self.show_toast("💡 Flashlight: Rear LED Torch Turned ON")
+                else:
+                    self.set_fill_light_state(True)
+                    self.show_toast(f"💡 Flashlight: Screen Light ON (Hardware LED {err})")
+        else:
+            # Turn off torch
+            if self.torch_on:
+                self.set_hardware_led(False)
+                self.torch_on = False
+            if self.fill_light_active:
+                self.set_fill_light_state(False)
+
+            if self.flash_mode == 'auto':
+                self.show_toast("⚡ Flash Mode: Auto Flash on Capture")
+            else:
+                self.show_toast("⚡ Flash Mode: Flash OFF")
+
+        self.update_flash_button()
+
+    # --- Front / Back Camera Switcher ---
+    def update_camera_switcher_button(self):
+        if not self.cameras:
+            self.btn_camera_switcher.set_label("No Cameras")
+            return
+        cam = self.cameras[self.cur_cam_idx]
+        is_front = cam.get('is_front', False)
+
+        icon_str = "🤳" if is_front else "📷"
+        short_name = "Front" if is_front else "Rear"
+        label_text = f"{icon_str} {short_name} ({cam['megapixels']}) ⇄"
+        self.btn_camera_switcher.set_label(label_text)
+
+        if hasattr(self, 'btn_switch_cam'):
+            target_name = "Front Camera" if not is_front else "Rear Camera"
+            self.btn_switch_cam.set_tooltip_text(f"Switch to {target_name} (C)")
+
+        if hasattr(self, 'row_active_cam'):
+            self.row_active_cam.set_subtitle(f"{cam['name']} • {cam['sensor']}")
+
+    def on_switch_camera(self, _btn):
+        if len(self.cameras) <= 1:
+            self.show_toast("Only one camera device detected")
+            return
+
+        # Turn off torch before switching
+        if self.torch_on:
+            self.set_hardware_led(False)
+            self.torch_on = False
+        if self.fill_light_active:
+            self.set_fill_light_state(False)
+
+        # Switch camera index
+        self.cur_cam_idx = (self.cur_cam_idx + 1) % len(self.cameras)
+        cam = self.cameras[self.cur_cam_idx]
+        is_front = cam.get('is_front', False)
+
+        # Auto-configure mirror (selfies look natural mirrored)
+        self.mirrored = is_front
+        self.update_mirror_button()
+        self.rotation_degrees = 0
+
+        self.update_camera_switcher_button()
+        self.update_flash_button()
+        if hasattr(self, 'focus_group'):
+            self.focus_group.set_visible(not is_front)
+        self.show_toast(f"Switched to {cam['name']} ({cam['megapixels']})")
+
+        # Restart pipeline with the new camera
+        self.start_camera_pipeline()
+
+    # --- Live Color Adjustments ---
+    def on_color_slider_changed(self, _scale):
+        self.brightness = self.scale_brightness.get_value()
+        self.contrast = self.scale_contrast.get_value()
+        self.saturation = self.scale_saturation.get_value()
+        self.hue = self.scale_hue.get_value()
+        self.gamma = self.scale_gamma.get_value()
+
+        self.lbl_brightness_val.set_label(f"{self.brightness:+.2f}")
+        self.lbl_contrast_val.set_label(f"{self.contrast:.2f}")
+        self.lbl_saturation_val.set_label(f"{self.saturation:.2f}")
+        self.lbl_hue_val.set_label(f"{self.hue:+.2f}")
+        self.lbl_gamma_val.set_label(f"{self.gamma:.2f}")
+
+        if self.bal_elem:
+            self.bal_elem.set_property('brightness', self.brightness)
+            self.bal_elem.set_property('contrast', self.contrast)
+            self.bal_elem.set_property('saturation', self.saturation)
+            self.bal_elem.set_property('hue', self.hue)
+        if self.gam_elem:
+            self.gam_elem.set_property('gamma', max(0.1, self.gamma))
+
+    def on_preset_clicked(self, _btn, preset):
+        for btn in self.preset_buttons.values():
+            btn.remove_css_class("preset-pill-active")
+        self.preset_buttons[preset['id']].add_css_class("preset-pill-active")
+
+        # Set slider values
+        self.scale_brightness.set_value(preset['brightness'])
+        self.scale_contrast.set_value(preset['contrast'])
+        self.scale_saturation.set_value(preset['saturation'])
+        self.scale_hue.set_value(preset['hue'])
+        self.scale_gamma.set_value(preset['gamma'])
+        self.show_toast(f"Look: {preset['name']}")
+
+    def on_reset_colors(self, _btn):
+        self.on_preset_clicked(None, COLOR_PRESETS[0])
+
+    def on_resolution_changed(self, dropdown, _pspec):
+        self.target_res_idx = dropdown.get_selected()
+        preset = RESOLUTION_PRESETS[self.target_res_idx]
+        self.show_toast(f"Target Resolution: {preset['name']}")
+
+    def on_format_changed(self, dropdown, _pspec):
+        idx = dropdown.get_selected()
+        fmts = ['jpeg', 'png', 'webp']
+        self.output_format = fmts[idx]
+        self.row_quality.set_sensitive(self.output_format in ('jpeg', 'webp'))
+        self.show_toast(f"Format: {self.output_format.upper()}")
+
+    # --- Camera Pipeline Setup ---
+    def start_camera_pipeline(self):
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+
+        if not self.cameras:
+            self.show_toast("No camera devices found!")
+            return
+
+        cam = self.cameras[self.cur_cam_idx]
+
+        # Build pipeline string based on camera type
+        if cam['type'] == 'libcamera':
+            src_str = f'libcamerasrc camera-name="{cam["id"]}" ! video/x-raw,width=1920,height=1080'
+        elif cam['type'] == 'v4l2':
+            src_str = f'v4l2src device="{cam["id"]}" ! video/x-raw,width=1920,height=1080'
+        else:
+            src_str = 'videotestsrc pattern=ball ! video/x-raw,width=1920,height=1080'
+
+        pipe_str = (
+            f'{src_str} ! videoconvert ! '
+            f'videobalance name=bal brightness={self.brightness} contrast={self.contrast} saturation={self.saturation} hue={self.hue} ! '
+            f'gamma name=gam gamma={self.gamma} ! '
+            f'videoflip name=flip ! '
+            f'video/x-raw,format=RGB ! '
+            f'gtk4paintablesink name=sink'
+        )
+
+        try:
+            self.pipeline = Gst.parse_launch(pipe_str)
+            self.bal_elem = self.pipeline.get_by_name('bal')
+            self.gam_elem = self.pipeline.get_by_name('gam')
+            self.flip_elem = self.pipeline.get_by_name('flip')
+            self.paintable_sink = self.pipeline.get_by_name('sink')
+
+            self.update_video_direction()
+
+            # Hook paintable to viewfinder picture
+            paintable = self.paintable_sink.props.paintable
+            self.pic_viewfinder.set_paintable(paintable)
+
+            # Start pipeline
+            self.pipeline.set_state(Gst.State.PLAYING)
+        except Exception as e:
+            self.show_toast(f"Camera launch error: {e}")
+            print("Pipeline launch failed:", e)
+
+    # --- Shutter & Photo Capture ---
+    def on_shutter_clicked(self, _btn):
+        if self.countdown_remaining > 0:
+            if self.countdown_source_id:
+                GLib.source_remove(self.countdown_source_id)
+                self.countdown_source_id = None
+            self.countdown_remaining = 0
+            self.countdown_box.set_visible(False)
+            return
+
+        if self.timer_seconds > 0:
+            self.countdown_remaining = self.timer_seconds
+            self.countdown_box.set_visible(True)
+            self.lbl_countdown.set_label(str(self.countdown_remaining))
+            self.countdown_source_id = GLib.timeout_add(1000, self.on_timer_tick)
+        else:
+            self.execute_capture()
+
+    def on_timer_tick(self):
+        self.countdown_remaining -= 1
+        if self.countdown_remaining > 0:
+            self.lbl_countdown.set_label(str(self.countdown_remaining))
+            return True
+        else:
+            self.countdown_box.set_visible(False)
+            self.countdown_source_id = None
+            self.execute_capture()
+            return False
+
+    def execute_capture(self):
+        cam = self.cameras[self.cur_cam_idx] if self.cameras else {}
+        is_front = cam.get('is_front', False)
+
+        # 1. Trigger Flash (Hardware LED for Rear or Screen Flash for Front)
+        fired_hardware_flash = False
+        if self.flash_mode in ('auto', 'torch'):
+            if is_front or not os.path.exists('/sys/class/leds/white:flash/brightness'):
+                self.flash_box.set_visible(True)
+                GLib.timeout_add(150, lambda: self.flash_box.set_visible(False))
+            else:
+                ok, _ = self.set_hardware_led(True, self.flash_brightness)
+                if ok:
+                    fired_hardware_flash = True
+                    if not self.torch_on:
+                        GLib.timeout_add(250, lambda: self.set_hardware_led(False))
+                else:
+                    self.flash_box.set_visible(True)
+                    GLib.timeout_add(150, lambda: self.flash_box.set_visible(False))
+        else:
+            # Subtle visual screen shutter flash feedback
+            self.flash_box.set_visible(True)
+            GLib.timeout_add(100, lambda: self.flash_box.set_visible(False))
+
+        # 2. Play shutter sound asynchronously
+        self.play_shutter_sound()
+
+        # 3. Pull frame from paintable sink
+        if not self.paintable_sink:
+            self.show_toast("Error: Viewfinder sink not active")
+            return
+
+        sample = self.paintable_sink.props.last_sample
+        if not sample:
+            self.show_toast("Error: Unable to capture frame from viewfinder")
+            return
+
+        caps = sample.get_caps()
+        struct = caps.get_structure(0)
+        w = struct.get_value('width')
+        h = struct.get_value('height')
+        fmt = struct.get_value('format')
+        buf = sample.get_buffer()
+
+        ok, map_info = buf.map(Gst.MapFlags.READ)
+        if not ok:
+            self.show_toast("Error: Failed to read buffer memory")
+            return
+
+        try:
+            has_alpha = (fmt == 'RGBA')
+            rowstride = w * (4 if has_alpha else 3)
+            gb = GLib.Bytes.new(map_info.data)
+            pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(gb, GdkPixbuf.Colorspace.RGB, has_alpha, 8, w, h, rowstride)
+
+            # Check target resolution
+            preset = RESOLUTION_PRESETS[self.target_res_idx]
+            target_w = preset['w']
+            target_h = preset['h']
+
+            if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
+                pixbuf = pixbuf.scale_simple(target_w, target_h, GdkPixbuf.InterpType.BILINEAR)
+
+            # Generate output filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            ext = 'jpg' if self.output_format == 'jpeg' else self.output_format
+            filename = f"IMG_{timestamp}.{ext}"
+            filepath = os.path.join(self.save_dir, filename)
+
+            # Save file
+            quality_val = str(int(self.scale_quality.get_value()))
+            if self.output_format == 'jpeg':
+                pixbuf.savev(filepath, 'jpeg', ['quality'], [quality_val])
+            elif self.output_format == 'webp':
+                pixbuf.savev(filepath, 'webp', ['quality'], [quality_val])
+            else:
+                pixbuf.savev(filepath, 'png', [], [])
+
+            buf.unmap(map_info)
+
+            # Update UI & Thumbnail
+            self.last_saved_path = filepath
+            self.recent_photos.insert(0, filepath)
+            self.update_thumbnail_preview()
+            self.show_toast(f"Saved: {filename} ({pixbuf.get_width()}×{pixbuf.get_height()})")
+        except Exception as e:
+            buf.unmap(map_info)
+            self.show_toast(f"Save error: {e}")
+            print("Capture failed:", e)
+
+    def play_shutter_sound(self):
+        try:
+            sound_file = '/usr/share/sounds/freedesktop/stereo/camera-shutter.oga'
+            if os.path.exists(sound_file):
+                subprocess.Popen(['pw-play', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen(['canberra-gtk-play', '-i', 'camera-shutter'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    def update_thumbnail_preview(self):
+        if self.last_saved_path and os.path.exists(self.last_saved_path):
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.last_saved_path, 52, 52, True)
+                self.img_thumb.set_from_pixbuf(pb)
+                return
+            except Exception:
+                pass
+        self.img_thumb.set_from_icon_name("image-x-generic-symbolic")
+
+    # --- In-App Photo Gallery & Inspector ---
+    def on_open_gallery(self, _btn):
+        if not self.recent_photos or not os.path.exists(self.recent_photos[0]):
+            self.show_toast("No photos taken yet")
+            return
+
+        dialog = GalleryInspectorDialog(self, self.recent_photos)
+        dialog.present(self)
+
+    def on_toggle_fullscreen(self, _btn=None):
+        if self.is_fullscreen():
+            self.unfullscreen()
+            self.btn_fullscreen.set_icon_name("view-fullscreen-symbolic")
+            self.btn_fullscreen.set_tooltip_text("Toggle Fullscreen (F11)")
+        else:
+            self.fullscreen()
+            self.btn_fullscreen.set_icon_name("view-restore-symbolic")
+            self.btn_fullscreen.set_tooltip_text("Exit Fullscreen (F11)")
+
+    def on_key_pressed(self, _controller, keyval, _keycode, state):
+        is_ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if is_ctrl and keyval in (Gdk.KEY_q, Gdk.KEY_Q, Gdk.KEY_w, Gdk.KEY_W):
+            self.close()
+            return True
+        elif keyval in (Gdk.KEY_space, Gdk.KEY_Return):
+            self.on_shutter_clicked(None)
+            return True
+        elif keyval in (Gdk.KEY_c, Gdk.KEY_C):
+            self.on_switch_camera(None)
+            return True
+        elif keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            self.on_cycle_flash(None)
+            return True
+        elif keyval in (Gdk.KEY_g, Gdk.KEY_G):
+            self.on_cycle_grid(None)
+            return True
+        elif keyval in (Gdk.KEY_t, Gdk.KEY_T):
+            self.on_cycle_timer(None)
+            return True
+        elif keyval in (Gdk.KEY_m, Gdk.KEY_M):
+            self.on_toggle_mirror(None)
+            return True
+        elif keyval == Gdk.KEY_F11:
+            self.on_toggle_fullscreen()
+            return True
+        elif keyval in (Gdk.KEY_Escape,):
+            if self.drawer_revealer.get_reveal_child():
+                self.drawer_revealer.set_reveal_child(False)
+                return True
+            self.close()
+            return True
+        return False
+
+    def show_toast(self, text):
+        toast = Adw.Toast.new(text)
+        toast.set_timeout(2)
+        self.toast_overlay.add_toast(toast)
+
+    def do_close_request(self):
+        if hasattr(self, 'orient_timer_id') and self.orient_timer_id:
+            GLib.source_remove(self.orient_timer_id)
+            self.orient_timer_id = None
+        # Always turn off hardware flashlight on exit
+        if self.torch_on:
+            self.set_hardware_led(False)
+            self.torch_on = False
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+        return False
+
+
+# In-App Gallery & Post-Processing Inspector
+class GalleryInspectorDialog(Adw.Window):
+    __gtype_name__ = "GalleryInspectorDialog"
+
+    def __init__(self, parent_win, photo_list):
+        super().__init__(title="Photo Inspector & Studio")
+        self.set_default_size(780, 600)
+        self.set_modal(True)
+        self.set_transient_for(parent_win)
+
+        self.parent_win = parent_win
+        self.photo_list = [p for p in photo_list if os.path.exists(p)]
+        self.cur_idx = 0
+
+        # Style & Dark theme
+        style_mgr = Adw.StyleManager.get_default()
+        style_mgr.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+
+        self.build_ui()
+        self.load_current_photo()
+
+    def build_ui(self):
+        toolbar_view = Adw.ToolbarView()
+        self.set_content(toolbar_view)
+
+        # HeaderBar
+        header_bar = Adw.HeaderBar()
+        self.lbl_title = Gtk.Label(label="Photo Inspector")
+        self.lbl_title.add_css_class("title-3")
+        header_bar.set_title_widget(self.lbl_title)
+
+        # Open in Loupe / Image Viewer button
+        btn_open_external = Gtk.Button(icon_name="document-open-symbolic")
+        btn_open_external.set_tooltip_text("Open in System Image Viewer (Loupe)")
+        btn_open_external.connect('clicked', self.on_open_external)
+        header_bar.pack_end(btn_open_external)
+
+        # Open Folder button
+        btn_open_folder = Gtk.Button(icon_name="folder-symbolic")
+        btn_open_folder.set_tooltip_text("Open Pictures/Camera Folder")
+        btn_open_folder.connect('clicked', lambda _: subprocess.Popen(['xdg-open', self.parent_win.save_dir]))
+        header_bar.pack_end(btn_open_folder)
+
+        toolbar_view.add_top_bar(header_bar)
+
+        # Content: Horizontal Paned (Image on left, Info on right)
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(520)
+
+        # Left: Photo Preview with Navigation buttons
+        left_overlay = Gtk.Overlay()
+        self.pic_preview = Gtk.Picture()
+        self.pic_preview.set_hexpand(True)
+        self.pic_preview.set_vexpand(True)
+        self.pic_preview.set_can_shrink(True)
+        left_overlay.set_child(self.pic_preview)
+
+        # Nav buttons (Prev / Next)
+        nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        nav_box.set_valign(Gtk.Align.CENTER)
+        nav_box.set_margin_start(12)
+        nav_box.set_margin_end(12)
+
+        self.btn_prev = Gtk.Button(icon_name="go-previous-symbolic")
+        self.btn_prev.add_css_class("action-circle-btn")
+        self.btn_prev.connect('clicked', self.on_prev_photo)
+        nav_box.append(self.btn_prev)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        nav_box.append(spacer)
+
+        self.btn_next = Gtk.Button(icon_name="go-next-symbolic")
+        self.btn_next.add_css_class("action-circle-btn")
+        self.btn_next.connect('clicked', self.on_next_photo)
+        nav_box.append(self.btn_next)
+
+        left_overlay.add_overlay(nav_box)
+        paned.set_start_child(left_overlay)
+
+        # Right: Info & Actions
+        right_scroll = Gtk.ScrolledWindow()
+        right_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        info_page = Adw.PreferencesPage()
+
+        # Metadata Group
+        meta_group = Adw.PreferencesGroup(title="Photo Details")
+        self.row_file = Adw.ActionRow(title="File Name")
+        self.row_res = Adw.ActionRow(title="Dimensions")
+        self.row_size = Adw.ActionRow(title="File Size")
+        self.row_date = Adw.ActionRow(title="Captured On")
+
+        meta_group.add(self.row_file)
+        meta_group.add(self.row_res)
+        meta_group.add(self.row_size)
+        meta_group.add(self.row_date)
+        info_page.add(meta_group)
+
+        # Actions Group
+        action_group = Adw.PreferencesGroup(title="Actions")
+        
+        # Delete button
+        row_del = Adw.ActionRow(title="Remove Photo")
+        btn_del = Gtk.Button(label="Delete")
+        btn_del.add_css_class("destructive-action")
+        btn_del.connect('clicked', self.on_delete_photo)
+        row_del.add_suffix(btn_del)
+        action_group.add(row_del)
+        info_page.add(action_group)
+
+        right_scroll.set_child(info_page)
+        paned.set_end_child(right_scroll)
+
+        toolbar_view.set_content(paned)
+
+    def load_current_photo(self):
+        if not self.photo_list:
+            self.close()
+            return
+
+        path = self.photo_list[self.cur_idx]
+        self.lbl_title.set_label(f"Photo {self.cur_idx + 1} of {len(self.photo_list)}")
+        self.btn_prev.set_sensitive(self.cur_idx > 0)
+        self.btn_next.set_sensitive(self.cur_idx < len(self.photo_list) - 1)
+
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file(path)
+            self.pic_preview.set_pixbuf(pb)
+
+            w, h = pb.get_width(), pb.get_height()
+            mp = (w * h) / 1000000.0
+            size_kb = os.path.getsize(path) / 1024.0
+            mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S')
+
+            self.row_file.set_subtitle(os.path.basename(path))
+            self.row_res.set_subtitle(f"{w} × {h} ({mp:.1f} MP)")
+            self.row_size.set_subtitle(f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB")
+            self.row_date.set_subtitle(mtime)
+        except Exception as e:
+            print("Failed to load photo:", e)
+
+    def on_prev_photo(self, _btn):
+        if self.cur_idx > 0:
+            self.cur_idx -= 1
+            self.load_current_photo()
+
+    def on_next_photo(self, _btn):
+        if self.cur_idx < len(self.photo_list) - 1:
+            self.cur_idx += 1
+            self.load_current_photo()
+
+    def on_open_external(self, _btn):
+        if self.photo_list:
+            subprocess.Popen(['xdg-open', self.photo_list[self.cur_idx]])
+
+    def on_delete_photo(self, _btn):
+        if not self.photo_list:
+            return
+        path = self.photo_list[self.cur_idx]
+        try:
+            os.remove(path)
+            self.photo_list.pop(self.cur_idx)
+            self.parent_win.recent_photos = self.photo_list
+            self.parent_win.update_thumbnail_preview()
+            if self.cur_idx >= len(self.photo_list):
+                self.cur_idx = max(0, len(self.photo_list) - 1)
+            self.load_current_photo()
+        except Exception as e:
+            print("Failed to delete photo:", e)
+
+
+class CameraStudioApp(Adw.Application):
+    __gtype_name__ = "CameraStudioApp"
+
+    def __init__(self):
+        super().__init__(application_id='org.local.camera_studio')
+
+    def do_activate(self):
+        win = CameraStudioWindow(self)
+        win.present()
+
+
+if __name__ == '__main__':
+    app = CameraStudioApp()
+    sys.exit(app.run(sys.argv))

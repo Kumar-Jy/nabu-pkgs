@@ -103,6 +103,10 @@ on:
         type: boolean
         default: true
         description: Build nabu-autobrightness
+      build_camera_studio:
+        type: boolean
+        default: true
+        description: Build camera-studio
 
 jobs:
   resolve-packages:
@@ -141,6 +145,7 @@ jobs:
               --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
               --argjson oskb "${{ inputs.build_oskb }}" \
               --argjson nabu_autobrightness "${{ inputs.build_nabu_autobrightness }}" \
+              --argjson camera_studio "${{ inputs.build_camera_studio }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -165,9 +170,10 @@ jobs:
                  if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
                  if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end,
                  if $oskb then "oskb" else empty end,
-                 if $nabu_autobrightness then "nabu-autobrightness" else empty end ]' > matrix.json
+                 if $nabu_autobrightness then "nabu-autobrightness" else empty end,
+                 if $camera_studio then "camera-studio" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"

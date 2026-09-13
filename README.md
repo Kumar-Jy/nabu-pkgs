@@ -16,6 +16,7 @@ published as a pacman repository.
 | `nabu-pmac`    | Deterministic WLAN MAC from board serial          |
 | `oskb`         | Full on-screen touch keyboard with nav keys & themes |
 | `nabu-autobrightness` | Ambient light auto-brightness daemon & desktop toggle |
+| `camera-studio`| Hardware camera with auto-rotate, VCM focus & color grading |
 | `system-monitor`| Universal hardware & telemetry system monitor      |
 
 ## Repository

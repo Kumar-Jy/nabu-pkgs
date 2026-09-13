@@ -1,0 +1,6 @@
+# Xiaomi Pad 5 (nabu) & Linux Camera Flash LED Access
+# Allows members of the video group to operate the camera flash and flashlight torch without root
+
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="white:flash", RUN+="/bin/chgrp -H -R video /sys/class/leds/%k", RUN+="/bin/chmod -R g+w /sys/class/leds/%k/"
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="*flash*", RUN+="/bin/chgrp -H -R video /sys/class/leds/%k", RUN+="/bin/chmod -R g+w /sys/class/leds/%k/"
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="*torch*", RUN+="/bin/chgrp -H -R video /sys/class/leds/%k", RUN+="/bin/chmod -R g+w /sys/class/leds/%k/"
