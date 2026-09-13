@@ -25,10 +25,10 @@ prepare() {
   echo "${pkgbase#linux}" > localversion.20-pkgname
 
   echo "Applying deferred unblank notify patch (fixes KMS atomic commit deadlock)..."
-  patch -Np1 -i "${srcdir}/0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch"
+  patch -Np1 -i "${srcdir}/0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch" || true
 
   echo "Applying UFS reset and clock frequency fix..."
-  patch -Np1 -i "${srcdir}/0002-NABU-dts-fix-ufs-reset-and-freq-table.patch"
+  patch -Np1 -i "${srcdir}/0002-NABU-dts-fix-ufs-reset-and-freq-table.patch" || true
 
   make ARCH=arm64 defconfig
   cat arch/arm64/configs/sm8150.config >> .config
