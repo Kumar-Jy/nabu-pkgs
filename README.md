@@ -47,3 +47,8 @@ signature and only rebuilds when the upstream source or version changes.
 
 1. Create `packages/<name>/PKGBUILD`.
 2. Add the name to the package list in `arch-repo.yml`.
+
+## License
+
+This repository and its packages are released under the [MIT License](LICENSE).
+Individual packages contain their respective licenses and copyright notices under `packages/<name>/LICENSE`.
