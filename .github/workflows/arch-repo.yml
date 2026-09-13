@@ -33,7 +33,7 @@ on:
         description: Build linux-nabu 6.16
       build_linux_nabu_618:
         type: boolean
-        default: true
+        default: false
         description: Build linux-nabu 6.18
       build_nabu_pmac:
         type: boolean
@@ -287,7 +287,7 @@ jobs:
     name: Assemble pacman repository
     runs-on: ubuntu-24.04-arm
     needs: build-packages
-    if: ${{ needs.build-packages.result == 'success' }}
+    if: ${{ !cancelled() && !contains(needs.build-packages.result, 'cancelled') }}
     permissions:
       contents: write
     steps:
