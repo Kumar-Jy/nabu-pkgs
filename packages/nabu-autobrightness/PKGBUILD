@@ -1,0 +1,32 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Intelligent ambient light auto-brightness daemon and toggle for Xiaomi Pad 5 (nabu)
+
+pkgname=nabu-autobrightness
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Intelligent ambient light auto-brightness daemon and toggle for Xiaomi Pad 5 (nabu)"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'iio-sensor-proxy' 'libnotify')
+source=('nabu-autobrightness'
+        'nabu-autobrightness.service'
+        'nabu-autobrightness-toggle.desktop'
+        '99-nabu-backlight.rules'
+        'LICENSE'
+        'README.md')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/nabu-autobrightness" "$pkgdir/usr/bin/nabu-autobrightness"
+  install -Dm644 "$srcdir/nabu-autobrightness.service" "$pkgdir/usr/lib/systemd/user/nabu-autobrightness.service"
+  install -Dm644 "$srcdir/nabu-autobrightness-toggle.desktop" "$pkgdir/usr/share/applications/nabu-autobrightness-toggle.desktop"
+  install -Dm644 "$srcdir/99-nabu-backlight.rules" "$pkgdir/usr/lib/udev/rules.d/99-nabu-backlight.rules"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

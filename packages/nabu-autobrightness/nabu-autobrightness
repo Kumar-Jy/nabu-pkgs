@@ -1,0 +1,1031 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+nabu-autobrightness
+Intelligent Ambient Light Auto-Brightness Daemon for Xiaomi Pad 5 (nabu).
+
+Features:
+- Reads ambient light levels from net.hadess.SensorProxy (iio-sensor-proxy).
+- Human perceptual curve (Stevens' power law / gamma response).
+- Exponential Moving Average (EMA) filtering to eliminate hand-shadow jitter.
+- Smooth fading transitions (cosine interpolation) for imperceptible steps.
+- Native integration with KDE Plasma 6 PowerDevil (setBrightnessSilent).
+- Automatic sysfs fallback (/sys/class/backlight/ktz8866-backlight).
+- User manual brightness preference learning (bias offset).
+- Unix domain socket IPC for instantaneous CLI control and desktop toggle.
+- ScreenSaver lock and system suspend/resume power-saving hooks.
+
+Copyright (c) 2026 Kumar-Jy <https://github.com/Kumar-Jy>
+Licensed under the MIT License.
+"""
+
+import os
+import sys
+import math
+import time
+import json
+import signal
+import socket
+import logging
+import argparse
+import subprocess
+
+try:
+    import gi
+    gi.require_version('Gio', '2.0')
+    gi.require_version('GLib', '2.0')
+    from gi.repository import Gio, GLib
+except ImportError as e:
+    sys.stderr.write(f"Error: PyGObject (python-gobject) is required: {e}\n")
+    sys.exit(1)
+
+VERSION = "1.0.0"
+APP_NAME = "nabu-autobrightness"
+
+DEFAULT_CONFIG = {
+    "enabled": True,
+    "profile": "standard",
+    "user_bias": 0.0,
+    "smooth_duration": 0.8,
+    "deadband_pct": 1.2,
+    "notify_on_toggle": True,
+}
+
+PROFILES = {
+    "standard": {
+        "description": "Ergonomic human-calibrated curve for indoor and outdoor comfort",
+        "anchors": [
+            (0.0, 8.0),     # Pitch dark (bedroom)
+            (2.0, 12.0),    # Ultra-dim ambient
+            (5.0, 18.0),    # Soft night light
+            (15.0, 28.0),   # Dim evening room
+            (40.0, 42.0),   # Cozy indoor living room
+            (80.0, 55.0),   # Normal lit room
+            (150.0, 66.0),  # Bright office / study room
+            (300.0, 78.0),  # Bright workspace
+            (600.0, 88.0),  # Daylight near window
+            (1000.0, 100.0) # Full sun / bright outdoors
+        ],
+    },
+    "bright": {
+        "description": "Vibrant boost for well-lit rooms and outdoor visibility",
+        "anchors": [
+            (0.0, 12.0),
+            (2.0, 18.0),
+            (5.0, 26.0),
+            (15.0, 38.0),
+            (40.0, 54.0),
+            (80.0, 68.0),
+            (150.0, 80.0),
+            (300.0, 90.0),
+            (600.0, 100.0)
+        ],
+    },
+    "dim": {
+        "description": "Lower glare curve for night reading and dark environments",
+        "anchors": [
+            (0.0, 5.0),
+            (2.0, 8.0),
+            (5.0, 12.0),
+            (15.0, 18.0),
+            (40.0, 28.0),
+            (80.0, 38.0),
+            (150.0, 48.0),
+            (300.0, 60.0),
+            (600.0, 72.0),
+            (1000.0, 85.0)
+        ],
+    },
+    "battery": {
+        "description": "Power-saving curve capped at 68% max brightness",
+        "anchors": [
+            (0.0, 5.0),
+            (2.0, 7.0),
+            (5.0, 10.0),
+            (15.0, 16.0),
+            (40.0, 25.0),
+            (80.0, 35.0),
+            (150.0, 45.0),
+            (300.0, 55.0),
+            (600.0, 68.0)
+        ],
+    },
+}
+
+
+def calculate_profile_brightness_pct(lux, profile_name="standard", bias=0.0):
+    """Calculates target screen brightness percentage from lux using log-space cosine anchor interpolation."""
+    cfg = PROFILES.get(profile_name, PROFILES["standard"])
+    anchors = cfg["anchors"]
+    l = max(0.0, float(lux))
+    if l <= anchors[0][0]:
+        base = anchors[0][1]
+    elif l >= anchors[-1][0]:
+        base = anchors[-1][1]
+    else:
+        base = anchors[-1][1]
+        for i in range(len(anchors) - 1):
+            x0, y0 = anchors[i]
+            x1, y1 = anchors[i + 1]
+            if x0 <= l <= x1:
+                if x0 > 0:
+                    t = (math.log(l) - math.log(x0)) / (math.log(x1) - math.log(x0))
+                else:
+                    t = (l - x0) / (x1 - x0)
+                # Smooth cosine S-curve easing between anchors
+                t_smooth = 0.5 * (1.0 - math.cos(math.pi * t))
+                base = y0 + (y1 - y0) * t_smooth
+                break
+
+    min_allowed = anchors[0][1]
+    max_allowed = anchors[-1][1] if profile_name in ["dim", "battery"] else 100.0
+    return max(min_allowed, min(max_allowed, base + bias))
+
+
+
+def get_runtime_dir():
+    return os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+
+
+def get_config_path():
+    config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(config_home, APP_NAME, "config.json")
+
+
+def get_socket_path():
+    return os.path.join(get_runtime_dir(), f"{APP_NAME}.sock")
+
+
+def get_state_path():
+    return os.path.join(get_runtime_dir(), f"{APP_NAME}.state")
+
+
+def send_notification(title, message, icon="display-brightness-symbolic"):
+    try:
+        subprocess.run(
+            ["notify-send", "-a", "Auto-Brightness", "-i", icon, title, message],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+class Config:
+    def __init__(self):
+        self.path = get_config_path()
+        self.data = dict(DEFAULT_CONFIG)
+        self.load()
+
+    def load(self):
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    self.data.update(loaded)
+            except Exception as e:
+                logging.warning(f"Failed to load config from {self.path}: {e}")
+        else:
+            self.save()
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save config to {self.path}: {e}")
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def set(self, key, value):
+        self.data[key] = value
+        self.save()
+
+
+class BacklightBackend:
+    """Controls screen backlight via KDE PowerDevil DBus or sysfs fallback."""
+
+    SYSFS_PATH = "/sys/class/backlight/ktz8866-backlight"
+
+    def __init__(self):
+        self.backend_type = "unknown"
+        self.session_bus = None
+        self.powerdevil_proxy = None
+        self.max_brightness = 10000
+        self.min_brightness = 0
+        self._init_backend()
+
+    def _init_backend(self):
+        # Try KDE PowerDevil DBus first
+        try:
+            self.session_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            self.powerdevil_proxy = Gio.DBusProxy.new_sync(
+                self.session_bus,
+                Gio.DBusProxyFlags.NONE,
+                None,
+                "org.kde.Solid.PowerManagement",
+                "/org/kde/Solid/PowerManagement/Actions/BrightnessControl",
+                "org.kde.Solid.PowerManagement.Actions.BrightnessControl",
+                None,
+            )
+            # Test method call
+            res = self.powerdevil_proxy.call_sync(
+                "brightnessMax", None, Gio.DBusCallFlags.NONE, 2000, None
+            )
+            self.max_brightness = res.unpack()[0]
+            self.backend_type = "KDE PowerDevil (DBus)"
+            logging.info(f"Initialized backend: {self.backend_type} (max: {self.max_brightness})")
+            return
+        except Exception as e:
+            logging.debug(f"PowerDevil DBus not available: {e}")
+
+        # Fallback to sysfs
+        if os.path.isdir(self.SYSFS_PATH):
+            max_b_path = os.path.join(self.SYSFS_PATH, "max_brightness")
+            if os.path.exists(max_b_path):
+                try:
+                    with open(max_b_path, "r") as f:
+                        self.max_brightness = int(f.read().strip())
+                    self.backend_type = "Sysfs (ktz8866-backlight)"
+                    logging.info(f"Initialized backend: {self.backend_type} (max: {self.max_brightness})")
+                    return
+                except Exception as e:
+                    logging.warning(f"Failed to read sysfs max_brightness: {e}")
+
+        self.backend_type = "Unavailable"
+        logging.error("No suitable backlight backend found!")
+
+    def get_brightness(self):
+        """Returns current brightness on a normalized 0..10000 scale."""
+        if self.powerdevil_proxy:
+            try:
+                res = self.powerdevil_proxy.call_sync(
+                    "brightness", None, Gio.DBusCallFlags.NONE, 1000, None
+                )
+                raw = res.unpack()[0]
+                if self.max_brightness != 10000 and self.max_brightness > 0:
+                    return int(round((raw / self.max_brightness) * 10000))
+                return raw
+            except Exception as e:
+                logging.debug(f"DBus get brightness error: {e}")
+
+        # Sysfs
+        b_path = os.path.join(self.SYSFS_PATH, "brightness")
+        if os.path.exists(b_path):
+            try:
+                with open(b_path, "r") as f:
+                    raw = int(f.read().strip())
+                return int(round((raw / max(1, self.max_brightness)) * 10000))
+            except Exception as e:
+                logging.debug(f"Sysfs get brightness error: {e}")
+        return 5000
+
+    def set_brightness_silent(self, value):
+        """Sets brightness on a normalized 0..10000 scale without triggering OSD."""
+        val = max(0, min(10000, int(value)))
+        if self.powerdevil_proxy:
+            try:
+                # Convert to PowerDevil scale
+                target = int(round((val / 10000.0) * self.max_brightness)) if self.max_brightness != 10000 else val
+                self.powerdevil_proxy.call_sync(
+                    "setBrightnessSilent",
+                    GLib.Variant("(i)", (target,)),
+                    Gio.DBusCallFlags.NONE,
+                    1000,
+                    None,
+                )
+                return True
+            except Exception as e:
+                logging.debug(f"DBus set brightness error: {e}")
+
+        # Sysfs
+        b_path = os.path.join(self.SYSFS_PATH, "brightness")
+        if os.path.exists(b_path):
+            try:
+                raw_target = int(round((val / 10000.0) * self.max_brightness))
+                with open(b_path, "w") as f:
+                    f.write(f"{raw_target}\n")
+                return True
+            except Exception as e:
+                logging.debug(f"Sysfs write brightness error: {e}")
+        return False
+
+
+class AutoBrightnessDaemon:
+    """Core daemon managing light sensor, curve calculations, smoothing, and transitions."""
+
+    def __init__(self):
+        self.config = Config()
+        self.backlight = BacklightBackend()
+
+        self.system_bus = None
+        self.sensor_proxy = None
+        self.screensaver_proxy = None
+
+        self.raw_lux = 10.0
+        self.smoothed_lux = 10.0
+        self.current_brightness = self.backlight.get_brightness()
+        self.target_brightness = self.current_brightness
+        self.base_curve_brightness = self.current_brightness
+
+        self.screen_locked = False
+        self.system_suspended = False
+        self.light_claimed = False
+
+        # Slew transition follower state
+        self.current_val = float(self.current_brightness)
+        self.fader_timer_id = None
+        self.is_fading = False
+        self.ignore_brightness_until = 0.0
+
+        # IPC Socket
+        self.server_sock = None
+        self.sock_watch_id = None
+
+        # Periodic sensor heartbeat
+        self.heartbeat_id = None
+
+    def start(self):
+        logging.info(f"Starting {APP_NAME} v{VERSION}...")
+        self._init_system_bus()
+        self._init_session_bus()
+        self._init_ipc_socket()
+        self._claim_sensor()
+
+        # Write initial state
+        self._update_state_file()
+
+        # Periodic heartbeat (every 2.0s) to keep sensor alive and check status
+        self.heartbeat_id = GLib.timeout_add_seconds(2, self._on_heartbeat)
+
+        # Handle signals
+        try:
+            from gi.repository import GLibUnix
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._on_signal_exit)
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self._on_signal_exit)
+        except Exception:
+            signal.signal(signal.SIGTERM, lambda s, f: self._on_signal_exit())
+            signal.signal(signal.SIGINT, lambda s, f: self._on_signal_exit())
+
+        logging.info(f"Daemon active and running. Backend: {self.backlight.backend_type}")
+
+    def _init_system_bus(self):
+        try:
+            self.system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self.sensor_proxy = Gio.DBusProxy.new_sync(
+                self.system_bus,
+                Gio.DBusProxyFlags.NONE,
+                None,
+                "net.hadess.SensorProxy",
+                "/net/hadess/SensorProxy",
+                "net.hadess.SensorProxy",
+                None,
+            )
+            self.sensor_proxy.connect("g-properties-changed", self._on_sensor_properties_changed)
+
+            # Subscribe to system sleep/resume
+            self.system_bus.signal_subscribe(
+                "org.freedesktop.login1",
+                "org.freedesktop.login1.Manager",
+                "PrepareForSleep",
+                "/org/freedesktop/login1",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_prepare_for_sleep,
+                None,
+            )
+        except Exception as e:
+            logging.error(f"Failed to connect to system bus / SensorProxy: {e}")
+
+    def _init_session_bus(self):
+        try:
+            session_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+            # Subscribe to PowerDevil brightnessChanged to detect user manual slider moves
+            session_bus.signal_subscribe(
+                "org.kde.Solid.PowerManagement",
+                "org.kde.Solid.PowerManagement.Actions.BrightnessControl",
+                "brightnessChanged",
+                "/org/kde/Solid/PowerManagement/Actions/BrightnessControl",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_brightness_changed,
+                None,
+            )
+
+            # Subscribe to ScreenSaver ActiveChanged
+            session_bus.signal_subscribe(
+                "org.freedesktop.ScreenSaver",
+                "org.freedesktop.ScreenSaver",
+                "ActiveChanged",
+                "/ScreenSaver",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_screensaver_changed,
+                None,
+            )
+        except Exception as e:
+            logging.debug(f"Session bus subscriptions failed: {e}")
+
+    def _claim_sensor(self):
+        if not self.config.get("enabled", True):
+            logging.info("Auto-brightness disabled in config, skipping ClaimLight.")
+            return
+
+        if self.sensor_proxy and not self.light_claimed:
+            try:
+                self.sensor_proxy.call_sync("ClaimLight", None, Gio.DBusCallFlags.NONE, 2000, None)
+                self.light_claimed = True
+                logging.info("Claimed ambient light sensor successfully.")
+
+                # Read initial cached lux
+                prop = self.sensor_proxy.get_cached_property("LightLevel")
+                if prop:
+                    self._on_ambient_light_update(float(prop.get_double()), force=True)
+            except Exception as e:
+                logging.warning(f"Could not claim light sensor: {e}")
+
+    def _release_sensor(self):
+        if self.sensor_proxy and self.light_claimed:
+            try:
+                self.sensor_proxy.call_sync("ReleaseLight", None, Gio.DBusCallFlags.NONE, 1000, None)
+                self.light_claimed = False
+                logging.info("Released ambient light sensor.")
+            except Exception as e:
+                logging.debug(f"Error releasing light sensor: {e}")
+
+    def _on_sensor_properties_changed(self, proxy, changed_props, invalidated_props):
+        props = changed_props.unpack()
+        if "LightLevel" in props:
+            lux = float(props["LightLevel"])
+            self._on_ambient_light_update(lux)
+
+    def _on_heartbeat(self):
+        """Periodic safety check and sensor polling."""
+        if not self.config.get("enabled", True) or self.screen_locked or self.system_suspended:
+            return True
+
+        if not self.light_claimed:
+            self._claim_sensor()
+
+        if self.sensor_proxy:
+            prop = self.sensor_proxy.get_cached_property("LightLevel")
+            if prop:
+                lux = float(prop.get_double())
+                if abs(lux - self.raw_lux) > 0.1:
+                    self._on_ambient_light_update(lux)
+
+        self._update_state_file()
+        return True
+
+    def _on_prepare_for_sleep(self, connection, sender, path, interface, signal_name, parameters, user_data):
+        is_sleeping = parameters.unpack()[0]
+        if is_sleeping:
+            logging.info("System preparing for sleep - pausing autobrightness")
+            self.system_suspended = True
+            self._stop_fade()
+            self._release_sensor()
+        else:
+            logging.info("System resumed from sleep - restoring autobrightness")
+            self.system_suspended = False
+            # Wait 1.5s for sensors to reinitialize
+            GLib.timeout_add(1500, self._resume_after_wake)
+
+    def _resume_after_wake(self):
+        self._claim_sensor()
+        self.current_brightness = self.backlight.get_brightness()
+        self._evaluate_brightness(force=True)
+        return False
+
+    def _on_screensaver_changed(self, connection, sender, path, interface, signal_name, parameters, user_data):
+        is_active = parameters.unpack()[0]
+        self.screen_locked = bool(is_active)
+        logging.info(f"Screen lock state changed: {self.screen_locked}")
+        if not self.screen_locked:
+            # Re-evaluate upon unlock
+            GLib.timeout_add(300, self._evaluate_after_unlock)
+
+    def _evaluate_after_unlock(self):
+        self.current_brightness = self.backlight.get_brightness()
+        self._evaluate_brightness()
+        return False
+
+    def _on_brightness_changed(self, connection, sender, path, interface, signal_name, parameters, user_data):
+        new_val = parameters.unpack()[0]
+        # Ignore echo signals from our own automated transitions or cooldown period
+        if time.time() < self.ignore_brightness_until or self.is_fading:
+            return
+
+        # Real user manual slider adjustment
+        if self.config.get("enabled", True):
+            if abs(new_val - self.target_brightness) > 250:
+                diff = new_val - self.base_curve_brightness
+                bias_pct = round(diff / 100.0, 1)
+                bias_pct = max(-35.0, min(35.0, bias_pct))
+                logging.info(f"User manual slider change: {new_val} (bias: {bias_pct:+.1f}%)")
+                self.config.set("user_bias", bias_pct)
+                self.target_brightness = new_val
+                self.current_val = float(new_val)
+                self.current_brightness = new_val
+                self.ignore_brightness_until = time.time() + 1.0
+                self._update_state_file()
+
+    def _on_ambient_light_update(self, lux, force=False):
+        self.raw_lux = max(0.0, float(lux))
+        if self.smoothed_lux is None or force:
+            self.smoothed_lux = self.raw_lux
+        self._start_slew_transition()
+
+    def _evaluate_brightness(self, force=False):
+        if force:
+            self.smoothed_lux = self.raw_lux
+        self._start_slew_transition()
+
+    def _start_slew_transition(self):
+        if self.fader_timer_id is None:
+            self.is_fading = True
+            # 25 Hz -> 40ms interval
+            self.fader_timer_id = GLib.timeout_add(40, self._on_fader_tick)
+
+    def _on_fader_tick(self):
+        if not self.config.get("enabled", True) or self.screen_locked or self.system_suspended:
+            self.is_fading = False
+            self.fader_timer_id = None
+            return False
+
+        # 1. Continuous smooth convergence of smoothed_lux towards raw_lux
+        lux_diff = self.raw_lux - self.smoothed_lux
+        if abs(lux_diff) > 0.05:
+            alpha = 0.15 if lux_diff > 0 else 0.06
+            self.smoothed_lux += alpha * lux_diff
+        else:
+            self.smoothed_lux = self.raw_lux
+
+        # 2. Re-calculate target brightness from continuously smoothed lux
+        profile_name = self.config.get("profile", "standard")
+        user_bias = float(self.config.get("user_bias", 0.0))
+
+        base_pct = calculate_profile_brightness_pct(self.smoothed_lux, profile_name, bias=0.0)
+        final_pct = calculate_profile_brightness_pct(self.smoothed_lux, profile_name, bias=user_bias)
+
+        self.base_curve_brightness = int(round(base_pct * 100.0))
+        self.target_brightness = int(round(final_pct * 100.0))
+
+        # 3. Slew screen brightness towards target_brightness
+        diff = self.target_brightness - self.current_val
+        lux_converged = abs(self.raw_lux - self.smoothed_lux) <= 0.05
+
+        if abs(diff) <= 8.0 and lux_converged:
+            self.current_val = float(self.target_brightness)
+            self.current_brightness = self.target_brightness
+            self.backlight.set_brightness_silent(self.target_brightness)
+            self.is_fading = False
+            self.fader_timer_id = None
+            self.ignore_brightness_until = time.time() + 0.5
+            self._update_state_file()
+            return False
+
+        if diff > 0:
+            step = min(160.0, max(14.0, diff * 0.12))
+            self.current_val += step
+        else:
+            step = min(90.0, max(10.0, abs(diff) * 0.08))
+            self.current_val -= step
+
+        val_int = int(round(self.current_val))
+        self.backlight.set_brightness_silent(val_int)
+        self.current_brightness = val_int
+        self.ignore_brightness_until = time.time() + 0.5
+        self._update_state_file()
+        return True
+
+    def _stop_fade(self):
+        if self.fader_timer_id is not None:
+            GLib.source_remove(self.fader_timer_id)
+            self.fader_timer_id = None
+        self.is_fading = False
+
+    def _init_ipc_socket(self):
+        sock_path = get_socket_path()
+        if os.path.exists(sock_path):
+            try:
+                os.remove(sock_path)
+            except Exception:
+                pass
+
+        try:
+            self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server_sock.bind(sock_path)
+            self.server_sock.listen(5)
+            self.server_sock.setblocking(False)
+
+            self.sock_watch_id = GLib.io_add_watch(
+                self.server_sock.fileno(), GLib.IOCondition.IN, self._on_socket_connection
+            )
+            logging.info(f"Listening on IPC socket: {sock_path}")
+        except Exception as e:
+            logging.error(f"Failed to initialize IPC socket {sock_path}: {e}")
+
+    def _on_socket_connection(self, fd, condition):
+        try:
+            conn, _ = self.server_sock.accept()
+            conn.settimeout(1.0)
+            data = conn.recv(2048)
+            if data:
+                req = json.loads(data.decode("utf-8"))
+                cmd = req.get("command", "")
+                resp = self._handle_ipc_command(cmd, req)
+                conn.sendall(json.dumps(resp).encode("utf-8") + b"\n")
+            conn.close()
+        except Exception as e:
+            logging.debug(f"IPC connection handling error: {e}")
+        return True
+
+    def _handle_ipc_command(self, cmd, req):
+        if cmd == "status":
+            return {
+                "success": True,
+                "version": VERSION,
+                "enabled": self.config.get("enabled", True),
+                "profile": self.config.get("profile", "standard"),
+                "user_bias": self.config.get("user_bias", 0.0),
+                "raw_lux": round(self.raw_lux, 1),
+                "smoothed_lux": round(self.smoothed_lux, 1),
+                "current_brightness": self.current_brightness,
+                "target_brightness": self.target_brightness,
+                "backend": self.backlight.backend_type,
+                "screen_locked": self.screen_locked,
+                "light_claimed": self.light_claimed,
+            }
+
+        elif cmd == "toggle":
+            new_state = not self.config.get("enabled", True)
+            self.config.set("enabled", new_state)
+            if new_state:
+                self._claim_sensor()
+                self._evaluate_brightness(force=True)
+            else:
+                self._stop_fade()
+                self._release_sensor()
+
+            self._update_state_file()
+
+            if self.config.get("notify_on_toggle", True):
+                if new_state:
+                    send_notification(
+                        "Auto-Brightness Enabled",
+                        f"Ambient: {self.smoothed_lux:.0f} lx → Brightness: {self.target_brightness // 100}%",
+                    )
+                else:
+                    send_notification(
+                        "Auto-Brightness Disabled",
+                        f"Screen locked at {self.current_brightness // 100}%",
+                        icon="display-brightness-low-symbolic",
+                    )
+
+            return {"success": True, "enabled": new_state}
+
+        elif cmd == "enable":
+            self.config.set("enabled", True)
+            self._claim_sensor()
+            self._evaluate_brightness(force=True)
+            self._update_state_file()
+            return {"success": True, "enabled": True}
+
+        elif cmd == "disable":
+            self.config.set("enabled", False)
+            self._stop_fade()
+            self._release_sensor()
+            self._update_state_file()
+            return {"success": True, "enabled": False}
+
+        elif cmd == "set_profile":
+            p = req.get("profile", "")
+            if p in PROFILES:
+                self.config.set("profile", p)
+                self._evaluate_brightness(force=True)
+                self._update_state_file()
+                if self.config.get("notify_on_toggle", True):
+                    send_notification(
+                        "Auto-Brightness Profile",
+                        f"Active profile changed to '{p.capitalize()}'",
+                    )
+                return {"success": True, "profile": p}
+            return {"success": False, "error": f"Invalid profile '{p}'"}
+
+        elif cmd == "set_bias":
+            bias = float(req.get("bias", 0.0))
+            bias = max(-35.0, min(35.0, bias))
+            self.config.set("user_bias", bias)
+            self._evaluate_brightness(force=True)
+            self._update_state_file()
+            return {"success": True, "user_bias": bias}
+
+        elif cmd == "reset_bias":
+            self.config.set("user_bias", 0.0)
+            self._evaluate_brightness(force=True)
+            self._update_state_file()
+            return {"success": True, "user_bias": 0.0}
+
+        return {"success": False, "error": f"Unknown command '{cmd}'"}
+
+    def _update_state_file(self):
+        state_path = get_state_path()
+        tmp_path = f"{state_path}.tmp"
+        try:
+            state = {
+                "version": VERSION,
+                "updated_at": time.time(),
+                "enabled": self.config.get("enabled", True),
+                "profile": self.config.get("profile", "standard"),
+                "user_bias": self.config.get("user_bias", 0.0),
+                "raw_lux": round(self.raw_lux, 1),
+                "smoothed_lux": round(self.smoothed_lux, 1),
+                "current_brightness": self.current_brightness,
+                "target_brightness": self.target_brightness,
+                "backend": self.backlight.backend_type,
+            }
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(state, f)
+            os.replace(tmp_path, state_path)
+        except Exception:
+            pass
+
+    def _on_signal_exit(self):
+        logging.info("Received termination signal, exiting...")
+        self._stop_fade()
+        self._release_sensor()
+        sock_path = get_socket_path()
+        if os.path.exists(sock_path):
+            try:
+                os.remove(sock_path)
+            except Exception:
+                pass
+        sys.exit(0)
+
+
+# ============================================================================
+# CLI Client Functions
+# ============================================================================
+
+def send_ipc_command(cmd, **kwargs):
+    sock_path = get_socket_path()
+    if not os.path.exists(sock_path):
+        return None
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect(sock_path)
+        payload = {"command": cmd}
+        payload.update(kwargs)
+        s.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+        data = s.recv(4096)
+        s.close()
+        if data:
+            return json.loads(data.decode("utf-8"))
+    except Exception:
+        pass
+    return None
+
+
+def cli_status():
+    status = send_ipc_command("status")
+    if status is None:
+        # Check if state file exists
+        state_path = get_state_path()
+        state = None
+        if os.path.exists(state_path):
+            try:
+                with open(state_path, "r") as f:
+                    state = json.load(f)
+            except Exception:
+                pass
+
+        print("\033[1mXiaomi Pad 5 (nabu) Auto-Brightness\033[0m")
+        print("----------------------------------------")
+        print("  Daemon Status:       \033[31mInactive (stopped)\033[0m")
+        if state:
+            print(f"  Last Known Mode:     {'Enabled' if state.get('enabled') else 'Disabled'}")
+            print(f"  Last Ambient Light:  {state.get('raw_lux', 0):.1f} lux")
+            print(f"  Last Brightness:     {state.get('current_brightness', 0) // 100}%")
+        print("\nTo start daemon:")
+        print("  systemctl --user start nabu-autobrightness")
+        return
+
+    en = status.get("enabled", False)
+    en_str = "\033[32mEnabled\033[0m" if en else "\033[31mDisabled\033[0m"
+    bias = status.get("user_bias", 0.0)
+    bias_str = f"{bias:+.1f}%" if bias != 0 else "0.0% (none)"
+
+    print("\033[1mXiaomi Pad 5 (nabu) Auto-Brightness\033[0m")
+    print("----------------------------------------")
+    print(f"  Daemon Status:       \033[32mActive (running)\033[0m (v{status.get('version')})")
+    print(f"  Auto-Brightness:     {en_str}")
+    print(f"  Ambient Light:       {status.get('raw_lux', 0.0):.1f} lux (Smoothed: {status.get('smoothed_lux', 0.0):.1f} lux)")
+    print(f"  Screen Brightness:   {status.get('current_brightness', 0) // 100}% ({status.get('current_brightness', 0)} / 10000)")
+    print(f"  Target Brightness:   {status.get('target_brightness', 0) // 100}%")
+    print(f"  Active Profile:      \033[36m{status.get('profile', 'standard')}\033[0m")
+    print(f"  User Bias Offset:    {bias_str}")
+    print(f"  Sensor State:        {'Claimed' if status.get('light_claimed') else 'Idle'}")
+    print(f"  Backlight Backend:   {status.get('backend')}")
+    print("----------------------------------------")
+
+
+def cli_toggle():
+    res = send_ipc_command("toggle")
+    if res is None:
+        # If daemon not running, check systemd or start it
+        print("Auto-brightness daemon is not running.")
+        print("Starting via: systemctl --user start nabu-autobrightness")
+        subprocess.run(["systemctl", "--user", "start", "nabu-autobrightness"])
+        time.sleep(0.5)
+        res = send_ipc_command("status")
+        if res:
+            print(f"Auto-brightness is now \033[32mEnabled\033[0m.")
+        return
+
+    en = res.get("enabled", False)
+    print(f"Auto-brightness is now {'\033[32mEnabled\033[0m' if en else '\033[31mDisabled\033[0m'}.")
+
+
+def cli_enable():
+    res = send_ipc_command("enable")
+    if res:
+        print("Auto-brightness \033[32mEnabled\033[0m.")
+    else:
+        print("Failed to reach daemon. Make sure nabu-autobrightness.service is running.")
+
+
+def cli_disable():
+    res = send_ipc_command("disable")
+    if res:
+        print("Auto-brightness \033[31mDisabled\033[0m.")
+    else:
+        print("Failed to reach daemon. Make sure nabu-autobrightness.service is running.")
+
+
+def cli_set_profile(p):
+    if p not in PROFILES:
+        print(f"Invalid profile '{p}'. Available profiles:")
+        for name, data in PROFILES.items():
+            print(f"  - {name:10} : {data['description']}")
+        return
+
+    res = send_ipc_command("set_profile", profile=p)
+    if res and res.get("success"):
+        print(f"Profile set to '\033[36m{p}\033[0m' ({PROFILES[p]['description']}).")
+    else:
+        print("Failed to set profile.")
+
+
+def cli_set_bias(val):
+    try:
+        bias = float(val)
+    except ValueError:
+        print("Error: bias must be a number (e.g. +10 or -5).")
+        return
+
+    res = send_ipc_command("set_bias", bias=bias)
+    if res and res.get("success"):
+        print(f"User preference bias set to {bias:+.1f}%.")
+    else:
+        print("Failed to set bias.")
+
+
+def cli_reset_bias():
+    res = send_ipc_command("reset_bias")
+    if res and res.get("success"):
+        print("User preference bias reset to 0.0%.")
+    else:
+        print("Failed to reset bias.")
+
+
+def cli_test_monitor():
+    """Live monitor of ambient light sensor and curve calculations without modifying backlight."""
+    print("\033[1mAmbient Light Monitor (Test Mode)\033[0m")
+    print("Reading from net.hadess.SensorProxy... Press Ctrl+C to exit.\n")
+
+    try:
+        system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        proxy = Gio.DBusProxy.new_sync(
+            system_bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "net.hadess.SensorProxy",
+            "/net/hadess/SensorProxy",
+            "net.hadess.SensorProxy",
+            None,
+        )
+        proxy.call_sync("ClaimLight", None, Gio.DBusCallFlags.NONE, 2000, None)
+    except Exception as e:
+        print(f"Error claiming sensor: {e}")
+        return
+
+    smoothed_lux = None
+    try:
+        while True:
+            prop = proxy.get_cached_property("LightLevel")
+            raw_lux = float(prop.get_double()) if prop else 0.0
+
+            if smoothed_lux is None:
+                smoothed_lux = raw_lux
+            else:
+                alpha = 0.22 if raw_lux > smoothed_lux else 0.08
+                smoothed_lux = alpha * raw_lux + (1.0 - alpha) * smoothed_lux
+
+            # Compute standard calibrated curve
+            std_pct = calculate_profile_brightness_pct(smoothed_lux, "standard")
+
+            print(
+                f"\r\033[K  Raw: \033[33m{raw_lux:6.1f} lx\033[0m | "
+                f"Smoothed: \033[36m{smoothed_lux:6.1f} lx\033[0m | "
+                f"Calc Brightness: \033[32m{std_pct:5.1f}%\033[0m "
+                f"({int(round(std_pct * 100))}/10000)",
+                end="",
+                flush=True,
+            )
+            time.sleep(0.3)
+    except KeyboardInterrupt:
+        print("\n\nExiting test mode.")
+    finally:
+        try:
+            proxy.call_sync("ReleaseLight", None, Gio.DBusCallFlags.NONE, 1000, None)
+        except Exception:
+            pass
+
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Intelligent Auto-Brightness for Xiaomi Pad 5 (nabu)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Profiles:
+  standard   Ergonomic human-calibrated curve for indoor and outdoor comfort (default)
+  bright     Vibrant boost for well-lit rooms and outdoor visibility
+  dim        Lower glare curve for night reading and dark environments
+  battery    Power-saving curve capped at 68% max brightness
+
+Examples:
+  nabu-autobrightness                Display live status
+  nabu-autobrightness --toggle       Toggle auto-brightness on/off
+  nabu-autobrightness --profile bright Switch to bright profile
+  nabu-autobrightness --bias +10     Add +10% personal brightness bias
+  nabu-autobrightness --test         Live sensor reading test mode
+        """,
+    )
+
+    parser.add_argument("-d", "--daemon", action="store_true", help="Run in background daemon mode")
+    parser.add_argument("-s", "--status", action="store_true", help="Show current daemon & brightness status")
+    parser.add_argument("-t", "--toggle", action="store_true", help="Toggle auto-brightness on/off")
+    parser.add_argument("--enable", action="store_true", help="Enable auto-brightness")
+    parser.add_argument("--disable", action="store_true", help="Disable auto-brightness")
+    parser.add_argument("--profile", type=str, choices=list(PROFILES.keys()), help="Set active brightness profile")
+    parser.add_argument("--bias", type=float, help="Set user preference bias percentage (-35 to +35)")
+    parser.add_argument("--reset-bias", action="store_true", help="Reset user preference bias back to 0.0%%")
+    parser.add_argument("--test", action="store_true", help="Monitor sensor values in real-time without changing screen")
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {VERSION}")
+
+    args = parser.parse_args()
+
+    if args.daemon:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        daemon = AutoBrightnessDaemon()
+        daemon.start()
+        loop = GLib.MainLoop()
+        try:
+            loop.run()
+        except KeyboardInterrupt:
+            daemon._on_signal_exit()
+
+    elif args.toggle:
+        cli_toggle()
+    elif args.enable:
+        cli_enable()
+    elif args.disable:
+        cli_disable()
+    elif args.profile:
+        cli_set_profile(args.profile)
+    elif args.bias is not None:
+        cli_set_bias(args.bias)
+    elif args.reset_bias:
+        cli_reset_bias()
+    elif args.test:
+        cli_test_monitor()
+    else:
+        # Default action is --status
+        cli_status()
+
+
+if __name__ == "__main__":
+    main()

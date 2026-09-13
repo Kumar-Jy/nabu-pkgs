@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Auto-Brightness Toggle
+GenericName=Screen Brightness Toggle
+Comment=Toggle automatic screen brightness based on ambient light
+Exec=nabu-autobrightness --toggle
+Icon=display-brightness-symbolic
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;
+Keywords=brightness;sensor;light;ambient;nabu;display;screen;autobrightness;
+StartupNotify=false

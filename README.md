@@ -15,6 +15,7 @@ published as a pacman repository.
 | `widevine`     | Widevine DRM                                      |
 | `nabu-pmac`    | Deterministic WLAN MAC from board serial          |
 | `oskb`         | Full on-screen touch keyboard with nav keys & themes |
+| `nabu-autobrightness` | Ambient light auto-brightness daemon & desktop toggle |
 | `system-monitor`| Universal hardware & telemetry system monitor      |
 
 ## Repository
