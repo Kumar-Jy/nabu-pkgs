@@ -1,0 +1,38 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Full-featured on-screen touch keyboard with navigation keys, themes, and auto-popup
+
+pkgname=oskb
+pkgver=1.1.2
+pkgrel=1
+pkgdesc="Full-featured responsive on-screen touch keyboard with portrait/landscape auto-adapt for Linux / KDE Plasma"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk3' 'python-evdev' 'at-spi2-core' 'hicolor-icon-theme')
+provides=('nabu-oskb')
+source=('oskb'
+        'oskb.service'
+        'oskb.desktop'
+        'oskb.svg'
+        '99-uinput-oskb.rules'
+        'LICENSE'
+        'README.md')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/oskb" "$pkgdir/usr/bin/oskb"
+  ln -sf oskb "$pkgdir/usr/bin/nabu-oskb"
+  install -Dm644 "$srcdir/oskb.service" "$pkgdir/usr/lib/systemd/user/oskb.service"
+  install -Dm644 "$srcdir/oskb.desktop" "$pkgdir/usr/share/applications/oskb.desktop"
+  install -Dm644 "$srcdir/oskb.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/oskb.svg"
+  install -Dm644 "$srcdir/oskb.svg" "$pkgdir/usr/share/pixmaps/oskb.svg"
+  install -Dm644 "$srcdir/99-uinput-oskb.rules" "$pkgdir/usr/lib/udev/rules.d/99-uinput-oskb.rules"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

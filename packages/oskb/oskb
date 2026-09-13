@@ -1,0 +1,2144 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Author: Kumar-Jy <https://github.com/Kumar-Jy>
+# Project: oskb (On-Screen Touch Keyboard for nabu-pkgs)
+# License: MIT License
+# Copyright (c) 2026 Kumar-Jy
+#
+"""Full-size on-screen touch keyboard for Linux / KDE Plasma (Wayland/X11).
+
+Features:
+- Complete PC keyboard layout:
+  * Full 4 Navigation Arrows (←, ↑, ↓, →), Home, End, PgUp, PgDn, Ins
+  * Esc, Tab, Del, Backspace, Enter, Space, Caps Lock
+  * Modifiers: Shift, Ctrl, Alt, Super (Meta/Win) with sticky/latched lock
+  * Full Function keys (F1-F12), PrintScreen
+  * Complete numbers and symbols row with Shift variants
+  * Dedicated ?123 / Numpad layer and Fn layer with quick actions (Undo, Copy, Paste, etc.)
+- Interactive Drag & Move (Header drag handle to float anywhere on screen)
+- Dock / Float toggle (snaps to bottom or floats freely)
+- Responsive Resize:
+  * Size presets (S: 65%, M: 82%, L: 100%)
+  * Scale / Zoom buttons (A-, A+)
+  * Corner drag-resize grip (⤡)
+- Auto-Pop on Text Field Tap (Atspi accessibility event integration)
+- Minimizes to a floating pill (⌨) so it never gets in the way
+- Injects keystrokes via Linux /dev/uinput (EV_KEY) - works across all applications
+- Non-focusable window architecture: NEVER steals focus from target applications
+"""
+import os
+import sys
+import json
+import socket
+
+SOCK_PATH = f"/run/user/{os.getuid()}/oskb.sock"
+
+def send_ipc(cmd):
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(SOCK_PATH)
+        s.sendall((cmd + "\n").encode())
+        s.close()
+        return True
+    except Exception:
+        return False
+
+if "XAUTHORITY" not in os.environ:
+    import glob
+    xauth_files = sorted(glob.glob(f"/run/user/{os.getuid()}/xauth_*"), key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0, reverse=True)
+    if xauth_files:
+        os.environ["XAUTHORITY"] = xauth_files[0]
+
+os.environ.setdefault("GDK_BACKEND", "x11")
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("Atspi", "2.0")
+
+from gi.repository import Gtk, Gdk, GLib, Pango, Atspi
+from evdev import UInput, ecodes as E
+
+# ---------------------------------------------------------------------------
+# Keystroke Injection via Linux UInput
+# ---------------------------------------------------------------------------
+
+_MOD_CTRL = E.KEY_LEFTCTRL
+_MOD_ALT = E.KEY_LEFTALT
+_MOD_SUPER = E.KEY_LEFTMETA
+_MOD_SHIFT = E.KEY_LEFTSHIFT
+
+_ALL_CODES = [
+    # Modifiers
+    E.KEY_LEFTSHIFT, E.KEY_RIGHTSHIFT, E.KEY_LEFTCTRL, E.KEY_RIGHTCTRL,
+    E.KEY_LEFTALT, E.KEY_RIGHTALT, E.KEY_LEFTMETA, E.KEY_CAPSLOCK,
+    # Navigation & Editing
+    E.KEY_ESC, E.KEY_TAB, E.KEY_BACKSPACE, E.KEY_ENTER, E.KEY_SPACE,
+    E.KEY_DELETE, E.KEY_INSERT,
+    E.KEY_LEFT, E.KEY_RIGHT, E.KEY_UP, E.KEY_DOWN,
+    E.KEY_HOME, E.KEY_END, E.KEY_PAGEUP, E.KEY_PAGEDOWN,
+    # Alphanumeric
+    E.KEY_A, E.KEY_B, E.KEY_C, E.KEY_D, E.KEY_E, E.KEY_F, E.KEY_G, E.KEY_H,
+    E.KEY_I, E.KEY_J, E.KEY_K, E.KEY_L, E.KEY_M, E.KEY_N, E.KEY_O, E.KEY_P,
+    E.KEY_Q, E.KEY_R, E.KEY_S, E.KEY_T, E.KEY_U, E.KEY_V, E.KEY_W, E.KEY_X,
+    E.KEY_Y, E.KEY_Z,
+    E.KEY_1, E.KEY_2, E.KEY_3, E.KEY_4, E.KEY_5, E.KEY_6, E.KEY_7, E.KEY_8,
+    E.KEY_9, E.KEY_0,
+    # Symbols & Punctuation
+    E.KEY_MINUS, E.KEY_EQUAL, E.KEY_LEFTBRACE, E.KEY_RIGHTBRACE,
+    E.KEY_BACKSLASH, E.KEY_SEMICOLON, E.KEY_APOSTROPHE, E.KEY_COMMA,
+    E.KEY_DOT, E.KEY_SLASH, E.KEY_GRAVE,
+    # Function Keys & Print
+    E.KEY_F1, E.KEY_F2, E.KEY_F3, E.KEY_F4, E.KEY_F5, E.KEY_F6,
+    E.KEY_F7, E.KEY_F8, E.KEY_F9, E.KEY_F10, E.KEY_F11, E.KEY_F12,
+    E.KEY_PRINT, E.KEY_SYSRQ,
+]
+
+
+class Injector:
+    def __init__(self):
+        self.ui = UInput(
+            {0x01: _ALL_CODES},  # EV_KEY
+            name="On-Screen Keyboard",
+            bustype=0x03,  # BUS_USB
+            vendor=0x1234,
+            product=0x5678,
+            version=1,
+        )
+        self.sticky = {}  # action name -> evdev code while latched
+
+    def _down(self, code):
+        self.ui.write(E.EV_KEY, code, 1)
+        self.ui.syn()
+
+    def _up(self, code):
+        self.ui.write(E.EV_KEY, code, 0)
+        self.ui.syn()
+
+    def tap_key(self, code, shift=False, mods=()):
+        down = []
+        if shift:
+            down.append(_MOD_SHIFT)
+        for m in mods:
+            if m and m not in down:
+                down.append(m)
+        for c in down:
+            self._down(c)
+        self._down(code)
+        self._up(code)
+        for c in reversed(down):
+            self._up(c)
+
+    def tap_code(self, code):
+        self.tap_key(code, mods=[c for c in self.sticky.values() if c])
+
+    def combo(self, codes):
+        for c in codes:
+            self._down(c)
+        for c in reversed(codes):
+            self._up(c)
+
+    def set_sticky(self, action, code, active):
+        self.sticky[action] = code if active else None
+
+
+# ---------------------------------------------------------------------------
+# Configuration Manager
+# ---------------------------------------------------------------------------
+
+CONFIG_PATH = os.path.expanduser("~/.config/oskb/config.json")
+
+
+def load_config():
+    defaults = {
+        "auto_popup": True,
+        "dock_mode": "dock",
+        "width_preset": "full",
+        "theme": "dark",
+        "scale": 1.0,
+        "float_x": 0,
+        "float_y": 700,
+        "float_w": 1800,
+        "float_h": 400,
+        "pill_x": -1,
+        "pill_y": -1,
+    }
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+                defaults.update(data)
+    except Exception as e:
+        print("Failed to read config:", e, file=sys.stderr)
+    return defaults
+
+
+def save_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print("Failed to save config:", e, file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Layout Definitions (68 Columns per Row)
+# ---------------------------------------------------------------------------
+
+def KEY(label, code, shift_label=None, force=False, span=4):
+    return dict(
+        t="char", label=label, code=code,
+        shift_label=shift_label, force=force, span=span, repeat=True
+    )
+
+
+def SPECIAL(label, action, code=None, span=4, repeat=False, style_class="kmod"):
+    return dict(
+        t="special", label=label, action=action,
+        code=code, span=span, repeat=repeat, style_class=style_class
+    )
+
+
+def COMBO(label, codes, span=4, style_class="kmod"):
+    return dict(
+        t="combo", label=label, codes=codes,
+        action="combo", span=span, repeat=False, style_class=style_class
+    )
+
+
+def L(char):
+    return KEY(char, getattr(E, "KEY_" + char), span=4)
+
+
+# Total columns per row: 68
+MAIN_ROWS = [
+    # Row 0 (Sum = 4 + 4 + 48 + 4 + 8 = 68)
+    [
+        SPECIAL("Esc", "esc", E.KEY_ESC, span=4, style_class="kesc"),
+        KEY("`", E.KEY_GRAVE, "~", span=4),
+        KEY("1", E.KEY_1, "!", span=4),
+        KEY("2", E.KEY_2, "@", span=4),
+        KEY("3", E.KEY_3, "#", span=4),
+        KEY("4", E.KEY_4, "$", span=4),
+        KEY("5", E.KEY_5, "%", span=4),
+        KEY("6", E.KEY_6, "^", span=4),
+        KEY("7", E.KEY_7, "&", span=4),
+        KEY("8", E.KEY_8, "*", span=4),
+        KEY("9", E.KEY_9, "(", span=4),
+        KEY("0", E.KEY_0, ")", span=4),
+        KEY("-", E.KEY_MINUS, "_", span=4),
+        KEY("=", E.KEY_EQUAL, "+", span=4),
+        SPECIAL("Del", "delete", E.KEY_DELETE, span=4, repeat=True, style_class="kdel"),
+        SPECIAL("\u232b", "bs", E.KEY_BACKSPACE, span=8, repeat=True, style_class="kaction"),
+    ],
+    # Row 1 (Sum = 6 + 52 + 5 + 5 = 68)
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        L("Q"), L("W"), L("E"), L("R"), L("T"), L("Y"), L("U"), L("I"),
+        L("O"), L("P"),
+        KEY("[", E.KEY_LEFTBRACE, "{", span=4),
+        KEY("]", E.KEY_RIGHTBRACE, "}", span=4),
+        KEY("\\", E.KEY_BACKSLASH, "|", span=4),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    # Row 2 (Sum = 7 + 44 + 7 + 5 + 5 = 68)
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        L("A"), L("S"), L("D"), L("F"), L("G"), L("H"), L("J"), L("K"),
+        L("L"),
+        KEY(";", E.KEY_SEMICOLON, ":", span=4),
+        KEY("'", E.KEY_APOSTROPHE, '"', span=4),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    # Row 3 (Sum = 9 + 40 + 9 + 5 + 5 = 68)
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        L("Z"), L("X"), L("C"), L("V"), L("B"), L("N"), L("M"),
+        KEY(",", E.KEY_COMMA, "<", span=4),
+        KEY(".", E.KEY_DOT, ">", span=4),
+        KEY("/", E.KEY_SLASH, "?", span=4),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    # Row 4 (Sum = 6 + 5 + 5 + 5 + 27 + 5 + 5 + 5 + 5 = 68)
+    [
+        SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
+        SPECIAL("Fn", "layer-fn", None, span=5, style_class="kaccent"),
+        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=5, style_class="kmod"),
+        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=27, repeat=True, style_class="kspace"),
+        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
+        SPECIAL("\u2190", "left", E.KEY_LEFT, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2193", "down", E.KEY_DOWN, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2192", "right", E.KEY_RIGHT, span=5, repeat=True, style_class="karrow"),
+    ],
+]
+
+SYM_ROWS = [
+    # Row 0 (Sum = 68)
+    [
+        SPECIAL("Esc", "esc", E.KEY_ESC, span=4, style_class="kesc"),
+        KEY("`", E.KEY_GRAVE, "~", span=4),
+        KEY("!", E.KEY_1, "!", force=True, span=4),
+        KEY("@", E.KEY_2, "@", force=True, span=4),
+        KEY("#", E.KEY_3, "#", force=True, span=4),
+        KEY("$", E.KEY_4, "$", force=True, span=4),
+        KEY("%", E.KEY_5, "%", force=True, span=4),
+        KEY("^", E.KEY_6, "^", force=True, span=4),
+        KEY("&", E.KEY_7, "&", force=True, span=4),
+        KEY("*", E.KEY_8, "*", force=True, span=4),
+        KEY("(", E.KEY_9, "(", force=True, span=4),
+        KEY(")", E.KEY_0, ")", force=True, span=4),
+        KEY("-", E.KEY_MINUS, "_", span=4),
+        KEY("=", E.KEY_EQUAL, "+", span=4),
+        SPECIAL("Del", "delete", E.KEY_DELETE, span=4, repeat=True, style_class="kdel"),
+        SPECIAL("\u232b", "bs", E.KEY_BACKSPACE, span=8, repeat=True, style_class="kaction"),
+    ],
+    # Row 1 (Sum = 68)
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        KEY("{", E.KEY_LEFTBRACE, "{", force=True, span=4),
+        KEY("}", E.KEY_RIGHTBRACE, "}", force=True, span=4),
+        KEY("|", E.KEY_BACKSLASH, "|", force=True, span=4),
+        KEY("[", E.KEY_LEFTBRACE, span=4),
+        KEY("]", E.KEY_RIGHTBRACE, span=4),
+        KEY("\\", E.KEY_BACKSLASH, span=4),
+        KEY("7", E.KEY_7, span=5),
+        KEY("8", E.KEY_8, span=5),
+        KEY("9", E.KEY_9, span=5),
+        KEY("/", E.KEY_SLASH, span=5),
+        COMBO("Undo", [_MOD_CTRL, E.KEY_Z], span=5, style_class="kclip"),
+        COMBO("Cut", [_MOD_CTRL, E.KEY_X], span=4, style_class="kclip"),
+        COMBO("Copy", [_MOD_CTRL, E.KEY_C], span=4, style_class="kclip"),
+        COMBO("Paste", [_MOD_CTRL, E.KEY_V], span=5, style_class="kclip"),
+    ],
+    # Row 2 (Sum = 68)
+    [
+        SPECIAL("ABC", "layer-main", None, span=7, style_class="kaccent"),
+        KEY(":", E.KEY_SEMICOLON, ":", force=True, span=4),
+        KEY('"', E.KEY_APOSTROPHE, '"', force=True, span=4),
+        KEY("<", E.KEY_COMMA, "<", force=True, span=4),
+        KEY(">", E.KEY_DOT, ">", force=True, span=4),
+        KEY("?", E.KEY_SLASH, "?", force=True, span=4),
+        KEY(";", E.KEY_SEMICOLON, span=4),
+        KEY("'", E.KEY_APOSTROPHE, span=4),
+        KEY("4", E.KEY_4, span=5),
+        KEY("5", E.KEY_5, span=5),
+        KEY("6", E.KEY_6, span=5),
+        KEY("*", E.KEY_8, "*", force=True, span=5),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        COMBO("SelAll", [_MOD_CTRL, E.KEY_A], span=6, style_class="kclip"),
+    ],
+    # Row 3 (Sum = 68)
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        KEY("~", E.KEY_GRAVE, "~", force=True, span=4),
+        KEY("_", E.KEY_MINUS, "_", force=True, span=4),
+        KEY("+", E.KEY_EQUAL, "+", force=True, span=4),
+        KEY("@", E.KEY_2, "@", force=True, span=4),
+        KEY("#", E.KEY_3, "#", force=True, span=4),
+        KEY("1", E.KEY_1, span=5),
+        KEY("2", E.KEY_2, span=5),
+        KEY("3", E.KEY_3, span=5),
+        KEY("-", E.KEY_MINUS, span=5),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+    ],
+    # Row 4 (Sum = 6 + 5 + 5 + 17 + 5 + 5 + 5 + 5 + 5 + 5 + 5 = 68)
+    [
+        SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
+        SPECIAL("Fn", "layer-fn", None, span=5, style_class="kaccent"),
+        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=17, repeat=True, style_class="kspace"),
+        KEY("0", E.KEY_0, span=5),
+        KEY(".", E.KEY_DOT, span=5),
+        KEY("=", E.KEY_EQUAL, span=5),
+        KEY("+", E.KEY_EQUAL, "+", force=True, span=5),
+        SPECIAL("\u2190", "left", E.KEY_LEFT, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2193", "down", E.KEY_DOWN, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2192", "right", E.KEY_RIGHT, span=5, repeat=True, style_class="karrow"),
+    ],
+]
+
+FN_ROWS = [
+    # Row 0 (Sum = 68)
+    [
+        SPECIAL("Esc", "esc", E.KEY_ESC, span=4, style_class="kesc"),
+        SPECIAL("F1", "f1", E.KEY_F1, span=4, style_class="kfn"),
+        SPECIAL("F2", "f2", E.KEY_F2, span=4, style_class="kfn"),
+        SPECIAL("F3", "f3", E.KEY_F3, span=4, style_class="kfn"),
+        SPECIAL("F4", "f4", E.KEY_F4, span=4, style_class="kfn"),
+        SPECIAL("F5", "f5", E.KEY_F5, span=4, style_class="kfn"),
+        SPECIAL("F6", "f6", E.KEY_F6, span=4, style_class="kfn"),
+        SPECIAL("F7", "f7", E.KEY_F7, span=4, style_class="kfn"),
+        SPECIAL("F8", "f8", E.KEY_F8, span=4, style_class="kfn"),
+        SPECIAL("F9", "f9", E.KEY_F9, span=4, style_class="kfn"),
+        SPECIAL("F10", "f10", E.KEY_F10, span=4, style_class="kfn"),
+        SPECIAL("F11", "f11", E.KEY_F11, span=4, style_class="kfn"),
+        SPECIAL("F12", "f12", E.KEY_F12, span=4, style_class="kfn"),
+        SPECIAL("PrtSc", "prtsc", E.KEY_PRINT, span=4, style_class="kfn"),
+        SPECIAL("Del", "delete", E.KEY_DELETE, span=4, repeat=True, style_class="kdel"),
+        SPECIAL("\u232b", "bs", E.KEY_BACKSPACE, span=8, repeat=True, style_class="kaction"),
+    ],
+    # Row 1 (Sum = 68)
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        COMBO("Alt+F4", [_MOD_ALT, E.KEY_F4], span=6, style_class="kfn"),
+        COMBO("Ctrl+W", [_MOD_CTRL, E.KEY_W], span=6, style_class="kfn"),
+        COMBO("Ctrl+T", [_MOD_CTRL, E.KEY_T], span=6, style_class="kfn"),
+        COMBO("Ctrl+Tab", [_MOD_CTRL, E.KEY_TAB], span=6, style_class="kfn"),
+        SPECIAL("F5", "f5", E.KEY_F5, span=6, style_class="kfn"),
+        COMBO("Undo", [_MOD_CTRL, E.KEY_Z], span=5, style_class="kclip"),
+        COMBO("Redo", [_MOD_CTRL, E.KEY_Y], span=5, style_class="kclip"),
+        COMBO("Cut", [_MOD_CTRL, E.KEY_X], span=5, style_class="kclip"),
+        COMBO("Copy", [_MOD_CTRL, E.KEY_C], span=5, style_class="kclip"),
+        COMBO("Paste", [_MOD_CTRL, E.KEY_V], span=6, style_class="kclip"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=6, style_class="knav"),
+    ],
+    # Row 2 (Sum = 68)
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        COMBO("SelAll", [_MOD_CTRL, E.KEY_A], span=6, style_class="kclip"),
+        COMBO("Find", [_MOD_CTRL, E.KEY_F], span=5, style_class="kclip"),
+        COMBO("Save", [_MOD_CTRL, E.KEY_S], span=5, style_class="kclip"),
+        COMBO("New", [_MOD_CTRL, E.KEY_N], span=5, style_class="kclip"),
+        COMBO("Zoom -", [_MOD_CTRL, E.KEY_MINUS], span=5, style_class="kclip"),
+        COMBO("Zoom +", [_MOD_CTRL, E.KEY_EQUAL], span=5, style_class="kclip"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=9, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=6, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    # Row 3 (Sum = 68)
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        COMBO("Ctrl+Home", [_MOD_CTRL, E.KEY_HOME], span=7, style_class="knav"),
+        COMBO("Ctrl+End", [_MOD_CTRL, E.KEY_END], span=7, style_class="knav"),
+        COMBO("Ctrl+\u2190", [_MOD_CTRL, E.KEY_LEFT], span=7, style_class="knav"),
+        COMBO("Ctrl+\u2192", [_MOD_CTRL, E.KEY_RIGHT], span=7, style_class="knav"),
+        COMBO("Ctrl+Bksp", [_MOD_CTRL, E.KEY_BACKSPACE], span=8, style_class="knav"),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=9, style_class="knav"),
+    ],
+    # Row 4 (Sum = 6 + 5 + 5 + 5 + 27 + 5 + 5 + 5 + 5 = 68)
+    [
+        SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
+        SPECIAL("ABC", "layer-main", None, span=5, style_class="kaccent"),
+        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=5, style_class="kmod"),
+        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=27, repeat=True, style_class="kspace"),
+        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
+        SPECIAL("\u2190", "left", E.KEY_LEFT, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2193", "down", E.KEY_DOWN, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("\u2192", "right", E.KEY_RIGHT, span=5, repeat=True, style_class="karrow"),
+    ],
+]
+
+
+# ---------------------------------------------------------------------------
+# Styling
+# ---------------------------------------------------------------------------
+
+THEMES = {
+    "dark": {
+        "name": "Dark High Contrast",
+        "win_bg": "#10131a",
+        "bar_bg": "#181d26",
+        "border": "#2e384d",
+        "handle_bg": "#283244",
+        "handle_fg": "#f1f5f9",
+        "btn_hover": "#3b4860",
+        "accent": "#38bdf8",
+        "key_bg": "#222938",
+        "key_border": "#3e4a63",
+        "key_hover": "#333e54",
+        "key_active": "#38bdf8",
+        "key_active_text": "#0f172a",
+        "text_main": "#ffffff",
+        "kmod_bg": "#191f2c",
+        "kmod_fg": "#38bdf8",
+        "karrow_bg": "#1d2433",
+        "karrow_fg": "#38bdf8",
+        "knav_bg": "#1a2322",
+        "knav_fg": "#4ade80",
+        "kenter_bg": "#1d4ed8",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#3b82f6",
+        "kesc_bg": "#45141c",
+        "kesc_fg": "#fca5a5",
+        "kdel_bg": "#431d16",
+        "kdel_fg": "#fdba74",
+        "kaccent_bg": "#2e2a1e",
+        "kaccent_fg": "#fde047",
+        "kclip_bg": "#2c1e38",
+        "kclip_fg": "#e879f9",
+        "kfn_bg": "#16282e",
+        "kfn_fg": "#2dd4bf",
+        "btn_active": "#2563eb",
+        "edge_hover": "rgba(56, 189, 248, 0.3)",
+        "pill_bg": "#475569",
+        "corner_bg": "#222938",
+        "corner_fg": "#38bdf8",
+    },
+    "light": {
+        "name": "Light Clean",
+        "win_bg": "#cbd5e1",
+        "bar_bg": "#e2e8f0",
+        "border": "#94a3b8",
+        "handle_bg": "#f1f5f9",
+        "handle_fg": "#0f172a",
+        "btn_hover": "#e2e8f0",
+        "accent": "#0284c7",
+        "key_bg": "#ffffff",
+        "key_border": "#94a3b8",
+        "key_hover": "#f8fafc",
+        "key_active": "#0284c7",
+        "key_active_text": "#ffffff",
+        "text_main": "#0f172a",
+        "kmod_bg": "#f1f5f9",
+        "kmod_fg": "#0369a1",
+        "karrow_bg": "#f0f9ff",
+        "karrow_fg": "#0284c7",
+        "knav_bg": "#f0fdf4",
+        "knav_fg": "#15803d",
+        "kenter_bg": "#2563eb",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#1d4ed8",
+        "kesc_bg": "#fef2f2",
+        "kesc_fg": "#b91c1c",
+        "kdel_bg": "#fff7ed",
+        "kdel_fg": "#c2410c",
+        "kaccent_bg": "#fefce8",
+        "kaccent_fg": "#a16207",
+        "kclip_bg": "#faf5ff",
+        "kclip_fg": "#7e22ce",
+        "kfn_bg": "#f0fdfa",
+        "kfn_fg": "#0f766e",
+        "btn_active": "#0284c7",
+        "edge_hover": "rgba(2, 132, 199, 0.3)",
+        "pill_bg": "#94a3b8",
+        "corner_bg": "#ffffff",
+        "corner_fg": "#0284c7",
+    },
+    "oled": {
+        "name": "OLED Neon Cyber",
+        "win_bg": "#000000",
+        "bar_bg": "#080808",
+        "border": "#262626",
+        "handle_bg": "#171717",
+        "handle_fg": "#00ffcc",
+        "btn_hover": "#262626",
+        "accent": "#00e5ff",
+        "key_bg": "#121212",
+        "key_border": "#2a2a2a",
+        "key_hover": "#262626",
+        "key_active": "#00ffcc",
+        "key_active_text": "#000000",
+        "text_main": "#00ffcc",
+        "kmod_bg": "#0d0d0d",
+        "kmod_fg": "#00e5ff",
+        "karrow_bg": "#0d0d0d",
+        "karrow_fg": "#00ffcc",
+        "knav_bg": "#0a140d",
+        "knav_fg": "#39ff14",
+        "kenter_bg": "#0055ff",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#0088ff",
+        "kesc_bg": "#2b000d",
+        "kesc_fg": "#ff0055",
+        "kdel_bg": "#2b1000",
+        "kdel_fg": "#ff6600",
+        "kaccent_bg": "#261e00",
+        "kaccent_fg": "#ffe600",
+        "kclip_bg": "#22002b",
+        "kclip_fg": "#cc00ff",
+        "kfn_bg": "#002626",
+        "kfn_fg": "#00ffaa",
+        "btn_active": "#00e5ff",
+        "edge_hover": "rgba(0, 255, 204, 0.3)",
+        "pill_bg": "#333333",
+        "corner_bg": "#121212",
+        "corner_fg": "#00ffcc",
+    },
+    "breeze": {
+        "name": "KDE Plasma Breeze",
+        "win_bg": "#181b1f",
+        "bar_bg": "#20252a",
+        "border": "#31363b",
+        "handle_bg": "#2b3138",
+        "handle_fg": "#eff0f1",
+        "btn_hover": "#3d454f",
+        "accent": "#3daee9",
+        "key_bg": "#2a3036",
+        "key_border": "#3a424b",
+        "key_hover": "#3a444e",
+        "key_active": "#3daee9",
+        "key_active_text": "#ffffff",
+        "text_main": "#fcfcfc",
+        "kmod_bg": "#23282d",
+        "kmod_fg": "#3daee9",
+        "karrow_bg": "#23282d",
+        "karrow_fg": "#3daee9",
+        "knav_bg": "#1c2822",
+        "knav_fg": "#27ae60",
+        "kenter_bg": "#1d99f3",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#3daee9",
+        "kesc_bg": "#422023",
+        "kesc_fg": "#ed1515",
+        "kdel_bg": "#3d2527",
+        "kdel_fg": "#da4453",
+        "kaccent_bg": "#383120",
+        "kaccent_fg": "#f67400",
+        "kclip_bg": "#342238",
+        "kclip_fg": "#b366ff",
+        "kfn_bg": "#1c2e36",
+        "kfn_fg": "#1abc9c",
+        "btn_active": "#3daee9",
+        "edge_hover": "rgba(61, 174, 233, 0.3)",
+        "pill_bg": "#4f5b66",
+        "corner_bg": "#2a3036",
+        "corner_fg": "#3daee9",
+    },
+    "amber": {
+        "name": "Retro Amber Terminal",
+        "win_bg": "#0e0b07",
+        "bar_bg": "#17130c",
+        "border": "#362a19",
+        "handle_bg": "#231c12",
+        "handle_fg": "#ffb703",
+        "btn_hover": "#3d301e",
+        "accent": "#fb8500",
+        "key_bg": "#1e170f",
+        "key_border": "#382c1b",
+        "key_hover": "#332717",
+        "key_active": "#ffb703",
+        "key_active_text": "#000000",
+        "text_main": "#ffb703",
+        "kmod_bg": "#18120b",
+        "kmod_fg": "#fb8500",
+        "karrow_bg": "#1a130c",
+        "karrow_fg": "#fb8500",
+        "knav_bg": "#151c0f",
+        "knav_fg": "#a7c957",
+        "kenter_bg": "#d97706",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#fb8500",
+        "kesc_bg": "#381014",
+        "kesc_fg": "#ff4d6d",
+        "kdel_bg": "#38170c",
+        "kdel_fg": "#f77f00",
+        "kaccent_bg": "#33250b",
+        "kaccent_fg": "#ffe066",
+        "kclip_bg": "#2d1330",
+        "kclip_fg": "#e0aaff",
+        "kfn_bg": "#0f241c",
+        "kfn_fg": "#70e000",
+        "btn_active": "#fb8500",
+        "edge_hover": "rgba(251, 133, 0, 0.3)",
+        "pill_bg": "#4a3a22",
+        "corner_bg": "#1e170f",
+        "corner_fg": "#ffb703",
+    },
+}
+
+THEME_NAMES = ["dark", "light", "oled", "breeze", "amber"]
+
+THEME_CSS_TEMPLATE = """
+window.oskb-window {
+    background-color: %(win_bg)s;
+    border: 1px solid %(border)s;
+    border-radius: 12px 12px 0 0;
+}
+.oskb-bar {
+    background-color: %(bar_bg)s;
+    border-bottom: 1px solid %(border)s;
+    padding: 3px 6px;
+}
+.oskb-title {
+    color: %(accent)s;
+    font-weight: 700;
+    font-size: 13px;
+    padding-left: 6px;
+}
+.drag-handle {
+    background-color: %(handle_bg)s;
+    color: %(handle_fg)s;
+    border: 1px solid %(border)s;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 20px;
+}
+.drag-handle:hover {
+    background-color: %(btn_hover)s;
+}
+.bar-btn, .bar-btn label {
+    background-color: %(handle_bg)s;
+    color: %(text_main)s;
+    border: 1px solid %(border)s;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 9px;
+    min-height: 26px;
+}
+.bar-btn:hover {
+    background-color: %(btn_hover)s;
+}
+.bar-btn.active {
+    background-color: %(accent)s;
+    color: #ffffff;
+    border-color: %(accent)s;
+}
+.bar-btn.auto-on {
+    background-color: #2e7d32;
+    color: #ffffff;
+    border-color: #4caf50;
+}
+.bar-btn.auto-off {
+    background-color: #424242;
+    color: #b0bec5;
+}
+.bar-btn.close {
+    background-color: #bf616a;
+    color: #ffffff;
+}
+
+button.kbtn, button.kbtn label {
+    background-color: %(key_bg)s;
+    color: %(text_main)s;
+    border: 1px solid %(key_border)s;
+    border-radius: 7px;
+    font-weight: 700;
+    padding: 0;
+    margin: 1px;
+}
+button.kbtn:hover {
+    background-color: %(key_hover)s;
+}
+button.kbtn:active {
+    background-color: %(key_active)s;
+    color: %(key_active_text)s;
+}
+button.kchar, button.kchar label {
+    font-weight: 700;
+}
+button.kmod, button.kmod label {
+    background-color: %(kmod_bg)s;
+    color: %(kmod_fg)s;
+    border-color: %(key_border)s;
+}
+button.karrow, button.karrow label {
+    background-color: %(karrow_bg)s;
+    color: %(karrow_fg)s;
+    font-size: 18px;
+    font-weight: 800;
+}
+button.knav, button.knav label {
+    background-color: %(knav_bg)s;
+    color: %(knav_fg)s;
+    font-weight: 700;
+}
+button.kenter, button.kenter label {
+    background-color: %(kenter_bg)s;
+    color: %(kenter_fg)s;
+    border-color: %(kenter_border)s;
+    font-weight: 800;
+}
+button.kesc, button.kesc label {
+    background-color: %(kesc_bg)s;
+    color: %(kesc_fg)s;
+    font-weight: 800;
+}
+button.kdel, button.kdel label, button.kaction, button.kaction label {
+    background-color: %(kdel_bg)s;
+    color: %(kdel_fg)s;
+    font-weight: 800;
+}
+button.kaccent, button.kaccent label {
+    background-color: %(kaccent_bg)s;
+    color: %(kaccent_fg)s;
+    font-weight: 800;
+}
+button.kclip, button.kclip label {
+    background-color: %(kclip_bg)s;
+    color: %(kclip_fg)s;
+    font-weight: 700;
+}
+button.kfn, button.kfn label {
+    background-color: %(kfn_bg)s;
+    color: %(kfn_fg)s;
+    font-weight: 700;
+}
+button.active, button.active label {
+    background-color: %(btn_active)s;
+    color: #ffffff;
+    border-color: %(accent)s;
+}
+
+/* Edge Resize Strips */
+.resize-edge {
+    background-color: transparent;
+}
+.resize-edge:hover {
+    background-color: %(edge_hover)s;
+}
+.resize-top-pill, .resize-bottom-pill {
+    background-color: %(pill_bg)s;
+    border-radius: 3px;
+    min-height: 4px;
+    min-width: 60px;
+    margin: 2px 0px;
+}
+.resize-top-pill:hover, .resize-bottom-pill:hover {
+    background-color: %(accent)s;
+}
+.corner-grip-box {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+.corner-grip {
+    background-color: %(corner_bg)s;
+    color: %(corner_fg)s;
+    border: 1px solid %(border)s;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 22px;
+    min-height: 12px;
+    padding: 0px 4px;
+    margin: 1px 2px;
+}
+.corner-grip:hover {
+    background-color: %(btn_hover)s;
+    color: #ffffff;
+    border-color: %(accent)s;
+}
+.corner-grip:active {
+    background-color: %(accent)s;
+    color: #ffffff;
+    border-color: %(accent)s;
+}
+
+/* Floating Pill */
+window.oskb-pill {
+    background-color: %(win_bg)s;
+    border: 2px solid %(accent)s;
+    border-radius: 26px;
+}
+.pill-btn {
+    background: transparent;
+    border: none;
+    color: %(accent)s;
+    font-size: 22px;
+    font-weight: 700;
+    padding: 8px 14px;
+}
+.pill-btn:hover {
+    color: #ffffff;
+}
+"""
+
+def get_theme_css(theme_name):
+    t = THEMES.get(theme_name, THEMES["dark"])
+    return (THEME_CSS_TEMPLATE % t).encode()
+
+BASE_CSS = get_theme_css("dark")
+
+
+# ---------------------------------------------------------------------------
+# Main Keyboard Application
+# ---------------------------------------------------------------------------
+
+class KeyboardApp:
+    def __init__(self):
+        self.config = load_config()
+        self.inj = Injector()
+
+        self.layer = "main"
+        self.buttons = []
+        self.shift = 0  # 0=off, 1=temp, 2=locked
+        self.caps = False
+        self.dock_mode = self.config.get("dock_mode", "dock")
+        self.scale = float(self.config.get("scale", 1.0))
+        self.width_preset = self.config.get("width_preset", "medium")
+        self.auto_popup = bool(self.config.get("auto_popup", True))
+        self.theme = self.config.get("theme", "dark")
+        if self.theme not in THEMES:
+            self.theme = "dark"
+
+        self.is_portrait = False
+        self._connected_monitors = set()
+        self._current_screen_dims = (0, 0)
+
+        self.kb_top = 0
+        self.kb_height = 0
+        self.suppressed_element = None
+
+        # Drag & Resize tracking
+        self._dragging = False
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._drag_start_win_x = 0
+        self._drag_start_win_y = 0
+
+        self._resizing = False
+        self._resize_start_x = 0
+        self._resize_start_y = 0
+        self._resize_start_w = 0
+        self._resize_start_h = 0
+
+        # Init sticky states
+        for a in ("sticky-ctrl", "sticky-alt", "sticky-super"):
+            self.inj.set_sticky(a, None, False)
+
+        # Apply Global Theme CSS
+        self.theme_provider = Gtk.CssProvider()
+        self.theme_provider.load_from_data(get_theme_css(self.theme))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), self.theme_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        # Dynamic Key & Bar Style Provider
+        self.key_style_provider = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), self.key_style_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+        self._build_window()
+        self._build_pill()
+        self._init_atspi()
+        self._setup_screen_listeners()
+        GLib.timeout_add(1000, self._check_orientation_tick)
+
+    # -- UI Building --------------------------------------------------------
+
+    def _build_window(self):
+        w = Gtk.Window()
+        w.set_title("On-Screen Keyboard")
+        w.set_role("oskb")
+        w.set_name("oskb-window")
+        w.get_style_context().add_class("oskb-window")
+        w.set_decorated(False)
+        w.set_resizable(True)
+        w.set_accept_focus(False)
+        w.set_focus_on_map(False)
+        w.set_can_focus(False)
+        w.set_keep_above(True)
+        w.set_skip_taskbar_hint(True)
+        w.set_skip_pager_hint(True)
+        w.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+        w.connect("destroy", self._destroy)
+        w.connect("configure-event", self._on_configure)
+        self.win = w
+
+        root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        w.add(root_box)
+
+        # 1. Top resize handle strip (with top-left corner button, center grab pill, top-right corner button)
+        top_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        top_strip.set_size_request(-1, 16)
+
+        tl_handle = self._make_corner_button("top_left", "nwse-resize", "\u2921")
+        tl_handle.set_tooltip_text("Drag corner to shrink or expand")
+        top_strip.pack_start(tl_handle, False, False, 0)
+
+        t_handle = self._make_edge_handle("top", "n-resize", height=16)
+        pill = Gtk.Label()
+        pill.get_style_context().add_class("resize-top-pill")
+        t_handle.add(pill)
+        top_strip.pack_start(t_handle, True, True, 0)
+
+        tr_handle = self._make_corner_button("top_right", "nesw-resize", "\u2922")
+        tr_handle.set_tooltip_text("Drag corner to shrink or expand")
+        top_strip.pack_start(tr_handle, False, False, 0)
+
+        root_box.pack_start(top_strip, False, False, 0)
+
+        # 2. Middle section: Left handle + Center Content + Right handle
+        middle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        root_box.pack_start(middle_box, True, True, 0)
+
+        l_handle = self._make_edge_handle("left", "w-resize", width=8)
+        middle_box.pack_start(l_handle, False, False, 0)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        outer.set_name("oskb-outer")
+        middle_box.pack_start(outer, True, True, 0)
+
+        r_handle = self._make_edge_handle("right", "e-resize", width=8)
+        middle_box.pack_start(r_handle, False, False, 0)
+
+        # 3. Bottom resize handle strip (with bottom-left corner button, center grab pill, bottom-right corner button)
+        bottom_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        bottom_strip.set_size_request(-1, 16)
+
+        bl_handle = self._make_corner_button("bottom_left", "nesw-resize", "\u2922")
+        bl_handle.set_tooltip_text("Drag corner to shrink or expand")
+        bottom_strip.pack_start(bl_handle, False, False, 0)
+
+        b_handle = self._make_edge_handle("bottom", "s-resize", height=16)
+        bpill = Gtk.Label()
+        bpill.get_style_context().add_class("resize-bottom-pill")
+        b_handle.add(bpill)
+        bottom_strip.pack_start(b_handle, True, True, 0)
+
+        br_handle = self._make_corner_button("bottom_right", "nwse-resize", "\u2921")
+        br_handle.set_tooltip_text("Drag corner to shrink or expand")
+        bottom_strip.pack_start(br_handle, False, False, 0)
+
+        root_box.pack_start(bottom_strip, False, False, 0)
+
+        # Top Bar & Keys Grid inside outer
+        bar = self._build_header_bar()
+        outer.pack_start(bar, False, False, 0)
+
+        # Keyboard Grid Container
+        self.grid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.pack_start(self.grid_box, True, True, 2)
+
+        self.build_layer(self.layer)
+        self.win.show_all()
+        self.layout_on_screen()
+
+    def _build_header_bar(self):
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        bar.get_style_context().add_class("oskb-bar")
+
+        # Title / Icon
+        self.bar_title = Gtk.Label(label="\u2328 Keyboard")
+        self.bar_title.get_style_context().add_class("oskb-title")
+        bar.pack_start(self.bar_title, False, False, 4)
+
+        # Quick Layer tabs
+        self.tab_abc = self._make_bar_btn("ABC", lambda: self.build_layer("main"))
+        self.tab_123 = self._make_bar_btn("?123", lambda: self.build_layer("sym"))
+        self.tab_fn = self._make_bar_btn("Fn", lambda: self.build_layer("fn"))
+        bar.pack_start(self.tab_abc, False, False, 1)
+        bar.pack_start(self.tab_123, False, False, 1)
+        bar.pack_start(self.tab_fn, False, False, 1)
+
+        # Mode Toggles shifted to left side: Auto-Popup & Dock/Float
+        self.btn_auto = self._make_bar_btn(
+            "\u26a1 Auto: ON" if self.auto_popup else "\u26a1 Auto: OFF",
+            self._toggle_auto_popup
+        )
+        self._update_auto_btn_style()
+        bar.pack_start(self.btn_auto, False, False, 2)
+
+        self.btn_dock = self._make_bar_btn(
+            "\u2b12 Dock" if self.dock_mode == "dock" else "\u2b13 Float",
+            self._toggle_dock
+        )
+        bar.pack_start(self.btn_dock, False, False, 2)
+
+        # Drag Handle (fills available center space)
+        drag_box = Gtk.EventBox()
+        drag_box.set_can_focus(False)
+        drag_box.set_visible_window(True)
+        self.drag_label = Gtk.Label(label="\u283f\u283f Drag to Move \u283f\u283f")
+        self.drag_label.set_halign(Gtk.Align.CENTER)
+        self.drag_label.set_hexpand(True)
+        self.drag_label.get_style_context().add_class("drag-handle")
+        drag_box.add(self.drag_label)
+        drag_box.connect("button-press-event", self._on_drag_press)
+        drag_box.connect("motion-notify-event", self._on_drag_motion)
+        drag_box.connect("button-release-event", self._on_drag_release)
+        drag_box.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK |
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.BUTTON_RELEASE_MASK |
+            Gdk.EventMask.TOUCH_MASK
+        )
+        drag_box.connect("realize", lambda b: self._set_widget_cursor(b, "move"))
+        bar.pack_start(drag_box, True, True, 6)
+
+        # Theme Switcher Button (🎨 Dark, Light, OLED, Breeze, Amber)
+        self.btn_theme = self._make_bar_btn(
+            f"\U0001f3a8 {self.theme.capitalize()}",
+            self._cycle_theme
+        )
+        self.btn_theme.set_tooltip_text("Switch Theme (Dark, Light, OLED, Breeze, Amber) - Click to cycle, right-click for menu")
+        self.btn_theme.connect("button-press-event", self._on_theme_btn_press)
+        bar.pack_start(self.btn_theme, False, False, 2)
+
+        # Width Presets: S, M, L
+        self.btn_s = self._make_bar_btn("S", lambda: self._set_width_preset("compact"))
+        self.btn_m = self._make_bar_btn("M", lambda: self._set_width_preset("medium"))
+        self.btn_l = self._make_bar_btn("L", lambda: self._set_width_preset("full"))
+        self.btn_s.set_tooltip_text("Compact Width (80%)")
+        self.btn_m.set_tooltip_text("Medium Width (90%)")
+        self.btn_l.set_tooltip_text("Full Width (100%)")
+        bar.pack_start(self.btn_s, False, False, 1)
+        bar.pack_start(self.btn_m, False, False, 1)
+        bar.pack_start(self.btn_l, False, False, 1)
+
+        # Zoom scale buttons
+        self.btn_zoom_out = self._make_bar_btn("A\u2212", lambda: self._adjust_scale(-0.1))
+        self.btn_zoom_in = self._make_bar_btn("A+", lambda: self._adjust_scale(0.1))
+        self.btn_zoom_out.set_tooltip_text("Zoom Out (Smaller font/keys)")
+        self.btn_zoom_in.set_tooltip_text("Zoom In (Larger font/keys)")
+        bar.pack_start(self.btn_zoom_out, False, False, 1)
+        bar.pack_start(self.btn_zoom_in, False, False, 1)
+        self._update_width_preset_buttons()
+
+        # Resize grip handle (⤡)
+        resize_box = Gtk.EventBox()
+        resize_box.set_can_focus(False)
+        resize_lbl = Gtk.Label(label="\u2921")
+        resize_lbl.get_style_context().add_class("bar-btn")
+        resize_box.add(resize_lbl)
+        resize_box.connect("button-press-event", self._on_resize_press)
+        resize_box.connect("motion-notify-event", self._on_resize_motion)
+        resize_box.connect("button-release-event", self._on_resize_release)
+        resize_box.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
+        bar.pack_start(resize_box, False, False, 2)
+
+        # Minimize Button (−)
+        btn_min = self._make_bar_btn("\u2212", self.minimize_to_pill)
+        bar.pack_start(btn_min, False, False, 1)
+
+        # Close Button (✕)
+        btn_close = self._make_bar_btn("\u2715", self._destroy)
+        btn_close.get_style_context().add_class("close")
+        bar.pack_start(btn_close, False, False, 1)
+
+        return bar
+
+    def _make_bar_btn(self, label, callback):
+        b = Gtk.Button(label=label)
+        b.set_can_focus(False)
+        b.set_focus_on_click(False)
+        b.get_style_context().add_class("bar-btn")
+        b.connect("clicked", lambda _b: callback())
+        return b
+
+    def _build_pill(self):
+        p = Gtk.Window()
+        p.set_title("On-Screen Keyboard - Pill")
+        p.set_role("oskb")
+        p.set_name("oskb-pill")
+        p.get_style_context().add_class("oskb-pill")
+        p.set_decorated(False)
+        p.set_resizable(False)
+        p.set_accept_focus(False)
+        p.set_focus_on_map(False)
+        p.set_can_focus(False)
+        p.set_keep_above(True)
+        p.set_skip_taskbar_hint(True)
+        p.set_skip_pager_hint(True)
+        p.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+
+        box = Gtk.EventBox()
+        box.set_can_focus(False)
+        lbl = Gtk.Label(label="\u2328")
+        lbl.get_style_context().add_class("pill-btn")
+        box.add(lbl)
+        box.connect("button-press-event", self._on_pill_click)
+        p.add(box)
+        p.show_all()
+        p.hide()  # hidden initially while main keyboard is open
+        self.pill = p
+
+    # -- Layer Building -----------------------------------------------------
+
+    def build_layer(self, name):
+        self.layer = name
+        if name == "main":
+            self.rows = MAIN_ROWS
+        elif name == "sym":
+            self.rows = SYM_ROWS
+        else:
+            self.rows = FN_ROWS
+
+        # Update bar tabs active state
+        for tab, active in ((self.tab_abc, name == "main"),
+                            (self.tab_123, name == "sym"),
+                            (self.tab_fn, name == "fn")):
+            sc = tab.get_style_context()
+            if active:
+                sc.add_class("active")
+            else:
+                sc.remove_class("active")
+
+        # Clear existing grid
+        for child in self.grid_box.get_children():
+            self.grid_box.remove(child)
+
+        self.buttons = []
+        grid = Gtk.Grid()
+        grid.set_column_homogeneous(True)
+        grid.set_row_homogeneous(True)
+        col_spacing = 1 if getattr(self, "is_portrait", False) else 2
+        row_spacing = 1 if getattr(self, "is_portrait", False) else 2
+        grid.set_column_spacing(col_spacing)
+        grid.set_row_spacing(row_spacing)
+
+        for r_idx, r in enumerate(self.rows):
+            col_pos = 0
+            for k in r:
+                span = k.get("span", 4)
+                btn = self._make_button(k)
+                grid.attach(btn, col_pos, r_idx, span, 1)
+                col_pos += span
+
+        self.grid_box.pack_start(grid, True, True, 0)
+        self.grid_box.show_all()
+        self.refresh_mods()
+        self.layout_on_screen()
+
+    def _make_button(self, k):
+        b = Gtk.Button()
+        b.set_can_focus(False)
+        b.set_focus_on_click(False)
+        sc = b.get_style_context()
+        sc.add_class("kbtn")
+        sc.add_class("okey")  # For backward-compatibility with existing styles & tests
+        if k.get("t") == "char":
+            sc.add_class("kchar")
+        if "style_class" in k:
+            sc.add_class(k["style_class"])
+
+        b._okey = k
+        b._pressed = False
+        b._rep1 = None
+        b._rep2 = None
+        b.connect("button-press-event", self._press)
+        b.connect("button-release-event", self._release)
+        self.buttons.append(b)
+        return b
+
+    def _press(self, btn, _ev):
+        btn._pressed = True
+        self.activate(btn._okey)
+        if btn._okey.get("repeat"):
+            btn._rep1 = GLib.timeout_add(450, self._begin_repeat, btn)
+        return False
+
+    def _begin_repeat(self, btn):
+        if btn._pressed:
+            btn._rep2 = GLib.timeout_add(70, self._auto_repeat, btn)
+        return False
+
+    def _auto_repeat(self, btn):
+        if not btn._pressed:
+            return False
+        self.activate(btn._okey, repeat=True)
+        return True
+
+    def _release(self, btn, _ev):
+        btn._pressed = False
+        for attr in ("_rep1", "_rep2"):
+            tid = getattr(btn, attr)
+            if tid:
+                GLib.source_remove(tid)
+                setattr(btn, attr, None)
+        return False
+
+    # -- Geometry & Positioning ---------------------------------------------
+
+    def get_screen_geometry(self):
+        display = Gdk.Display.get_default()
+        if display:
+            monitor = display.get_primary_monitor() or display.get_monitor_at_point(0, 0)
+            if monitor:
+                try:
+                    work = monitor.get_workarea()
+                    if work.width > 0 and work.height > 0:
+                        return work.x, work.y, work.width, work.height
+                except Exception:
+                    pass
+                try:
+                    geom = monitor.get_geometry()
+                    if geom.width > 0 and geom.height > 0:
+                        return geom.x, geom.y, geom.width, geom.height
+                except Exception:
+                    pass
+        scr = Gdk.Screen.get_default()
+        try:
+            return 0, 0, scr.get_width(), scr.get_height()
+        except Exception:
+            return 0, 0, 1920, 1080
+
+    def _setup_screen_listeners(self):
+        scr = Gdk.Screen.get_default()
+        scr.connect("size-changed", self._on_screen_changed)
+        scr.connect("monitors-changed", self._on_screen_changed)
+
+        display = scr.get_display()
+        display.connect("monitor-added", self._on_screen_changed)
+        display.connect("monitor-removed", self._on_screen_changed)
+
+        self._bind_monitors()
+
+    def _bind_monitors(self):
+        display = Gdk.Display.get_default()
+        if not display:
+            return
+        try:
+            n = display.get_n_monitors()
+            for i in range(n):
+                mon = display.get_monitor(i)
+                if mon and mon not in self._connected_monitors:
+                    mon.connect("notify::geometry", self._on_screen_changed)
+                    mon.connect("notify::workarea", self._on_screen_changed)
+                    mon.connect("notify::scale-factor", self._on_screen_changed)
+                    self._connected_monitors.add(mon)
+        except Exception:
+            pass
+
+    def _on_screen_changed(self, *args):
+        self._bind_monitors()
+        GLib.idle_add(self.layout_on_screen)
+
+    def _check_orientation_tick(self):
+        _x, _y, sw, sh = self.get_screen_geometry()
+        if (sw, sh) != self._current_screen_dims and sw > 0 and sh > 0:
+            self.layout_on_screen()
+        return True
+
+    def _update_bar_for_orientation(self, is_portrait):
+        # Keep S, M, L, A-, A+ buttons always visible in both portrait and landscape
+        for btn in (getattr(self, "btn_s", None),
+                    getattr(self, "btn_m", None),
+                    getattr(self, "btn_l", None),
+                    getattr(self, "btn_zoom_out", None),
+                    getattr(self, "btn_zoom_in", None)):
+            if btn:
+                btn.set_no_show_all(False)
+                btn.show()
+
+        if is_portrait:
+            if hasattr(self, "bar_title"):
+                self.bar_title.set_text("\u2328")
+                self.bar_title.set_tooltip_text("On-Screen Keyboard")
+            if hasattr(self, "drag_label"):
+                self.drag_label.set_text("\u283f\u283f Drag to Move \u283f\u283f")
+            if hasattr(self, "btn_auto"):
+                self.btn_auto.set_label("\u26a1")
+                self.btn_auto.set_tooltip_text(
+                    "Auto-Popup: ON (tap to toggle)" if self.auto_popup else "Auto-Popup: OFF (tap to toggle)"
+                )
+            if hasattr(self, "btn_theme"):
+                self.btn_theme.set_label(f"\U0001f3a8 {self.theme.capitalize()}")
+                self.btn_theme.set_tooltip_text(f"Theme: {self.theme.capitalize()} (tap to switch)")
+        else:
+            if hasattr(self, "bar_title"):
+                self.bar_title.set_text("\u2328 Keyboard")
+                self.bar_title.set_tooltip_text("")
+            if hasattr(self, "drag_label"):
+                self.drag_label.set_text("\u283f\u283f Drag to Move \u283f\u283f")
+            if hasattr(self, "btn_auto"):
+                self.btn_auto.set_label("\u26a1 Auto: ON" if self.auto_popup else "\u26a1 Auto: OFF")
+                self.btn_auto.set_tooltip_text("Toggle Auto-Popup on text field focus")
+            if hasattr(self, "btn_theme"):
+                self.btn_theme.set_label(f"\U0001f3a8 {self.theme.capitalize()}")
+                self.btn_theme.set_tooltip_text("Switch Theme (Click to cycle, right-click for menu)")
+
+        self._update_dock_btn_label()
+        self._update_width_preset_buttons()
+
+    def layout_on_screen(self):
+        base_x, base_y, screen_w, screen_h = self.get_screen_geometry()
+        self._current_screen_dims = (screen_w, screen_h)
+        is_portrait = screen_w < screen_h
+        self.is_portrait = is_portrait
+        rows = len(self.rows)
+
+        # 1. Update Header Bar for Orientation
+        self._update_bar_for_orientation(is_portrait)
+
+        # 2. Key height and font size
+        if is_portrait:
+            target_h = int(screen_h * 0.28 * self.scale)
+            topbar_h = 30
+            key_h = max(36, min(58, int((target_h - topbar_h) / rows)))
+            font_px = max(11, min(15, int(key_h * 0.26 * self.scale)))
+            char_font_px = max(17, min(24, int(key_h * 0.40 * self.scale)))
+            arrow_font = max(18, min(25, int(key_h * 0.42 * self.scale)))
+
+            if self.width_preset == "full":
+                target_w = screen_w
+            elif self.width_preset == "compact":
+                target_w = max(690, int(screen_w * 0.80))
+            else:  # medium
+                target_w = max(690, int(screen_w * 0.90))
+        else:
+            base_h = int(screen_h * 0.32)
+            total_h = int(base_h * self.scale)
+            topbar_h = 36
+            key_h = max(38, int((total_h - topbar_h) / rows))
+            font_px = max(13, min(17, int(key_h * 0.28 * self.scale)))
+            char_font_px = max(18, min(26, int(key_h * 0.42 * self.scale)))
+            arrow_font = max(20, min(28, int(key_h * 0.45 * self.scale)))
+
+            if self.width_preset == "full":
+                target_w = screen_w
+            elif self.width_preset == "compact":
+                target_w = min(screen_w, max(1100, int(screen_w * 0.65)))
+            else:  # medium
+                target_w = min(screen_w, max(1300, int(screen_w * 0.82)))
+
+        total_h = topbar_h + rows * key_h + 14
+
+        # 3. Apply key and bar styles
+        self._apply_key_style(int(key_h * 0.90), font_px, char_font_px, arrow_font, is_portrait)
+        self.refresh_mods()
+
+        # Let GTK calculate preferred size with updated styles
+        try:
+            req_min, _ = self.win.get_preferred_size()
+            if req_min.height > total_h:
+                total_h = req_min.height
+            if req_min.width > target_w:
+                target_w = req_min.width
+        except Exception:
+            pass
+
+        target_w = min(target_w, screen_w)
+
+        if self.dock_mode == "dock":
+            # In dock mode, dock cleanly to bottom
+            x = base_x + int((screen_w - target_w) / 2)
+            y = base_y + screen_h - total_h
+        else:
+            default_x = base_x + int((screen_w - target_w) / 2)
+            default_y = max(base_y + 40, base_y + screen_h - total_h - 120)
+            fx = self.config.get("float_x", -1)
+            fy = self.config.get("float_y", -1)
+            if fx < 0 or fy <= 0 or fy > screen_h - 60:
+                x = default_x
+                y = default_y
+            else:
+                x = fx
+                y = fy
+            target_w = min(screen_w, self.config.get("float_w", target_w))
+            total_h = min(int(screen_h * 0.85), self.config.get("float_h", total_h))
+
+        # Clamp strictly within visible bounds
+        x = max(base_x, min(x, base_x + screen_w - target_w))
+        y = max(base_y, min(y, base_y + screen_h - 60))
+
+        self.win.resize(target_w, total_h)
+        self.win.move(x, y)
+
+        self.kb_left = x
+        self.kb_top = y
+        self.kb_width = target_w
+        self.kb_height = total_h
+
+    def _apply_key_style(self, min_h, font_px, char_font_px, arrow_font, is_portrait=False):
+        if is_portrait:
+            btn_padding = "0px 1px"
+            btn_margin = "1px"
+            min_w = "4px"
+            bar_padding = "2px 3px"
+            bar_btn_padding = "1px 4px"
+            bar_btn_min_h = "22px"
+            bar_btn_font = "11px"
+        else:
+            btn_padding = "0"
+            btn_margin = "1px"
+            min_w = "14px"
+            bar_padding = "3px 6px"
+            bar_btn_padding = "2px 9px"
+            bar_btn_min_h = "26px"
+            bar_btn_font = "12px"
+
+        css_text = (
+            f".oskb-bar {{ padding: {bar_padding}; }}\n"
+            f".bar-btn, .bar-btn label {{ font-size: {bar_btn_font}; padding: {bar_btn_padding}; min-height: {bar_btn_min_h}; }}\n"
+            f".drag-handle {{ font-size: {bar_btn_font}; padding: 1px 6px; }}\n"
+            f"button.kbtn, button.kbtn label {{ min-height: {min_h}px; font-size: {font_px}px; min-width: {min_w}; padding: {btn_padding}; margin: {btn_margin}; font-weight: 700; }}\n"
+            f"button.kchar, button.kchar label {{ font-size: {char_font_px}px; font-weight: 700; }}\n"
+            f"button.karrow, button.karrow label {{ font-size: {arrow_font}px; font-weight: 900; }}\n"
+        )
+        self.key_style_provider.load_from_data(css_text.encode())
+
+    def _on_configure(self, widget, event):
+        if not getattr(self, "_resizing", False) and not getattr(self, "_dragging", False):
+            if event.x > 0 or event.y > 0:
+                self.kb_left = event.x
+                self.kb_top = event.y
+            self.kb_width = event.width
+            self.kb_height = event.height
+            if self.dock_mode == "float" and (event.x > 0 or event.y > 0):
+                self.config["float_x"] = event.x
+                self.config["float_y"] = event.y
+                save_config(self.config)
+        return False
+
+    # -- Drag & Resize Handlers ---------------------------------------------
+
+    def _on_drag_press(self, widget, event):
+        btn = getattr(event, "button", 1)
+        if btn == 1 or btn == 0:
+            display = Gdk.Display.get_default()
+            backend = display.get_name() if hasattr(display, "get_name") else ""
+            if "wayland" in backend.lower() and hasattr(self.win, "begin_move_drag"):
+                if self.dock_mode == "dock":
+                    self.dock_mode = "float"
+                    self.config["dock_mode"] = "float"
+                    self._update_dock_btn_label()
+                time = getattr(event, "time", 0)
+                x_root = int(getattr(event, "x_root", 0))
+                y_root = int(getattr(event, "y_root", 0))
+                self.win.begin_move_drag(btn if btn != 0 else 1, x_root, y_root, time)
+                return True
+
+            self._dragging = True
+            self._drag_start_x = getattr(event, "x_root", 0)
+            self._drag_start_y = getattr(event, "y_root", 0)
+            self._drag_start_win_x = self.kb_left
+            self._drag_start_win_y = self.kb_top
+        return True
+
+    def _on_drag_motion(self, widget, event):
+        if getattr(self, "_dragging", False):
+            cur_x = getattr(event, "x_root", self._drag_start_x)
+            cur_y = getattr(event, "y_root", self._drag_start_y)
+            dx = int(cur_x - self._drag_start_x)
+            dy = int(cur_y - self._drag_start_y)
+            new_x = self._drag_start_win_x + dx
+            new_y = self._drag_start_win_y + dy
+            base_x, base_y, screen_w, screen_h = self.get_screen_geometry()
+            new_x = max(base_x, min(new_x, base_x + screen_w - self.kb_width))
+            new_y = max(base_y, min(new_y, base_y + screen_h - 60))
+            self.win.move(new_x, new_y)
+            self.kb_left = new_x
+            self.kb_top = new_y
+            if self.dock_mode == "dock" and (abs(dy) > 15 or abs(dx) > 15):
+                self.dock_mode = "float"
+                self.config["dock_mode"] = "float"
+                self._update_dock_btn_label()
+        return True
+
+    def _on_drag_release(self, widget, event):
+        btn = getattr(event, "button", 1)
+        if (btn == 1 or btn == 0) and getattr(self, "_dragging", False):
+            self._dragging = False
+            if self.dock_mode == "float":
+                self.config["float_x"] = self.kb_left
+                self.config["float_y"] = self.kb_top
+                save_config(self.config)
+        return True
+
+    def _make_corner_button(self, corner, cursor_name, symbol):
+        box = Gtk.EventBox()
+        box.set_visible_window(True)
+        box.set_can_focus(False)
+        box.get_style_context().add_class("corner-grip-box")
+        lbl = Gtk.Label(label=symbol)
+        lbl.get_style_context().add_class("corner-grip")
+        lbl.get_style_context().add_class(f"corner-grip-{corner}")
+        box.add(lbl)
+        box.connect("button-press-event", lambda w, ev, c=corner: self._on_edge_press(w, ev, c))
+        box.connect("motion-notify-event", self._on_edge_motion)
+        box.connect("button-release-event", self._on_edge_release)
+        box.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK |
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.BUTTON_RELEASE_MASK |
+            Gdk.EventMask.TOUCH_MASK
+        )
+        box.connect("realize", lambda b, cname=cursor_name: self._set_widget_cursor(b, cname))
+        return box
+
+    def _make_edge_handle(self, edge, cursor_name, width=-1, height=-1):
+        box = Gtk.EventBox()
+        box.set_visible_window(True)
+        box.set_can_focus(False)
+        box.get_style_context().add_class("resize-edge")
+        box.get_style_context().add_class(f"resize-edge-{edge}")
+        if width > 0 or height > 0:
+            box.set_size_request(width, height)
+        box.connect("button-press-event", lambda w, ev, ed=edge: self._on_edge_press(w, ev, ed))
+        box.connect("motion-notify-event", self._on_edge_motion)
+        box.connect("button-release-event", self._on_edge_release)
+        box.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK |
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.BUTTON_RELEASE_MASK |
+            Gdk.EventMask.TOUCH_MASK
+        )
+        box.connect("realize", lambda b, cname=cursor_name: self._set_widget_cursor(b, cname))
+        return box
+
+    def _set_widget_cursor(self, widget, cursor_name):
+        try:
+            gdk_win = widget.get_window()
+            if gdk_win:
+                display = Gdk.Display.get_default()
+                cursor = Gdk.Cursor.new_from_name(display, cursor_name)
+                if cursor:
+                    gdk_win.set_cursor(cursor)
+        except Exception:
+            pass
+
+    def _on_resize_press(self, widget, event):
+        return self._on_edge_press(widget, event, "top_right")
+
+    def _on_resize_motion(self, widget, event):
+        return self._on_edge_motion(widget, event)
+
+    def _on_resize_release(self, widget, event):
+        return self._on_edge_release(widget, event)
+
+    def _on_edge_press(self, widget, event, edge):
+        btn = getattr(event, "button", 1)
+        if btn == 1:
+            self._resizing = True
+            self._resize_edge = edge
+            self._resize_start_x = getattr(event, "x_root", 0)
+            self._resize_start_y = getattr(event, "y_root", 0)
+            self._resize_start_w = self.kb_width
+            self._resize_start_h = self.kb_height
+            self._resize_start_win_x = self.kb_left
+            self._resize_start_win_y = self.kb_top
+        return True
+
+    def _on_edge_motion(self, widget, event):
+        if not self._resizing:
+            return True
+
+        dx = int(getattr(event, "x_root", self._resize_start_x) - self._resize_start_x)
+        dy = int(getattr(event, "y_root", self._resize_start_y) - self._resize_start_y)
+        edge = getattr(self, "_resize_edge", "top")
+
+        scr = Gdk.Screen.get_default()
+        display = scr.get_display()
+        monitor = display.get_primary_monitor() or display.get_monitor_at_point(0, 0)
+        try:
+            work = monitor.get_workarea()
+            screen_w, screen_h = work.width, work.height
+            base_x, base_y = work.x, work.y
+        except Exception:
+            screen_w, screen_h = scr.get_width(), scr.get_height()
+            base_x, base_y = 0, 0
+
+        min_w = 650
+        max_w = screen_w
+        min_h = 220
+        max_h = int(screen_h * 0.80)
+
+        new_w = self._resize_start_w
+        new_h = self._resize_start_h
+        new_x = self._resize_start_win_x
+        new_y = self._resize_start_win_y
+
+        # Height adjustment (Top edge: dragging up increases height)
+        if edge in ("top", "top_left", "top_right"):
+            new_h = max(min_h, min(max_h, self._resize_start_h - dy))
+            if self.dock_mode == "dock":
+                new_y = base_y + screen_h - new_h
+            else:
+                new_y = self._resize_start_win_y + (self._resize_start_h - new_h)
+
+        elif edge in ("bottom", "bottom_left", "bottom_right"):
+            new_h = max(min_h, min(max_h, self._resize_start_h + dy))
+
+        # Width adjustment
+        if edge in ("right", "top_right", "bottom_right"):
+            if self.dock_mode == "dock":
+                new_w = max(min_w, min(max_w, self._resize_start_w + 2 * dx))
+                new_x = base_x + int((screen_w - new_w) / 2)
+            else:
+                new_w = max(min_w, min(max_w, self._resize_start_w + dx))
+
+        elif edge in ("left", "top_left", "bottom_left"):
+            if self.dock_mode == "dock":
+                new_w = max(min_w, min(max_w, self._resize_start_w - 2 * dx))
+                new_x = base_x + int((screen_w - new_w) / 2)
+            else:
+                new_w = max(min_w, min(max_w, self._resize_start_w - dx))
+                new_x = self._resize_start_win_x + (self._resize_start_w - new_w)
+
+        if self.dock_mode == "dock":
+            new_x = base_x + int((screen_w - new_w) / 2)
+            new_y = base_y + screen_h - new_h
+        else:
+            new_x = max(base_x, min(new_x, base_x + screen_w - 200))
+            new_y = max(base_y, min(new_y, base_y + screen_h - 100))
+
+        self.win.resize(new_w, new_h)
+        self.win.move(new_x, new_y)
+        self.kb_width = new_w
+        self.kb_height = new_h
+        self.kb_left = new_x
+        self.kb_top = new_y
+
+        # Dynamically recalculate key button heights and font sizes live!
+        rows = len(self.rows)
+        key_h = max(34, int((new_h - 48) / rows))
+        if screen_w < screen_h:
+            font_px = max(10, min(13, int((new_w / 68.0) * 0.90)))
+            self._apply_key_style(int(key_h * 0.90), font_px, is_portrait=True)
+        else:
+            font_px = max(13, min(20, int(key_h * 0.32)))
+            self._apply_key_style(int(key_h * 0.90), font_px, is_portrait=False)
+
+        return True
+
+    def _on_edge_release(self, widget, event):
+        btn = getattr(event, "button", 1)
+        if btn == 1 and self._resizing:
+            self._resizing = False
+            self.config["float_w"] = self.kb_width
+            self.config["float_h"] = self.kb_height
+            self.config["float_x"] = self.kb_left
+            self.config["float_y"] = self.kb_top
+            save_config(self.config)
+        return True
+
+    # -- Header Bar Actions -------------------------------------------------
+
+    def _toggle_dock(self):
+        base_x, base_y, screen_w, screen_h = self.get_screen_geometry()
+        target_w = self.kb_width
+        total_h = self.kb_height
+        dock_x = base_x + int((screen_w - target_w) / 2)
+        dock_y = base_y + screen_h - total_h
+
+        if self.dock_mode == "dock":
+            self.dock_mode = "float"
+            cur_float_y = self.config.get("float_y", dock_y)
+            if abs(cur_float_y - dock_y) < 30:
+                lift_y = max(base_y + 40, dock_y - 120)
+                self.config["float_y"] = lift_y
+                self.config["float_x"] = dock_x
+        else:
+            self.dock_mode = "dock"
+
+        self.config["dock_mode"] = self.dock_mode
+        save_config(self.config)
+        self._update_dock_btn_label()
+        self.layout_on_screen()
+
+    def _update_dock_btn_label(self):
+        if hasattr(self, "btn_dock"):
+            sc = self.btn_dock.get_style_context()
+            if self.dock_mode == "dock":
+                self.btn_dock.set_label("\u2b12 Dock")
+                self.btn_dock.set_tooltip_text("Mode: Docked to bottom (tap to float and move)")
+                sc.remove_class("active")
+            else:
+                self.btn_dock.set_label("\u2b13 Float")
+                self.btn_dock.set_tooltip_text("Mode: Floating (tap to dock to bottom)")
+                sc.add_class("active")
+
+    def _cycle_theme(self):
+        cur_idx = THEME_NAMES.index(self.theme) if self.theme in THEME_NAMES else 0
+        next_theme = THEME_NAMES[(cur_idx + 1) % len(THEME_NAMES)]
+        self.set_theme(next_theme)
+
+    def _show_theme_menu(self, widget):
+        menu = Gtk.Menu()
+        icons = {
+            "dark": "\U0001f319 Dark (High Contrast)",
+            "light": "\u2600\ufe0f Light (Clean Paper)",
+            "oled": "\U0001f30c OLED (Neon Cyber)",
+            "breeze": "\U0001f30a Breeze (KDE Native)",
+            "amber": "\u26a1 Amber (Retro Terminal)",
+        }
+        for tname in THEME_NAMES:
+            lbl = icons.get(tname, tname.capitalize())
+            if tname == self.theme:
+                lbl += "  \u2713"
+            item = Gtk.MenuItem(label=lbl)
+            item.connect("activate", lambda _, tn=tname: self.set_theme(tn))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_widget(widget, Gdk.Gravity.SOUTH, Gdk.Gravity.NORTH, None)
+
+    def _on_theme_btn_press(self, widget, event):
+        if event.button == 3:
+            self._show_theme_menu(widget)
+            return True
+        return False
+
+    def set_theme(self, name):
+        if name not in THEMES:
+            name = "dark"
+        self.theme = name
+        self.config["theme"] = name
+        save_config(self.config)
+        self.theme_provider.load_from_data(get_theme_css(name))
+        if hasattr(self, "btn_theme"):
+            self.btn_theme.set_label(f"\U0001f3a8 {name.capitalize()}")
+
+    def _set_width_preset(self, preset):
+        self.width_preset = preset
+        self.config["width_preset"] = preset
+        save_config(self.config)
+        self._update_width_preset_buttons()
+        self.layout_on_screen()
+
+    def _update_width_preset_buttons(self):
+        for btn, preset in ((getattr(self, "btn_s", None), "compact"),
+                            (getattr(self, "btn_m", None), "medium"),
+                            (getattr(self, "btn_l", None), "full")):
+            if btn:
+                sc = btn.get_style_context()
+                if self.width_preset == preset:
+                    sc.add_class("active")
+                else:
+                    sc.remove_class("active")
+
+    def _adjust_scale(self, delta):
+        self.scale = max(0.65, min(1.6, round(self.scale + delta, 2)))
+        self.config["scale"] = self.scale
+        save_config(self.config)
+        self.layout_on_screen()
+
+    def _toggle_auto_popup(self):
+        self.auto_popup = not self.auto_popup
+        self.config["auto_popup"] = self.auto_popup
+        save_config(self.config)
+        self._update_auto_btn_style()
+
+    def _update_auto_btn_style(self):
+        sc = self.btn_auto.get_style_context()
+        is_portrait = getattr(self, "is_portrait", False)
+        if self.auto_popup:
+            self.btn_auto.set_label("\u26a1" if is_portrait else "\u26a1 Auto: ON")
+            self.btn_auto.set_tooltip_text(
+                "Auto-Popup: ON (tap to toggle)" if is_portrait else "Toggle Auto-Popup on text field focus"
+            )
+            sc.add_class("auto-on")
+            sc.remove_class("auto-off")
+        else:
+            self.btn_auto.set_label("\u26a1" if is_portrait else "\u26a1 Auto: OFF")
+            self.btn_auto.set_tooltip_text(
+                "Auto-Popup: OFF (tap to toggle)" if is_portrait else "Toggle Auto-Popup on text field focus"
+            )
+            sc.add_class("auto-off")
+            sc.remove_class("auto-on")
+
+    # -- Minimization & Floating Pill ---------------------------------------
+
+    def minimize_to_pill(self):
+        self.win.hide()
+        display = Gdk.Display.get_default()
+        monitor = display.get_primary_monitor() or display.get_monitor_at_point(0, 0)
+        geom = monitor.get_geometry()
+        w_px, h_px = geom.width, geom.height
+        pill_x = self.config.get("pill_x", -1)
+        pill_y = self.config.get("pill_y", -1)
+        if pill_x < 0 or pill_y < 0 or pill_x >= w_px or pill_y >= h_px:
+            pill_x = max(10, w_px - 85)
+            pill_y = max(10, h_px - 80)
+        self.pill.move(pill_x, pill_y)
+        self.pill.show_all()
+
+    def show_keyboard(self):
+        self.pill.hide()
+        self.win.show_all()
+        self.win.present()
+        self.layout_on_screen()
+
+    def _on_pill_click(self, _widget, event):
+        if event.button == 1:
+            self.show_keyboard()
+        return True
+
+    # -- Atspi Auto-Popup Focus Detection -----------------------------------
+
+    def _init_atspi(self):
+        try:
+            Atspi.init()
+            self.atspi_listener = Atspi.EventListener.new(self._on_atspi_focus)
+            self.atspi_listener.register("object:state-changed:focused")
+        except Exception as e:
+            print("Atspi initialization skipped: %s" % e, file=sys.stderr)
+
+    def _on_atspi_focus(self, event):
+        if not self.auto_popup:
+            return
+        if event.detail1 != 1:
+            return
+        try:
+            source = event.source
+            if not source:
+                return
+            # Don't trigger for our own keyboard or pill window
+            if source.get_process_id() == os.getpid():
+                return
+            states = source.get_state_set()
+            is_editable = states.contains(Atspi.StateType.EDITABLE)
+            role = source.get_role_name()
+            is_text = role in ("text", "password text", "entry", "terminal", "document text")
+            if is_editable or is_text:
+                if self.suppressed_element and self._same_element(self.suppressed_element, source):
+                    return
+                self.suppressed_element = None
+                GLib.idle_add(self.show_keyboard)
+        except Exception:
+            pass
+
+    def _same_element(self, a, b):
+        try:
+            return a.get_index_in_parent() == b.get_index_in_parent() and a.get_name() == b.get_name()
+        except Exception:
+            return False
+
+    # -- Key Press Handling -------------------------------------------------
+
+    def activate(self, k, repeat=False):
+        t = k["t"]
+        if t == "char":
+            self._type_char(k)
+            return
+
+        action = k.get("action")
+        if action == "combo":
+            self.inj.combo(k["codes"])
+            return
+
+        # Basic Keys
+        if action == "bs":
+            self.inj.tap_code(E.KEY_BACKSPACE)
+        elif action == "delete":
+            self.inj.tap_code(E.KEY_DELETE)
+        elif action == "enter":
+            self.inj.tap_code(E.KEY_ENTER)
+        elif action == "esc":
+            self.inj.tap_code(E.KEY_ESC)
+        elif action == "tab":
+            self.inj.tap_code(E.KEY_TAB)
+        elif action == "space":
+            self.inj.tap_code(E.KEY_SPACE)
+        # Navigation
+        elif action == "left":
+            self.inj.tap_code(E.KEY_LEFT)
+        elif action == "right":
+            self.inj.tap_code(E.KEY_RIGHT)
+        elif action == "up":
+            self.inj.tap_code(E.KEY_UP)
+        elif action == "down":
+            self.inj.tap_code(E.KEY_DOWN)
+        elif action == "home":
+            self.inj.tap_code(E.KEY_HOME)
+        elif action == "end":
+            self.inj.tap_code(E.KEY_END)
+        elif action == "pgup":
+            self.inj.tap_code(E.KEY_PAGEUP)
+        elif action == "pgdn":
+            self.inj.tap_code(E.KEY_PAGEDOWN)
+        elif action == "ins":
+            self.inj.tap_code(E.KEY_INSERT)
+        # Modifiers
+        elif action == "shift":
+            self.shift = (self.shift + 1) % 3
+            self.refresh_mods()
+        elif action == "caps":
+            self.caps = not self.caps
+            self.refresh_mods()
+        elif action == "sticky-ctrl":
+            self._toggle_sticky("sticky-ctrl", _MOD_CTRL)
+        elif action == "sticky-alt":
+            self._toggle_sticky("sticky-alt", _MOD_ALT)
+        elif action == "sticky-super":
+            self._toggle_sticky("sticky-super", _MOD_SUPER)
+        elif action == "super":
+            self.inj.tap_code(E.KEY_LEFTMETA)
+        # Function Keys
+        elif action and action.startswith("f") and action[1:].isdigit():
+            fn_code = getattr(E, "KEY_F" + action[1:])
+            self.inj.tap_code(fn_code)
+        elif action == "prtsc":
+            self.inj.tap_code(E.KEY_PRINT)
+        # Layer switching
+        elif action == "layer-main" or action == "back":
+            self.build_layer("main")
+        elif action == "layer-sym" or action == "layer":
+            self.build_layer("sym")
+        elif action == "layer-fn":
+            self.build_layer("fn")
+
+    def _toggle_sticky(self, name, code):
+        active = self.inj.sticky[name] is None
+        self.inj.set_sticky(name, code, active)
+        self.refresh_mods()
+
+    def _shift_active(self):
+        return self.shift in (1, 2)
+
+    def _type_char(self, k):
+        shift = False
+        if k.get("force"):
+            shift = True
+        elif k.get("shift_label") and self._shift_active():
+            shift = True
+        elif k["label"].isalpha() and (self._shift_active() or self.caps):
+            shift = True
+
+        self.inj.tap_key(
+            k["code"], shift=shift,
+            mods=[c for c in self.inj.sticky.values() if c]
+        )
+
+        # One-shot shift auto-release
+        if self.shift == 1:
+            self.shift = 0
+            self.refresh_mods()
+
+    # -- Label & State Rendering --------------------------------------------
+
+    def refresh_mods(self):
+        for b in self.buttons:
+            k = b._okey
+            sc = b.get_style_context()
+            sc.remove_class("active")
+
+            if k["t"] == "char":
+                if self._shift_active() and k.get("shift_label") is not None:
+                    label = k["shift_label"]
+                elif len(k["label"]) == 1 and k["label"].isalpha():
+                    if self._shift_active() or self.caps:
+                        label = k["label"].upper()
+                    else:
+                        label = k["label"].lower()
+                else:
+                    label = k["label"]
+                b.set_label(label)
+            else:
+                label = k["label"]
+                if getattr(self, "is_portrait", False):
+                    if label == "Enter \u21b5":
+                        label = "Enter"
+                    elif label == "Tab \u21e5":
+                        label = "Tab"
+                    elif label == "PrtSc":
+                        label = "Prt"
+                    elif label == "Zoom +":
+                        label = "Z+"
+                    elif label == "Zoom -":
+                        label = "Z-"
+                    elif label == "Ctrl+Home":
+                        label = "C-Home"
+                    elif label == "Ctrl+End":
+                        label = "C-End"
+                    elif label == "Ctrl+Tab":
+                        label = "C-Tab"
+                    elif label == "Ctrl+Bksp":
+                        label = "C-Bksp"
+                    elif label == "Alt+F4":
+                        label = "A-F4"
+                action = k.get("action")
+                if action == "shift":
+                    if self.shift == 1:
+                        label = "\u21e7 \u00b7"
+                        sc.add_class("active")
+                    elif self.shift == 2:
+                        label = "\u21ea Lock"
+                        sc.add_class("active")
+                elif action in ("sticky-ctrl", "sticky-alt", "sticky-super"):
+                    if self.inj.sticky.get(action):
+                        sc.add_class("active")
+                elif action == "caps" and self.caps:
+                    sc.add_class("active")
+                b.set_label(label)
+
+    def _init_ipc(self):
+        try:
+            if os.path.exists(SOCK_PATH):
+                os.unlink(SOCK_PATH)
+            self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server_sock.bind(SOCK_PATH)
+            self.server_sock.listen(5)
+            self.server_sock.setblocking(False)
+            GLib.io_add_watch(self.server_sock.fileno(), GLib.IO_IN, self._on_ipc_connection)
+        except Exception as e:
+            print("IPC server skipped: %s" % e, file=sys.stderr)
+
+    def _on_ipc_connection(self, fd, condition):
+        try:
+            conn, _ = self.server_sock.accept()
+            data = conn.recv(1024).decode().strip()
+            conn.close()
+            if data in ("show", ""):
+                self.show_keyboard()
+            elif data == "toggle":
+                if self.win.get_visible():
+                    self.minimize_to_pill()
+                else:
+                    self.show_keyboard()
+            elif data == "hide":
+                self.minimize_to_pill()
+            elif data.startswith("theme:"):
+                self.set_theme(data.split(":", 1)[1])
+            elif data == "theme":
+                self._cycle_theme()
+            elif data == "quit":
+                self._destroy()
+        except Exception:
+            pass
+        return True
+
+    def _destroy(self, _w=None):
+        try:
+            self.inj.ui.close()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(SOCK_PATH):
+                os.unlink(SOCK_PATH)
+        except Exception:
+            pass
+        Gtk.main_quit()
+
+
+def main():
+    cmd = "show"
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ("--toggle", "-t"):
+            cmd = "toggle"
+        elif arg in ("--hide",):
+            cmd = "hide"
+        elif arg in ("--show", "-s"):
+            cmd = "show"
+        elif arg in ("--theme", "-m"):
+            if len(sys.argv) > 2:
+                cmd = f"theme:{sys.argv[2]}"
+            else:
+                cmd = "theme"
+        elif arg in ("--quit", "-q"):
+            cmd = "quit"
+        elif arg in ("--help", "-help", "-h"):
+            print("Usage: oskb [OPTIONS]")
+            print("Options:")
+            print("  --show, -s          Show on-screen keyboard (default)")
+            print("  --toggle, -t        Toggle keyboard visibility")
+            print("  --hide              Minimize keyboard to floating pill")
+            print("  --theme, -m [NAME]  Switch theme (dark, light, oled, breeze, amber)")
+            print("  --quit, -q          Quit keyboard instance")
+            sys.exit(0)
+
+    # If instance already running, send command via IPC and exit
+    if send_ipc(cmd):
+        sys.exit(0)
+
+    # Start new instance
+    try:
+        app = KeyboardApp()
+        app._init_ipc()
+    except Exception as e:
+        print("Failed to start keyboard: %s" % e, file=sys.stderr)
+        sys.exit(1)
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,2 @@
+# Grant users in the input group write permissions to /dev/uinput for oskb
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=On-Screen Keyboard
+GenericName=Virtual Touch Keyboard
+Comment=Full-featured on-screen touch keyboard with navigation keys, themes, and auto-popup
+Exec=oskb --toggle
+Icon=oskb
+Terminal=false
+Type=Application
+Categories=Utility;Accessibility;
+Keywords=keyboard;touch;onscreen;virtual;input;osk;nabu;
+StartupNotify=false
+X-KDE-autostart-phase=2

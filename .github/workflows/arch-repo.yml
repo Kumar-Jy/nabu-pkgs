@@ -95,6 +95,10 @@ on:
         type: boolean
         default: true
         description: Build linux-firmware-xiaomi-nabu
+      build_oskb:
+        type: boolean
+        default: true
+        description: Build oskb
 
 jobs:
   resolve-packages:
@@ -131,6 +135,7 @@ jobs:
               --argjson brave_bin "${{ inputs.build_brave_bin }}" \
               --argjson alsa_ucm_conf_xiaomi_nabu "${{ inputs.build_alsa_ucm_conf_xiaomi_nabu }}" \
               --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
+              --argjson oskb "${{ inputs.build_oskb }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -153,9 +158,10 @@ jobs:
                  if $tqftpserv then "tqftpserv" else empty end,
                  if $brave_bin then "brave-bin" else empty end,
                  if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
-                 if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end ]' > matrix.json
+                 if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end,
+                 if $oskb then "oskb" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -202,6 +208,10 @@ jobs:
               ;;
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
+              ;;
+            oskb)
+              shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
+              sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
             *)
               sig="$pkg-$pkgver-$pkgrel"
