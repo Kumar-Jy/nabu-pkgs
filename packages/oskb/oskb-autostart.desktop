@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=On-Screen Keyboard
+Comment=Full-size on-screen touch keyboard with navigation keys, resize, and auto-popup
+Exec=oskb --hide
+Icon=oskb
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

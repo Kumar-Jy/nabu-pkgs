@@ -50,6 +50,12 @@ if "XAUTHORITY" not in os.environ:
     if xauth_files:
         os.environ["XAUTHORITY"] = xauth_files[0]
 
+if "DISPLAY" not in os.environ:
+    if os.path.exists("/tmp/.X11-unix/X0"):
+        os.environ["DISPLAY"] = ":0"
+    elif os.path.exists("/tmp/.X11-unix/X1"):
+        os.environ["DISPLAY"] = ":1"
+
 os.environ.setdefault("GDK_BACKEND", "x11")
 
 import gi
@@ -58,6 +64,13 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Atspi", "2.0")
 
 from gi.repository import Gtk, Gdk, GLib, Pango, Atspi
+
+# Verify display connection; fall back to wayland if x11 fails
+if not Gtk.init_check()[0]:
+    if os.environ.get("GDK_BACKEND") == "x11":
+        os.environ["GDK_BACKEND"] = "wayland"
+        Gtk.init_check()
+
 from evdev import UInput, ecodes as E
 
 # ---------------------------------------------------------------------------
@@ -1438,7 +1451,11 @@ class KeyboardApp:
         self.kb_width = target_w
         self.kb_height = total_h
 
-    def _apply_key_style(self, min_h, font_px, char_font_px, arrow_font, is_portrait=False):
+    def _apply_key_style(self, min_h, font_px, char_font_px=None, arrow_font=None, is_portrait=False):
+        if char_font_px is None:
+            char_font_px = max(12, int(font_px * 1.3))
+        if arrow_font is None:
+            arrow_font = max(14, int(font_px * 1.4))
         if is_portrait:
             btn_padding = "0px 1px"
             btn_margin = "1px"
@@ -1683,10 +1700,14 @@ class KeyboardApp:
         key_h = max(34, int((new_h - 48) / rows))
         if screen_w < screen_h:
             font_px = max(10, min(13, int((new_w / 68.0) * 0.90)))
-            self._apply_key_style(int(key_h * 0.90), font_px, is_portrait=True)
+            char_font_px = max(12, min(16, int(font_px * 1.25)))
+            arrow_font = max(13, min(18, int(font_px * 1.35)))
+            self._apply_key_style(int(key_h * 0.90), font_px, char_font_px, arrow_font, is_portrait=True)
         else:
             font_px = max(13, min(20, int(key_h * 0.32)))
-            self._apply_key_style(int(key_h * 0.90), font_px, is_portrait=False)
+            char_font_px = max(18, min(26, int(key_h * 0.42 * self.scale)))
+            arrow_font = max(20, min(28, int(key_h * 0.45 * self.scale)))
+            self._apply_key_style(int(key_h * 0.90), font_px, char_font_px, arrow_font, is_portrait=False)
 
         return True
 
@@ -2134,6 +2155,10 @@ def main():
     try:
         app = KeyboardApp()
         app._init_ipc()
+        if cmd == "hide":
+            app.minimize_to_pill()
+        else:
+            app.show_keyboard()
     except Exception as e:
         print("Failed to start keyboard: %s" % e, file=sys.stderr)
         sys.exit(1)

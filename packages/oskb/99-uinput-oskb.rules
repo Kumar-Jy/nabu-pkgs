@@ -1,2 +1,2 @@
-# Grant users in the input group write permissions to /dev/uinput for oskb
-KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+# Grant users in the input group and active desktop sessions write permissions to /dev/uinput for oskb
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess", MODE="0666", GROUP="input"
