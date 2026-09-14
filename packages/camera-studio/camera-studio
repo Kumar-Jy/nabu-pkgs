@@ -8,6 +8,7 @@ import sys
 import time
 import glob
 import subprocess
+import threading
 from datetime import datetime
 
 import gi
@@ -1675,44 +1676,67 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         try:
             has_alpha = (fmt == 'RGBA')
-            rowstride = w * (4 if has_alpha else 3)
-            gb = GLib.Bytes.new(map_info.data)
-            pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(gb, GdkPixbuf.Colorspace.RGB, has_alpha, 8, w, h, rowstride)
+            channels = 4 if has_alpha else 3
+            expected_rowstride = w * channels
+            actual_stride = len(map_info.data) // h if h > 0 else expected_rowstride
 
-            # Check target resolution
-            preset = RESOLUTION_PRESETS[self.target_res_idx]
-            target_w = preset['w']
-            target_h = preset['h']
-
-            if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
-                pixbuf = pixbuf.scale_simple(target_w, target_h, GdkPixbuf.InterpType.BILINEAR)
-
-            # Generate output filename
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            ext = 'jpg' if self.output_format == 'jpeg' else self.output_format
-            filename = f"IMG_{timestamp}.{ext}"
-            filepath = os.path.join(self.save_dir, filename)
-
-            # Save file
-            quality_val = str(int(self.scale_quality.get_value()))
-            if self.output_format == 'jpeg':
-                pixbuf.savev(filepath, 'jpeg', ['quality'], [quality_val])
-            elif self.output_format == 'webp':
-                pixbuf.savev(filepath, 'webp', ['quality'], [quality_val])
+            # Extract image bytes and compact if GPU row pitch differs from width * channels
+            if actual_stride != expected_rowstride:
+                raw_bytes = bytearray(expected_rowstride * h)
+                for row in range(h):
+                    raw_bytes[row * expected_rowstride : (row + 1) * expected_rowstride] = \
+                        map_info.data[row * actual_stride : row * actual_stride + expected_rowstride]
+                gb = GLib.Bytes.new(bytes(raw_bytes))
             else:
-                pixbuf.savev(filepath, 'png', [], [])
-
-            buf.unmap(map_info)
-
-            # Update UI & Thumbnail
-            self.last_saved_path = filepath
-            self.recent_photos.insert(0, filepath)
-            self.update_thumbnail_preview()
-            self.show_toast(f"Saved: {filename} ({pixbuf.get_width()}×{pixbuf.get_height()})")
+                gb = GLib.Bytes.new(bytes(map_info.data))
         except Exception as e:
+            self.show_toast(f"Capture error: {e}")
+            print("Buffer extraction failed:", e)
+            return
+        finally:
             buf.unmap(map_info)
-            self.show_toast(f"Save error: {e}")
-            print("Capture failed:", e)
+
+        # Target resolution & format settings from UI
+        preset = RESOLUTION_PRESETS[self.target_res_idx]
+        target_w = preset['w']
+        target_h = preset['h']
+        output_format = self.output_format
+        quality_val = str(int(self.scale_quality.get_value()))
+        save_dir = self.save_dir
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ext = 'jpg' if output_format == 'jpeg' else output_format
+        filename = f"IMG_{timestamp}.{ext}"
+        filepath = os.path.join(save_dir, filename)
+
+        def save_worker():
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(gb, GdkPixbuf.Colorspace.RGB, has_alpha, 8, w, h, expected_rowstride)
+                if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
+                    pixbuf = pixbuf.scale_simple(target_w, target_h, GdkPixbuf.InterpType.BILINEAR)
+
+                if output_format == 'jpeg':
+                    pixbuf.savev(filepath, 'jpeg', ['quality'], [quality_val])
+                elif output_format == 'webp':
+                    pixbuf.savev(filepath, 'webp', ['quality'], [quality_val])
+                else:
+                    pixbuf.savev(filepath, 'png', [], [])
+
+                saved_w = pixbuf.get_width()
+                saved_h = pixbuf.get_height()
+
+                def on_save_complete():
+                    self.last_saved_path = filepath
+                    self.recent_photos.insert(0, filepath)
+                    self.update_thumbnail_preview()
+                    self.show_toast(f"Saved: {filename} ({saved_w}×{saved_h})")
+
+                GLib.idle_add(on_save_complete)
+            except Exception as e:
+                print("Capture background save failed:", e)
+                GLib.idle_add(lambda: self.show_toast(f"Save error: {e}"))
+
+        threading.Thread(target=save_worker, daemon=True).start()
 
     def play_shutter_sound(self):
         try:
