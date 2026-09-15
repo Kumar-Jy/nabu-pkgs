@@ -1,0 +1,43 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Hardware Flashlight & Torch Controller for Linux / Xiaomi Pad 5
+
+pkgbase=nabu-torch
+pkgname=('nabu-torch' 'torch')
+pkgver=1.0.0
+pkgrel=1
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'hicolor-icon-theme')
+source=('torch'
+        'torch.desktop'
+        'torch.svg'
+        '90-torch.rules'
+        'LICENSE'
+        'README.md')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package_nabu-torch() {
+  pkgdesc="Hardware camera flashlight and torch controller with intensity control for Xiaomi Pad 5 (nabu)"
+  provides=('flashlight')
+
+  install -Dm755 "$srcdir/torch" "$pkgdir/usr/bin/torch"
+  ln -sf torch "$pkgdir/usr/bin/nabu-torch"
+  ln -sf torch "$pkgdir/usr/bin/flashlight"
+  install -Dm644 "$srcdir/torch.desktop" "$pkgdir/usr/share/applications/torch.desktop"
+  install -Dm644 "$srcdir/torch.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/torch.svg"
+  install -Dm644 "$srcdir/torch.svg" "$pkgdir/usr/share/pixmaps/torch.svg"
+  install -Dm644 "$srcdir/90-torch.rules" "$pkgdir/usr/lib/udev/rules.d/90-torch.rules"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
+
+package_torch() {
+  pkgdesc="Hardware camera flashlight and torch controller (metapackage for nabu-torch)"
+  depends=('nabu-torch')
+}
