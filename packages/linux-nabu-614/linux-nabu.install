@@ -29,13 +29,16 @@ regenerate_uki() {
     # iris/venus; strip that stale blacklist so fresh installs get decode too.
     if [ ! -f /etc/cmdline.d/root.conf ]; then
         mkdir -p /etc/cmdline.d
-        printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive\n' > /etc/cmdline.d/root.conf
+        printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive acpi=off\n' > /etc/cmdline.d/root.conf
     else
         sed -i -e 's/ modprobe.blacklist=venus_core,qcom_iris//' \
                -e 's/ module_blacklist=venus_core,qcom_iris//' \
                /etc/cmdline.d/root.conf
         if ! grep -q 'fw_devlink=permissive' /etc/cmdline.d/root.conf; then
             sed -i 's/$/ fw_devlink=permissive/' /etc/cmdline.d/root.conf
+        fi
+        if ! grep -q 'acpi=off' /etc/cmdline.d/root.conf; then
+            sed -i 's/$/ acpi=off/' /etc/cmdline.d/root.conf
         fi
     fi
 
