@@ -31,10 +31,6 @@ on:
         type: boolean
         default: true
         description: Build linux-nabu 6.16
-      build_linux_nabu_618:
-        type: boolean
-        default: false
-        description: Build linux-nabu 6.18
       build_nabu_pmac:
         type: boolean
         default: true
@@ -125,7 +121,6 @@ jobs:
               --argjson code "${{ inputs.build_code }}" \
               --argjson python2 "${{ inputs.build_python2 }}" \
               --argjson widevine "${{ inputs.build_widevine }}" \
-              --argjson linux_nabu_618 "${{ inputs.build_linux_nabu_618 }}" \
               --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
               --argjson linux_nabu_614 "${{ inputs.build_linux_nabu_614 }}" \
               --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
@@ -151,7 +146,6 @@ jobs:
                  if $code then "code" else empty end,
                  if $python2 then "python2" else empty end,
                  if $widevine then "widevine" else empty end,
-                 if $linux_nabu_618 then "linux-nabu-618" else empty end,
                  if $linux_nabu_614 then "linux-nabu-614" else empty end,
                  if $nabu_pmac then "nabu-pmac" else empty end,
                  if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
@@ -202,10 +196,6 @@ jobs:
           pkgver=$(grep -m1 '^pkgver=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
           pkgrel=$(grep -m1 '^pkgrel=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
           case "$pkg" in
-            linux-nabu-618)
-              rev=$(git ls-remote https://github.com/TwinbornPlate75/linux-nabu refs/heads/sm8150/6.18 2>/dev/null | awk '{print $1}' | cut -c1-12)
-              sig="$pkg-$rev-$pkgver-$pkgrel"
-              ;;
             upower-nncc)
               rev=$(git ls-remote https://gitlab.freedesktop.org/upower/upower.git HEAD 2>/dev/null | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$rev-$pkgver-$pkgrel"
