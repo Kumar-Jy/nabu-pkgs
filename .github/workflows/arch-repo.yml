@@ -114,61 +114,9 @@ jobs:
       - name: Resolve which packages to build
         id: set-matrix
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            jq -n -c \
-              --argjson upower_nncc "${{ inputs.build_upower_nncc }}" \
-              --argjson bootc "${{ inputs.build_bootc }}" \
-              --argjson code "${{ inputs.build_code }}" \
-              --argjson python2 "${{ inputs.build_python2 }}" \
-              --argjson widevine "${{ inputs.build_widevine }}" \
-              --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
-              --argjson linux_nabu_614 "${{ inputs.build_linux_nabu_614 }}" \
-              --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
-              --argjson nabu_tablet_mode "${{ inputs.build_nabu_tablet_mode }}" \
-              --argjson google_chrome "${{ inputs.build_google_chrome }}" \
-              --argjson hexagonrpcd "${{ inputs.build_hexagonrpcd }}" \
-              --argjson iris_vaapi "${{ inputs.build_iris_vaapi }}" \
-              --argjson evdi_dkms "${{ inputs.build_evdi_dkms }}" \
-              --argjson displaylink "${{ inputs.build_displaylink }}" \
-              --argjson system_monitor "${{ inputs.build_system_monitor }}" \
-              --argjson qrtr "${{ inputs.build_qrtr }}" \
-              --argjson rmtfs "${{ inputs.build_rmtfs }}" \
-              --argjson tqftpserv "${{ inputs.build_tqftpserv }}" \
-              --argjson brave_bin "${{ inputs.build_brave_bin }}" \
-              --argjson alsa_ucm_conf_xiaomi_nabu "${{ inputs.build_alsa_ucm_conf_xiaomi_nabu }}" \
-              --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
-              --argjson oskb "${{ inputs.build_oskb }}" \
-              --argjson nabu_autobrightness "${{ inputs.build_nabu_autobrightness }}" \
-              --argjson camera_studio "${{ inputs.build_camera_studio }}" \
-              --argjson nabu_torch "${{ inputs.build_nabu_torch }}" \
-              '[ if $upower_nncc then "upower-nncc" else empty end,
-                 if $bootc then "bootc" else empty end,
-                 if $code then "code" else empty end,
-                 if $python2 then "python2" else empty end,
-                 if $widevine then "widevine" else empty end,
-                 if $linux_nabu_614 then "linux-nabu-614" else empty end,
-                 if $nabu_pmac then "nabu-pmac" else empty end,
-                 if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
-                 if $google_chrome then "google-chrome" else empty end,
-                 if $linux_nabu_616 then "linux-nabu-616" else empty end,
-                 if $hexagonrpcd then "hexagonrpcd" else empty end,
-                 if $iris_vaapi then "iris-vaapi" else empty end,
-                 if $evdi_dkms then "evdi-dkms" else empty end,
-                 if $displaylink then "displaylink" else empty end,
-                 if $system_monitor then "system-monitor" else empty end,
-                 if $qrtr then "qrtr" else empty end,
-                 if $rmtfs then "rmtfs" else empty end,
-                 if $tqftpserv then "tqftpserv" else empty end,
-                 if $brave_bin then "brave-bin" else empty end,
-                 if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
-                 if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end,
-                 if $oskb then "oskb" else empty end,
-                 if $nabu_autobrightness then "nabu-autobrightness" else empty end,
-                 if $camera_studio then "camera-studio" else empty end,
-                 if $nabu_torch then "nabu-torch" else empty end ]' > matrix.json
-          else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch"]' > matrix.json
-          fi
+          # 6.14-test branch: build ONLY linux-nabu-614 (the 6.14 kernel).
+          # All 24 other package toggles are intentionally silenced here.
+          echo '["linux-nabu-614"]' > matrix.json
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
 
@@ -280,6 +228,9 @@ jobs:
           if-no-files-found: error
 
   assemble-repo:
+    # Silenced on 6.14-test: would repo-add the working DB and
+    # re-publish the pacman repo. Kernel WIP is not ready for public DB.
+    if: false
     name: Assemble pacman repository
     runs-on: ubuntu-24.04-arm
     needs: build-packages
