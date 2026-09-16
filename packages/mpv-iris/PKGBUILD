@@ -1,0 +1,20 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# mpv companion launcher for IRIS-patched FFmpeg (P010 10-bit DRM-Prime decode).
+# Uses the SAME LD_LIBRARY_PATH trick as the upstream iris mpv wrapper:
+# libs from ffmpeg-iris's PRIVATE tree are NOT loaded by the locker/other apps;
+# this launcher points ONLY this mpv invocation at them + forces the hwdec profile.
+
+pkgname=mpv-iris
+pkgver=8.0.1
+pkgrel=1
+pkgdesc="mpv launcher wired to the IRIS-patched FFmpeg P010 DRM-Prime hardware-decode path (nabu)"
+arch=('aarch64')
+url="https://github.com/PCM880/iris-ffmpeg"
+license=('GPL-2.0-or-later')
+depends=('ffmpeg-iris' 'mpv')
+source=('mpv-iris')
+sha256sums=('f67baa39011f733acaba8e45119aec1edd8d9de28d348264d7e2c20ada0c63da')
+
+package() {
+  install -Dm755 "$srcdir/mpv-iris" "$pkgdir/usr/bin/mpv-iris"
+}

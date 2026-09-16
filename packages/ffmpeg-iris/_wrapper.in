@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export LD_LIBRARY_PATH="/opt/ffmpeg-iris/lib"
+exec "/opt/ffmpeg-iris/bin/$IRIS_BIN" "$@"
