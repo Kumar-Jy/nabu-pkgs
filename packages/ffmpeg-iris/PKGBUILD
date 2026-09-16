@@ -1,0 +1,51 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# IRIS (iabu/iris-vaapi) patched FFmpeg 8.0.1 — self-contained companion build for
+# the Xiaomi Pad 5 (nabu) v4l2-mem2mem + DRM-Prime P010 (10-bit) decode path.
+#
+# Deliberately NOT a drop-in for /usr/bin/ffmpeg: nabu-mirror's ffmpeg owns /usr.
+# This installs a PRIVATE tree + LD-savvy companion bins (ffmpeg-iris/ffprobe-iris),
+# the exact philosophy iris-vaapi already uses for the DRI driver.
+
+pkgname=ffmpeg-iris
+pkgver=8.0.1
+pkgrel=1
+pkgdesc="FFmpeg 8.0.1 with IRIS v4l2-mem2mem + DRM-Prime P010 (10-bit) patch, self-contained companion for nabu"
+arch=('aarch64')
+url="https://github.com/PCM880/iris-ffmpeg"
+license=('GPL-2.0-or-later')
+depends=('libva' 'glibc' 'zlib')
+makedepends=()
+# local sources sit beside PKGBUILD (repo convention, matches iris-vaapi)
+source=('ffmpeg-iris-8.0.1.7z'
+        'ffmpeg-8.0.1-iris-v4l2-drmprime-p010.patch')
+sha256sums=('232c27c50a13c5eaa636b197d4c5333905b6c3eed16805841b109deab0da019b'
+            '012b254bbb52c1442aa5478d2f7ca99f43c0d5a411c3500d24139959936674dd')
+
+_imroot="/usr/lib/iris-ffmpeg"
+
+build() {
+  bsdtar -xf "$srcdir/ffmpeg-iris-8.0.1.7z"
+}
+
+package() {
+  install -d "$pkgdir$_imroot"
+  cp -a "$srcdir/ffmpeg-iris-8.0.1/lib" "$pkgdir$_imroot/"
+  cp -a "$srcdir/ffmpeg-iris-8.0.1/bin" "$pkgdir$_imroot/"
+  cp -a "$srcdir/ffmpeg-iris-8.0.1/share" "$pkgdir$_imroot/"
+
+  install -d "$pkgdir/usr/bin"
+  # LD-savvy companion bins (never /usr/bin/ffmpeg — mirror owns that)
+  for pair in "ffmpeg:ffmpeg-iris" "ffprobe:ffprobe-iris"; do
+    bin="${pair%%:*}"; alias="${pair##*:}"
+    printf '#!/bin/sh\nexport LD_LIBRARY_PATH=%s/lib:%s/lib/bin' "$_imroot" "$_imroot" >/dev/null
+    cat > "$pkgdir/usr/bin/$alias" <<'SRUN'
+#!/bin/sh
+set -eu
+export LD_LIBRARY_PATH="/lib"
+exec "/bin/" "$@"
+SRUN
+    chmod 755 "$pkgdir/usr/bin/$alias"
+  done
+
+  install -Dm644 "$srcdir/ffmpeg-8.0.1-iris-v4l2-drmprime-p010.patch"     "$pkgdir/usr/share/doc/$pkgname/iris-v4l2-drmprime-p010.patch"
+}

@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+ffmpeg_lib_dir="/home/cfm880/.local/opt/ffmpeg-iris-8.0.1/lib"
+
+if [ ! -r "${ffmpeg_lib_dir}/libavcodec.so.62" ]; then
+    echo "Missing patched FFmpeg libraries in ${ffmpeg_lib_dir}" >&2
+    exit 1
+fi
+
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    export LD_LIBRARY_PATH="${ffmpeg_lib_dir}:${LD_LIBRARY_PATH}"
+else
+    export LD_LIBRARY_PATH="${ffmpeg_lib_dir}"
+fi
+
+exec /usr/bin/mpv \
+    --hwdec=v4l2m2m \
+    --no-config \
+    --hwdec-codecs=h264,hevc,vp9 \
+    --vo=dmabuf-wayland \
+    "$@"
