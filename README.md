@@ -19,6 +19,8 @@ published as a pacman repository.
 | `camera-studio`| Hardware camera with auto-rotate, VCM focus & color grading |
 | `system-monitor`| Universal hardware & telemetry system monitor      |
 
+> For the complete package catalog, install commands, and detailed descriptions, see [**`PACKAGES.md`**](PACKAGES.md).
+
 ## Repository
 
 Packages are built and published automatically by the
