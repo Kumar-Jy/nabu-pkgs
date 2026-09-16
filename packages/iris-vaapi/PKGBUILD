@@ -10,18 +10,22 @@ url="https://github.com/CFM880/iris-vaapi"
 license=('GPL-2.0-or-later')
 depends=('libva' 'libdrm')
 makedepends=('gcc' 'make' 'pkg-config' 'vulkan-headers' 'libva' 'libdrm')
-source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/refs/heads/main.tar.gz"
+# Pin to the exact commit that recorded the full Fluster suite passing with
+# stock FFmpeg (b0ef8f75, 2026-09-14). Rolling main.tar.gz moves daily and
+# ships untested decoders after that point.
+_iris_pin=b0ef8f7512321d36d52e4a1a52fd3eb0eec9a107
+source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/${_iris_pin}.tar.gz"
         '99-iris-dmaheap.rules'
         '99-iris-vaapi.conf')
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=('b2dff66d6285815c4805eda3658d3d162a4773f3709b23a9a0664ecec2bb1f8d' 'SKIP' 'SKIP')
 
 build() {
-  cd "$srcdir/iris-vaapi-main"
+  cd "$srcdir/iris-vaapi-b0ef8f7512321d36d52e4a1a52fd3eb0eec9a107"
   make DRIVERDIR=/usr/lib/dri
 }
 
 package() {
-  cd "$srcdir/iris-vaapi-main"
+  cd "$srcdir/iris-vaapi-b0ef8f7512321d36d52e4a1a52fd3eb0eec9a107"
   make install DESTDIR="$pkgdir" DRIVERDIR=/usr/lib/dri
 
   # Chrome needs DMA-heap surfaces; default root-only breaks EGL import.
