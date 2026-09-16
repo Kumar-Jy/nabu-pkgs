@@ -51,30 +51,18 @@ on:
         type: boolean
         default: true
         description: Build iris-vaapi
-      build_evdi_dkms:
-        type: boolean
-        default: true
-        description: Build evdi-dkms
       build_displaylink:
         type: boolean
         default: true
-        description: Build displaylink
+        description: Build displaylink & evdi-dkms
       build_system_monitor:
         type: boolean
         default: true
         description: Build system-monitor
-      build_qrtr:
+      build_qcom_daemons:
         type: boolean
         default: true
-        description: Build qrtr
-      build_rmtfs:
-        type: boolean
-        default: true
-        description: Build rmtfs
-      build_tqftpserv:
-        type: boolean
-        default: true
-        description: Build tqftpserv
+        description: Build Qualcomm daemons (qrtr, rmtfs, tqftpserv)
       build_brave_bin:
         type: boolean
         default: true
@@ -103,6 +91,18 @@ on:
         type: boolean
         default: true
         description: Build nabu-torch
+      build_sddm_nabu:
+        type: boolean
+        default: true
+        description: Build sddm-nabu
+      build_ffmpeg_iris:
+        type: boolean
+        default: true
+        description: Build ffmpeg-iris
+      build_mpv_iris:
+        type: boolean
+        default: true
+        description: Build mpv-iris
 
 jobs:
   resolve-packages:
@@ -128,12 +128,9 @@ jobs:
               --argjson google_chrome "${{ inputs.build_google_chrome }}" \
               --argjson hexagonrpcd "${{ inputs.build_hexagonrpcd }}" \
               --argjson iris_vaapi "${{ inputs.build_iris_vaapi }}" \
-              --argjson evdi_dkms "${{ inputs.build_evdi_dkms }}" \
               --argjson displaylink "${{ inputs.build_displaylink }}" \
               --argjson system_monitor "${{ inputs.build_system_monitor }}" \
-              --argjson qrtr "${{ inputs.build_qrtr }}" \
-              --argjson rmtfs "${{ inputs.build_rmtfs }}" \
-              --argjson tqftpserv "${{ inputs.build_tqftpserv }}" \
+              --argjson qcom_daemons "${{ inputs.build_qcom_daemons }}" \
               --argjson brave_bin "${{ inputs.build_brave_bin }}" \
               --argjson alsa_ucm_conf_xiaomi_nabu "${{ inputs.build_alsa_ucm_conf_xiaomi_nabu }}" \
               --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
@@ -141,6 +138,9 @@ jobs:
               --argjson nabu_autobrightness "${{ inputs.build_nabu_autobrightness }}" \
               --argjson camera_studio "${{ inputs.build_camera_studio }}" \
               --argjson nabu_torch "${{ inputs.build_nabu_torch }}" \
+              --argjson sddm_nabu "${{ inputs.build_sddm_nabu }}" \
+              --argjson ffmpeg_iris "${{ inputs.build_ffmpeg_iris }}" \
+              --argjson mpv_iris "${{ inputs.build_mpv_iris }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -153,21 +153,21 @@ jobs:
                  if $linux_nabu_616 then "linux-nabu-616" else empty end,
                  if $hexagonrpcd then "hexagonrpcd" else empty end,
                  if $iris_vaapi then "iris-vaapi" else empty end,
-                 if $evdi_dkms then "evdi-dkms" else empty end,
-                 if $displaylink then "displaylink" else empty end,
+                 if $displaylink then "displaylink", "evdi-dkms" else empty end,
                  if $system_monitor then "system-monitor" else empty end,
-                 if $qrtr then "qrtr" else empty end,
-                 if $rmtfs then "rmtfs" else empty end,
-                 if $tqftpserv then "tqftpserv" else empty end,
+                 if $qcom_daemons then "qrtr", "rmtfs", "tqftpserv" else empty end,
                  if $brave_bin then "brave-bin" else empty end,
                  if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
                  if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end,
                  if $oskb then "oskb" else empty end,
                  if $nabu_autobrightness then "nabu-autobrightness" else empty end,
                  if $camera_studio then "camera-studio" else empty end,
-                 if $nabu_torch then "nabu-torch" else empty end ]' > matrix.json
+                 if $nabu_torch then "nabu-torch" else empty end,
+                 if $sddm_nabu then "sddm-nabu" else empty end,
+                 if $ffmpeg_iris then "ffmpeg-iris" else empty end,
+                 if $mpv_iris then "mpv-iris" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -211,7 +211,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            oskb|nabu-autobrightness|nabu-torch)
+            oskb|nabu-autobrightness|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
@@ -259,7 +259,7 @@ jobs:
               useradd -m builder
               echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
               chown -R builder:builder /work
-              su builder -c 'cd /work && makepkg -s --noconfirm --skipchecksums' || exit 1
+              su builder -c 'cd /work && (makepkg -s --noconfirm --skipchecksums || makepkg -d --noconfirm --skipchecksums)' || exit 1
               cp /work/*.pkg.tar.* /output/
             "
           echo "::endgroup::"
