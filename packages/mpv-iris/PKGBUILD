@@ -13,7 +13,7 @@ url="https://github.com/PCM880/iris-ffmpeg"
 license=('GPL-2.0-or-later')
 depends=('ffmpeg-iris' 'mpv')
 source=('mpv-iris')
-sha256sums=('557787900e9c9387908e3dbcdfd11b14dc5e8b06202189aa6e31c98ee89ec409')
+sha256sums=('f67baa39011f733acaba8e45119aec1edd8d9de28d348264d7e2c20ada0c63da')
 
 package() {
   install -Dm755 "$srcdir/mpv-iris" "$pkgdir/usr/bin/mpv-iris"

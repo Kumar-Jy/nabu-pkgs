@@ -37,12 +37,11 @@ package() {
   # LD-savvy companion bins (never /usr/bin/ffmpeg — mirror owns that)
   for pair in "ffmpeg:ffmpeg-iris" "ffprobe:ffprobe-iris"; do
     bin="${pair%%:*}"; alias="${pair##*:}"
-    printf '#!/bin/sh\nexport LD_LIBRARY_PATH=%s/lib:%s/lib/bin' "$_imroot" "$_imroot" >/dev/null
-    cat > "$pkgdir/usr/bin/$alias" <<'SRUN'
+    cat > "$pkgdir/usr/bin/$alias" <<SRUN
 #!/bin/sh
 set -eu
-export LD_LIBRARY_PATH="/lib"
-exec "/bin/" "$@"
+export LD_LIBRARY_PATH="$_imroot/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+exec "$_imroot/bin/$bin" "\$@"
 SRUN
     chmod 755 "$pkgdir/usr/bin/$alias"
   done
