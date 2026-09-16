@@ -230,11 +230,10 @@ jobs:
   assemble-repo:
     # Silenced on 6.14-test: would repo-add the working DB and
     # re-publish the pacman repo. Kernel WIP is not ready for public DB.
-    if: false
     name: Assemble pacman repository
     runs-on: ubuntu-24.04-arm
     needs: build-packages
-    if: ${{ !cancelled() && !contains(needs.build-packages.result, 'cancelled') }}
+    if: ${{ false && !cancelled() && !contains(needs.build-packages.result, 'cancelled') }}
     permissions:
       contents: write
     steps:
