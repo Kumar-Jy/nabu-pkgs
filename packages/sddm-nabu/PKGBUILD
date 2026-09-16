@@ -1,0 +1,70 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Modified for Xiaomi Pad 5 (nabu):
+# Fixes user-switching freeze after autologin (VT allocation conflict & session reuse)
+
+pkgname=sddm-nabu
+_pkgname=sddm
+pkgver=0.21.0
+pkgrel=8
+pkgdesc='QML based X11 and Wayland display manager (patched for Xiaomi Pad 5)'
+arch=(aarch64)
+url='https://github.com/sddm/sddm'
+license=(GPL-2.0-or-later)
+depends=(bash
+         glibc
+         libgcc
+         libstdc++
+         libxau
+         libxcb
+         pam
+         qt6-base
+         qt6-declarative
+         systemd-libs
+         ttf-font
+         xorg-server
+         xorg-xauth)
+makedepends=(extra-cmake-modules
+             git
+             python-docutils
+             qt6-tools)
+provides=("sddm=${pkgver}-${pkgrel}" "display-manager")
+conflicts=('sddm')
+replaces=('sddm')
+install=sddm-nabu.install
+backup=('usr/share/sddm/scripts/Xsetup'
+        'usr/share/sddm/scripts/Xstop'
+        'etc/pam.d/sddm'
+        'etc/pam.d/sddm-autologin'
+        'etc/pam.d/sddm-greeter')
+source=(git+https://github.com/$_pkgname/$_pkgname#tag=v$pkgver
+        vt-string-literal.patch
+        reuse-autologin-session.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+  cd $_pkgname
+  patch -Np1 -i "$srcdir"/vt-string-literal.patch
+  patch -Np1 -i "$srcdir"/reuse-autologin-session.patch
+}
+
+build() {
+  cmake -B build -S $_pkgname \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBEXECDIR=/usr/lib/sddm \
+        -DBUILD_WITH_QT6=ON \
+        -DDBUS_CONFIG_DIR=/usr/share/dbus-1/system.d \
+        -DDBUS_CONFIG_FILENAME=sddm_org.freedesktop.DisplayManager.conf \
+        -DBUILD_MAN_PAGES=OFF \
+        -DUID_MAX=60513
+  cmake --build build -j$(nproc)
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+
+  install -d "$pkgdir"/usr/lib/sddm/sddm.conf.d
+  "$pkgdir"/usr/bin/sddm --example-config > "$pkgdir"/usr/lib/sddm/sddm.conf.d/default.conf
+  sed -r 's|DefaultPath=.*|DefaultPath=/usr/local/sbin:/usr/local/bin:/usr/bin|g' -i "$pkgdir"/usr/lib/sddm/sddm.conf.d/default.conf
+  sed -e "/^InputMethod/s/qtvirtualkeyboard//" -i "$pkgdir"/usr/lib/sddm/sddm.conf.d/default.conf
+}
