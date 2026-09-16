@@ -1,0 +1,312 @@
+--- a/sound/soc/qcom/sm8150.c
++++ b/sound/soc/qcom/sm8150.c
+@@ -15,6 +15,7 @@
+ #include <sound/jack.h>
+ #include <uapi/linux/input-event-codes.h>
+ #include "qdsp6/q6afe.h"
++#include <sound/cs35l41.h>
+ #include "common.h"
+ 
+ #define DRIVER_NAME		"sm8150"
+@@ -35,15 +36,6 @@ struct sm8150_snd_data {
+ 
+ static unsigned int tdm_slot_offset[8] = {0, 4, 8, 12, 16, 20, 24, 28};
+ 
+-static const struct {
+-	unsigned int rx[1];
+-} cs35l41_tdm_channel_map[] = {
+-	{.rx = {6}}, /* BR */
+-	{.rx = {7}}, /* TR */
+-	{.rx = {6}}, /* BL */
+-	{.rx = {7}}, /* TL */
+-};
+-
+ static int sm8150_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 				     struct snd_pcm_hw_params *params)
+ {
+@@ -53,11 +45,19 @@ static int sm8150_be_hw_params_fixup(str
+ 					SNDRV_PCM_HW_PARAM_CHANNELS);
+ 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+ 
++	pr_info("sm8150_fixup: enter rtd=%s ch_min=%u ch_max=%u rate_min=%u rate_max=%u\n",
++		rtd->dai_link->name, channels->min, channels->max, rate->min, rate->max);
++
+ 	rate->min = rate->max = 48000;
+-	channels->min = channels->max = 2;
++	if (channels->min >= 4 || channels->max >= 4) {
++		channels->min = channels->max = 4;
++	} else {
++		channels->min = channels->max = 2;
++	}
+ 	snd_mask_none(fmt);
+ 	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
+ 
++	pr_info("sm8150_fixup: exit ch_min=%u ch_max=%u\n", channels->min, channels->max);
+ 	return 0;
+ }
+ 
+@@ -110,6 +110,10 @@ static int sm8150_tdm_snd_hw_params(stru
+ 	int ret = 0, j;
+ 	int channels, slot_width;
+ 	unsigned int slot_mask;
++	unsigned int rx_slot[1];
++
++	pr_info("sm8150_tdm: hw_params format=0x%x channels=%d rate=%d\n",
++		params_format(params), params_channels(params), params_rate(params));
+ 
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S24_LE:
+@@ -122,7 +126,14 @@ static int sm8150_tdm_snd_hw_params(stru
+ 	}
+ 
+ 	channels = params_channels(params);
+-	slot_mask = 0x44;// 0x0000FFFF >> (16-channels);
++	if (channels >= 4) {
++		slot_mask = 0x0F;
++		channels = 4;
++	} else {
++		slot_mask = 0x03;
++		channels = 2;
++	}
++
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+ 		ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, slot_mask,
+ 				8, slot_width);
+@@ -177,15 +188,63 @@ static int sm8150_tdm_snd_hw_params(stru
+ 			return ret;
+ 		}
+ 
+-		/* setup channel map */
++		/* setup channel map
++		 * Codec indices in device tree:
++		 *   Index 0: BR (Bottom Right in portrait) -> Bottom-Right in docked landscape (slot 3, RR)
++		 *   Index 1: TR (Top Right in portrait)    -> Top-Left in docked landscape (slot 0, FL)
++		 *   Index 2: BL (Bottom Left in portrait)  -> Top-Right in docked landscape (slot 1, FR)
++		 *   Index 3: TL (Top Left in portrait)     -> Bottom-Left in docked landscape (slot 2, RL)
++		 */
++		if (channels >= 4) {
++			/* Quad:
++			 * 0: Front Left  (Top-Left)     -> TR (index 1) -> slot 0
++			 * 1: Front Right (Top-Right)    -> BL (index 2) -> slot 1
++			 * 2: Rear Left   (Bottom-Left)  -> TL (index 3) -> slot 2
++			 * 3: Rear Right  (Bottom-Right) -> BR (index 0) -> slot 3
++			 */
++			switch (j) {
++			case 0: rx_slot[0] = 3; break; /* BR -> RR (slot 3, Bottom-Right) */
++			case 1: rx_slot[0] = 0; break; /* TR -> FL (slot 0, Top-Left) */
++			case 2: rx_slot[0] = 1; break; /* BL -> FR (slot 1, Top-Right) */
++			case 3: rx_slot[0] = 2; break; /* TL -> RL (slot 2, Bottom-Left) */
++			default: rx_slot[0] = j % 4; break;
++			}
++		} else {
++			/* Stereo:
++			 * Left side of landscape (Top-Left TR + Bottom-Left TL)  -> Left (slot 0)
++			 * Right side of landscape (Top-Right BL + Bottom-Right BR) -> Right (slot 1)
++			 */
++			switch (j) {
++			case 0: rx_slot[0] = 1; break; /* BR -> Right (slot 1) */
++			case 1: rx_slot[0] = 0; break; /* TR -> Left  (slot 0) */
++			case 2: rx_slot[0] = 1; break; /* BL -> Right (slot 1) */
++			case 3: rx_slot[0] = 0; break; /* TL -> Left  (slot 0) */
++			default: rx_slot[0] = j % 2; break;
++			}
++		}
++
++		pr_info("sm8150_tdm: codec j=%d name=%s prefix=%s dev=%s -> rx_slot=%d (channels=%d)\n",
++			j, codec_dai->name,
++			codec_dai->component->name_prefix ? codec_dai->component->name_prefix : "none",
++			dev_name(codec_dai->dev), rx_slot[0], channels);
++
+ 		ret = snd_soc_dai_set_channel_map(codec_dai, 0, NULL,
+-						  ARRAY_SIZE(cs35l41_tdm_channel_map[j].rx),
+-						  (unsigned int *)cs35l41_tdm_channel_map[j].rx);
++						  1, rx_slot);
+ 		if (ret < 0) {
+ 			dev_err(codec_dai->dev, "fail to set channel map, ret %d\n",
+ 				ret);
+ 			return ret;
+ 		}
++
++		/* CS35L41 codec driver sets ASP_WIDTH_RX to params_width (24 bits),
++		 * but SM8150 LPASS Quat TDM sends 32-bit slots. We must configure
++		 * CS35L41 to 32-bit slot width so TDM slot offsets (0, 1, 2, 3) align!
++		 */
++		snd_soc_component_update_bits(codec_dai->component,
++					      CS35L41_SP_FORMAT,
++					      CS35L41_ASP_WIDTH_RX_MASK | CS35L41_ASP_WIDTH_TX_MASK,
++					      (CS35L41_ASP_WIDTH_32 << CS35L41_ASP_WIDTH_RX_SHIFT) |
++					      (CS35L41_ASP_WIDTH_32 << CS35L41_ASP_WIDTH_TX_SHIFT));
+ 	}
+ 
+ end:
+@@ -303,7 +362,8 @@ static int sm8150_snd_startup(struct snd
+ 	struct snd_soc_card *card = rtd->card;
+ 	struct sm8150_snd_data *data = snd_soc_card_get_drvdata(card);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+-	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++	struct snd_soc_dai *codec_dai;
++	int j;
+ 
+ 	switch (cpu_dai->id) {
+ 	case QUATERNARY_TDM_RX_0:
+@@ -314,7 +374,9 @@ static int sm8150_snd_startup(struct snd
+ 				12288000, SNDRV_PCM_STREAM_PLAYBACK);
+ 		}
+ 		snd_soc_dai_set_fmt(cpu_dai, fmt);
+-		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
++		for_each_rtd_codec_dais(rtd, j, codec_dai) {
++			snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
++		}
+ 		break;
+ 	case SLIMBUS_0_RX...SLIMBUS_6_TX:
+ 		break;
+@@ -335,7 +397,7 @@ static void sm8150_snd_shutdown(struct s
+ 	switch (cpu_dai->id) {
+ 	case QUATERNARY_TDM_RX_0:
+ 	case QUATERNARY_TDM_TX_0:
+-		if (--(data->quat_tdm_clk_count) == 0) {
++		if (data->quat_tdm_clk_count > 0 && --(data->quat_tdm_clk_count) == 0) {
+ 			snd_soc_dai_set_sysclk(cpu_dai,
+ 				Q6AFE_LPASS_CLK_ID_QUAD_TDM_IBIT,
+ 				0, SNDRV_PCM_STREAM_PLAYBACK);
+@@ -358,6 +420,23 @@ static int sm8150_snd_prepare(struct snd
+ 	struct sdw_stream_runtime *sruntime = data->sruntime[cpu_dai->id];
+ 	int ret;
+ 
++	if (cpu_dai->id == QUATERNARY_TDM_RX_0) {
++		struct snd_soc_dai *codec_dai;
++		int j;
++
++		for_each_rtd_codec_dais(rtd, j, codec_dai) {
++			unsigned int regval = 0;
++
++			snd_soc_component_update_bits(codec_dai->component,
++						      CS35L41_SP_FORMAT,
++						      CS35L41_ASP_WIDTH_RX_MASK | CS35L41_ASP_WIDTH_TX_MASK,
++						      (CS35L41_ASP_WIDTH_32 << CS35L41_ASP_WIDTH_RX_SHIFT) |
++						      (CS35L41_ASP_WIDTH_32 << CS35L41_ASP_WIDTH_TX_SHIFT));
++			regval = snd_soc_component_read(codec_dai->component, CS35L41_SP_FORMAT);
++			pr_info("sm8150_prepare: codec j=%d SP_FORMAT=0x%08x\n", j, regval);
++		}
++	}
++
+ 	if (!sruntime)
+ 		return 0;
+ 
+@@ -371,14 +450,6 @@ static int sm8150_snd_prepare(struct snd
+ 	if (ret)
+ 		return ret;
+ 
+-	/**
+-	 * NOTE: there is a strict hw requirement about the ordering of port
+-	 * enables and actual WSA881x PA enable. PA enable should only happen
+-	 * after soundwire ports are enabled if not DC on the line is
+-	 * accumulated resulting in Click/Pop Noise
+-	 * PA enable/mute are handled as part of codec DAPM and digital mute.
+-	 */
+-
+ 	ret = sdw_enable_stream(sruntime);
+ 	if (ret) {
+ 		sdw_deprepare_stream(sruntime);
+@@ -419,6 +490,8 @@ static void sm8150_add_be_ops(struct snd
+ 	int i;
+ 
+ 	for_each_card_prelinks(card, i, link) {
++		if (of_machine_is_compatible("xiaomi,nabu") && link->dynamic)
++			link->ignore_pmdown_time = 1;
+ 		if (link->no_pcm == 1) {
+ 			link->be_hw_params_fixup = sm8150_be_hw_params_fixup;
+ 			link->ops = &sm8150_be_ops;
+@@ -427,6 +500,63 @@ static void sm8150_add_be_ops(struct snd
+ 	}
+ }
+ 
++static const struct snd_soc_dapm_widget nabu_speaker_widgets[] = {
++	SND_SOC_DAPM_SPK("BR Speaker", NULL),
++	SND_SOC_DAPM_SPK("TR Speaker", NULL),
++	SND_SOC_DAPM_SPK("BL Speaker", NULL),
++	SND_SOC_DAPM_SPK("TL Speaker", NULL),
++};
++
++static int sm8150_fix_nabu_speaker_routes(struct snd_soc_card *card)
++{
++	static const char * const outputs[] = {
++		"BR SPK", "TR SPK", "BL SPK", "TL SPK",
++	};
++	struct snd_soc_dapm_route *routes;
++	unsigned int found = 0, j;
++	int i;
++
++	if (!of_machine_is_compatible("xiaomi,nabu"))
++		return 0;
++
++	/* The legacy Nabu DT feeds the speaker outputs back into the PCM
++	 * frontend, creating a DAPM cycle that stays powered after STOP.
++	 * Repair only that exact four-speaker layout. A corrected DT needs
++	 * no workaround, and unrelated routes must retain their meaning.
++	 */
++	for (i = 0; i < card->num_of_dapm_routes; i++) {
++		const struct snd_soc_dapm_route *r = &card->of_dapm_routes[i];
++
++		if (r->control || strcmp(r->sink, "MultiMedia1 Playback"))
++			continue;
++		for (j = 0; j < ARRAY_SIZE(outputs); j++)
++			if (!strcmp(r->source, outputs[j]))
++				found |= BIT(j);
++	}
++	if (found != GENMASK(3, 0))
++		return 0;
++
++	routes = devm_kmemdup(card->dev, card->of_dapm_routes,
++			      sizeof(*routes) * card->num_of_dapm_routes,
++			      GFP_KERNEL);
++	if (!routes)
++		return -ENOMEM;
++
++	for (i = 0; i < card->num_of_dapm_routes; i++) {
++		if (routes[i].control || strcmp(routes[i].sink, "MultiMedia1 Playback"))
++			continue;
++		for (j = 0; j < ARRAY_SIZE(outputs); j++)
++			if (!strcmp(routes[i].source, outputs[j]))
++				routes[i].sink = nabu_speaker_widgets[j].name;
++	}
++	card->of_dapm_routes = routes;
++	card->dapm_widgets = nabu_speaker_widgets;
++	card->num_dapm_widgets = ARRAY_SIZE(nabu_speaker_widgets);
++	dev_info(card->dev, "corrected Nabu speaker routes to physical endpoints\n");
++
++	return 0;
++}
++
+ static int sm8150_platform_probe(struct platform_device *pdev)
+ {
+ 	struct snd_soc_card *card;
+@@ -438,7 +568,6 @@ static int sm8150_platform_probe(struct
+ 	if (!card)
+ 		return -ENOMEM;
+ 
+-	/* Allocate the private data */
+ 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+@@ -451,6 +580,10 @@ static int sm8150_platform_probe(struct
+ 	if (ret)
+ 		return ret;
+ 
++	ret = sm8150_fix_nabu_speaker_routes(card);
++	if (ret)
++		return ret;
++
+ 	data->card = card;
+ 	snd_soc_card_set_drvdata(card, data);
+ 
+@@ -473,6 +606,6 @@ static struct platform_driver snd_sm8150
+ 	},
+ };
+ module_platform_driver(snd_sm8150_driver);
+-MODULE_AUTHOR("map220v <map220v300@gmail.com");
++MODULE_AUTHOR("map220v <map220v300@gmail.com>");
+ MODULE_DESCRIPTION("SM8150 ASoC Machine Driver");
+-MODULE_LICENSE("GPL v2");
+\ No newline at end of file
++MODULE_LICENSE("GPL v2");

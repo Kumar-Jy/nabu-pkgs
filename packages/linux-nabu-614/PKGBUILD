@@ -39,8 +39,9 @@ source=(
   "0001-NABU-remove-reset-and-change-freq-table-hz-of-ufs_mem_hc.patch"
   "0002-NABU-add-SMB5-pm8150b-charger-driver-and-DTS.patch"
   "0003-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
+  "0004-NABU-sm8150-quad-speaker-routing.patch"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd "${srcdir}/${_srcname}"
@@ -62,6 +63,8 @@ prepare() {
   patch -p1 < "${srcdir}/0002-NABU-add-SMB5-pm8150b-charger-driver-and-DTS.patch"
   echo "Applying iris suspend fix (succeed s2idle, keep VPU powered)..."
   patch -p1 < "${srcdir}/0003-NABU-iris-suspend-succeed-keep-vpu-powered.patch"
+  echo "Applying SM8150 Nabu quad speaker audio routing patch..."
+  patch -p1 < "${srcdir}/0004-NABU-sm8150-quad-speaker-routing.patch"
 
   make ARCH=arm64 defconfig
   cat arch/arm64/configs/sm8150.config >> .config
