@@ -4,7 +4,7 @@
 
 pkgname=alsa-ucm-conf-xiaomi-nabu
 pkgver=1.0
-pkgrel=2
+pkgrel=1
 pkgdesc="ALSA UCM profiles for Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/linux-msm/alsa-ucm-conf"

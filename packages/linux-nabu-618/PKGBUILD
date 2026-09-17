@@ -72,7 +72,7 @@ _package_common() {
 
 _package() {
   pkgdesc="The Linux Kernel and modules for the Xiaomi Pad 5 (nabu) - TwinbornPlate75 6.18"
-  depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7' 'ukify')
+  depends=('coreutils' 'linux-firmware-whence' 'linux-firmware-atheros' 'kmod' 'mkinitcpio>=0.7' 'ukify')
   optdepends=('wireless-regdb: to set the correct wireless channels of your country')
   provides=("linux=${pkgver}")
   conflicts=('linux')

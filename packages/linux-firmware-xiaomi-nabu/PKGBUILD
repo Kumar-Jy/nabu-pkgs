@@ -9,13 +9,14 @@
 
 pkgname=linux-firmware-xiaomi-nabu
 pkgver=25.04.26
-pkgrel=1
+pkgrel=2
+_src_pkgrel=1
 pkgdesc="Qualcomm/DSP firmware for Xiaomi Pad 5 (nabu)"
 arch=('any')
 url="https://github.com/linux-msm/linux-firmware-msm"
 license=('custom:proprietary')
-depends=('linux-firmware')
-source=("fw-src.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$pkgrel-any.pkg.tar.xz")
+depends=('linux-firmware-whence' 'linux-firmware-atheros')
+source=("fw-src.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$_src_pkgrel-any.pkg.tar.xz")
 sha256sums=('SKIP')
 
 package() {
