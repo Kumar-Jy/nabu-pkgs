@@ -32,8 +32,10 @@ Built because default mobile/tablet keyboards (such as `plasma-keyboard`) lack e
   - **Preset Widths**: `S` (Compact 65%), `M` (Medium 82%), `L` (Full width 100%).
   - **Scale / Zoom Buttons**: `A-` / `A+` scale up or down smoothly.
   - **Edge & Corner Grips**: Drag through any edge or corner (`⤡`) to freely expand or shrink.
-- **Auto-Popup Integration**:
-  - Connects to Linux Atspi accessibility bus to automatically pop up when tapping on any focused text entry field.
+- **Auto-Popup & Auto-Minimize Integration**:
+  - Automatically pops up when tapping into any text space, entry field, terminal, or document across Qt, GTK, Firefox, and Chromium.
+  - Automatically minimizes back to the floating pill when leaving the input field or tapping outside.
+  - Dual-engine integration with Linux AT-SPI accessibility bus and KWin Wayland virtual keyboard.
   - One-tap toggle button (`⚡ Auto: ON/OFF`) directly in the header bar.
 - **Floating Pill Minimization**:
   - Minimize button (`-`) collapses keyboard into a tiny floating pill (`⌨`) that stays out of your way and restores with a single tap.
@@ -85,6 +87,8 @@ Control the running keyboard instance from terminal, scripts, or KDE custom shor
 oskb --show          # Show on-screen keyboard (default)
 oskb --toggle        # Toggle visibility (show / hide)
 oskb --hide          # Minimize to floating pill
+oskb --auto [on|off] # Toggle or set auto-popup on text focus
+oskb --status        # Query status of running instance
 oskb --theme <NAME>  # Switch theme (dark, light, oled, breeze, amber)
 oskb --quit          # Terminate keyboard instance
 ```

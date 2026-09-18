@@ -1,14 +1,17 @@
 [Unit]
 Description=On-Screen Touch Keyboard
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
 Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
-ExecStart=/usr/bin/oskb --show
-Restart=on-failure
-RestartSec=2
+ExecStart=/usr/bin/oskb --hide
+Restart=always
+RestartSec=1
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target default.target
+

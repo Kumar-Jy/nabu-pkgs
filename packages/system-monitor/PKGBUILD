@@ -2,9 +2,9 @@
 # Universal Hardware & System Monitor for Linux across all DEs
 
 pkgname=system-monitor
-pkgver=1.1.0
+pkgver=1.2.0
 pkgrel=1
-pkgdesc="Universal Hardware & System Monitor for Linux across all DEs (GPU, CPU, RAM, Battery/Charging & Sensors)"
+pkgdesc="Universal Hardware & System Monitor for Linux across all DEs (GPU, CPU, RAM, Running Apps, Battery/Charging & Sensors)"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('MIT')

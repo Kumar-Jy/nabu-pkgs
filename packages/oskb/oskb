@@ -22,15 +22,17 @@ Features:
   * Size presets (S: 65%, M: 82%, L: 100%)
   * Scale / Zoom buttons (A-, A+)
   * Corner drag-resize grip (⤡)
-- Auto-Pop on Text Field Tap (Atspi accessibility event integration)
+- Auto-Pop on Text Field Tap & Auto-Minimize on Defocus (Dual AT-SPI & KWin Wayland integration)
 - Minimizes to a floating pill (⌨) so it never gets in the way
 - Injects keystrokes via Linux /dev/uinput (EV_KEY) - works across all applications
 - Non-focusable window architecture: NEVER steals focus from target applications
 """
 import os
 import sys
+import time
 import json
 import socket
+import configparser
 
 SOCK_PATH = f"/run/user/{os.getuid()}/oskb.sock"
 
@@ -39,6 +41,9 @@ def send_ipc(cmd):
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(SOCK_PATH)
         s.sendall((cmd + "\n").encode())
+        if cmd == "status":
+            resp = s.recv(1024).decode()
+            print(resp, end="")
         s.close()
         return True
     except Exception:
@@ -61,9 +66,10 @@ os.environ.setdefault("GDK_BACKEND", "x11")
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
+gi.require_version("Gio", "2.0")
 gi.require_version("Atspi", "2.0")
 
-from gi.repository import Gtk, Gdk, GLib, Pango, Atspi
+from gi.repository import Gtk, Gdk, Gio, GLib, Pango, Atspi
 
 # Verify display connection; fall back to wayland if x11 fails
 if not Gtk.init_check()[0]:
@@ -662,15 +668,141 @@ THEMES = {
         "corner_bg": "#1e170f",
         "corner_fg": "#ffb703",
     },
+    "glass": {
+        "name": "Frosted Dark Glass (80%)",
+        "win_bg": "rgba(15, 23, 42, 0.20)",
+        "bar_bg": "rgba(24, 32, 47, 0.35)",
+        "border": "rgba(148, 163, 184, 0.30)",
+        "handle_bg": "rgba(51, 65, 85, 0.40)",
+        "handle_fg": "#f8fafc",
+        "btn_hover": "rgba(71, 85, 105, 0.55)",
+        "accent": "#38bdf8",
+        "key_bg": "rgba(30, 41, 59, 0.25)",
+        "key_border": "rgba(148, 163, 184, 0.35)",
+        "key_hover": "rgba(51, 65, 85, 0.65)",
+        "key_active": "rgba(56, 189, 248, 0.85)",
+        "key_active_text": "#0f172a",
+        "text_main": "#ffffff",
+        "text_shadow": "0 1px 3px rgba(0, 0, 0, 0.95)",
+        "kmod_bg": "rgba(20, 28, 42, 0.30)",
+        "kmod_fg": "#38bdf8",
+        "karrow_bg": "rgba(24, 33, 48, 0.30)",
+        "karrow_fg": "#38bdf8",
+        "knav_bg": "rgba(18, 38, 30, 0.30)",
+        "knav_fg": "#4ade80",
+        "kenter_bg": "rgba(29, 78, 216, 0.65)",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#3b82f6",
+        "kesc_bg": "rgba(69, 20, 28, 0.40)",
+        "kesc_fg": "#fca5a5",
+        "kdel_bg": "rgba(67, 29, 22, 0.40)",
+        "kdel_fg": "#fdba74",
+        "kaccent_bg": "rgba(46, 42, 30, 0.40)",
+        "kaccent_fg": "#fde047",
+        "kclip_bg": "rgba(44, 30, 56, 0.40)",
+        "kclip_fg": "#e879f9",
+        "kfn_bg": "rgba(22, 40, 46, 0.40)",
+        "kfn_fg": "#2dd4bf",
+        "btn_active": "#2563eb",
+        "edge_hover": "rgba(56, 189, 248, 0.30)",
+        "pill_bg": "rgba(30, 41, 59, 0.50)",
+        "corner_bg": "rgba(30, 41, 59, 0.35)",
+        "corner_fg": "#38bdf8",
+    },
+    "crystal": {
+        "name": "Crystal Clear (90%)",
+        "win_bg": "rgba(10, 15, 26, 0.10)",
+        "bar_bg": "rgba(15, 23, 42, 0.20)",
+        "border": "rgba(255, 255, 255, 0.25)",
+        "handle_bg": "rgba(255, 255, 255, 0.15)",
+        "handle_fg": "#f8fafc",
+        "btn_hover": "rgba(255, 255, 255, 0.30)",
+        "accent": "#00ffcc",
+        "key_bg": "rgba(255, 255, 255, 0.10)",
+        "key_border": "rgba(255, 255, 255, 0.30)",
+        "key_hover": "rgba(0, 229, 255, 0.35)",
+        "key_active": "rgba(0, 229, 255, 0.85)",
+        "key_active_text": "#000000",
+        "text_main": "#ffffff",
+        "text_shadow": "0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px #000000",
+        "kmod_bg": "rgba(0, 229, 255, 0.12)",
+        "kmod_fg": "#00e5ff",
+        "karrow_bg": "rgba(0, 255, 204, 0.12)",
+        "karrow_fg": "#00ffcc",
+        "knav_bg": "rgba(57, 255, 20, 0.12)",
+        "knav_fg": "#39ff14",
+        "kenter_bg": "rgba(0, 102, 255, 0.55)",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#00a2ff",
+        "kesc_bg": "rgba(255, 0, 85, 0.20)",
+        "kesc_fg": "#ff6699",
+        "kdel_bg": "rgba(255, 102, 0, 0.20)",
+        "kdel_fg": "#ff9944",
+        "kaccent_bg": "rgba(255, 230, 0, 0.20)",
+        "kaccent_fg": "#ffee55",
+        "kclip_bg": "rgba(204, 0, 255, 0.20)",
+        "kclip_fg": "#dd66ff",
+        "kfn_bg": "rgba(0, 255, 170, 0.15)",
+        "kfn_fg": "#00ffcc",
+        "btn_active": "#00e5ff",
+        "edge_hover": "rgba(0, 255, 204, 0.30)",
+        "pill_bg": "rgba(15, 23, 42, 0.35)",
+        "corner_bg": "rgba(255, 255, 255, 0.15)",
+        "corner_fg": "#00ffcc",
+    },
+    "frost": {
+        "name": "Frosted Light Glass (80%)",
+        "win_bg": "rgba(241, 245, 249, 0.22)",
+        "bar_bg": "rgba(226, 232, 240, 0.35)",
+        "border": "rgba(71, 85, 105, 0.40)",
+        "handle_bg": "rgba(255, 255, 255, 0.45)",
+        "handle_fg": "#0f172a",
+        "btn_hover": "rgba(203, 213, 225, 0.60)",
+        "accent": "#0284c7",
+        "key_bg": "rgba(255, 255, 255, 0.25)",
+        "key_border": "rgba(71, 85, 105, 0.35)",
+        "key_hover": "rgba(255, 255, 255, 0.65)",
+        "key_active": "rgba(2, 132, 199, 0.85)",
+        "key_active_text": "#ffffff",
+        "text_main": "#0f172a",
+        "text_shadow": "0 1px 2px rgba(255, 255, 255, 0.85)",
+        "kmod_bg": "rgba(226, 232, 240, 0.35)",
+        "kmod_fg": "#0369a1",
+        "karrow_bg": "rgba(224, 242, 254, 0.35)",
+        "karrow_fg": "#0284c7",
+        "knav_bg": "rgba(220, 252, 231, 0.35)",
+        "knav_fg": "#15803d",
+        "kenter_bg": "rgba(37, 99, 235, 0.70)",
+        "kenter_fg": "#ffffff",
+        "kenter_border": "#1d4ed8",
+        "kesc_bg": "rgba(254, 226, 226, 0.40)",
+        "kesc_fg": "#b91c1c",
+        "kdel_bg": "rgba(255, 237, 213, 0.40)",
+        "kdel_fg": "#c2410c",
+        "kaccent_bg": "rgba(254, 249, 195, 0.40)",
+        "kaccent_fg": "#a16207",
+        "kclip_bg": "rgba(243, 232, 255, 0.40)",
+        "kclip_fg": "#7e22ce",
+        "kfn_bg": "rgba(204, 251, 241, 0.40)",
+        "kfn_fg": "#0f766e",
+        "btn_active": "#0284c7",
+        "edge_hover": "rgba(2, 132, 199, 0.30)",
+        "pill_bg": "rgba(203, 213, 225, 0.50)",
+        "corner_bg": "rgba(255, 255, 255, 0.35)",
+        "corner_fg": "#0284c7",
+    },
 }
 
-THEME_NAMES = ["dark", "light", "oled", "breeze", "amber"]
+THEME_NAMES = ["dark", "light", "oled", "breeze", "amber", "glass", "crystal", "frost"]
 
 THEME_CSS_TEMPLATE = """
 window.oskb-window {
     background-color: %(win_bg)s;
     border: 1px solid %(border)s;
     border-radius: 12px 12px 0 0;
+}
+window.oskb-window.floating {
+    border-radius: 12px;
 }
 .oskb-bar {
     background-color: %(bar_bg)s;
@@ -691,6 +823,7 @@ window.oskb-window {
     font-size: 12px;
     font-weight: 700;
     padding: 3px 20px;
+    text-shadow: %(text_shadow)s;
 }
 .drag-handle:hover {
     background-color: %(btn_hover)s;
@@ -704,6 +837,7 @@ window.oskb-window {
     font-weight: 700;
     padding: 2px 9px;
     min-height: 26px;
+    text-shadow: %(text_shadow)s;
 }
 .bar-btn:hover {
     background-color: %(btn_hover)s;
@@ -735,6 +869,7 @@ button.kbtn, button.kbtn label {
     font-weight: 700;
     padding: 0;
     margin: 1px;
+    text-shadow: %(text_shadow)s;
 }
 button.kbtn:hover {
     background-color: %(key_hover)s;
@@ -864,7 +999,8 @@ window.oskb-pill {
 """
 
 def get_theme_css(theme_name):
-    t = THEMES.get(theme_name, THEMES["dark"])
+    t = dict(THEMES.get(theme_name, THEMES["dark"]))
+    t.setdefault("text_shadow", "none")
     return (THEME_CSS_TEMPLATE % t).encode()
 
 BASE_CSS = get_theme_css("dark")
@@ -897,7 +1033,17 @@ class KeyboardApp:
 
         self.kb_top = 0
         self.kb_height = 0
-        self.suppressed_element = None
+        self._manual_dismiss_time = 0.0
+        self._closed_manually = False
+        self._cached_kwinrc_mtime = None
+        self._cached_kde_vk_active = True
+        self.last_focused_element = None
+        self._hide_timer_id = None
+        self.session_bus = None
+        self._kwin_active = False
+        self.atspi_listener = None
+        self.atspi_caret_listener = None
+        self.atspi_win_listener = None
 
         # Drag & Resize tracking
         self._dragging = False
@@ -931,6 +1077,7 @@ class KeyboardApp:
 
         self._build_window()
         self._build_pill()
+        self._init_kwin_dbus()
         self._init_atspi()
         self._setup_screen_listeners()
         GLib.timeout_add(1000, self._check_orientation_tick)
@@ -943,6 +1090,8 @@ class KeyboardApp:
         w.set_role("oskb")
         w.set_name("oskb-window")
         w.get_style_context().add_class("oskb-window")
+        if self.dock_mode == "float":
+            w.get_style_context().add_class("floating")
         w.set_decorated(False)
         w.set_resizable(True)
         w.set_accept_focus(False)
@@ -952,6 +1101,11 @@ class KeyboardApp:
         w.set_skip_taskbar_hint(True)
         w.set_skip_pager_hint(True)
         w.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+        screen = w.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual and screen.is_composited():
+            w.set_visual(visual)
+        w.connect("delete-event", self._on_delete_event)
         w.connect("destroy", self._destroy)
         w.connect("configure-event", self._on_configure)
         self.win = w
@@ -1022,7 +1176,6 @@ class KeyboardApp:
         outer.pack_start(self.grid_box, True, True, 2)
 
         self.build_layer(self.layer)
-        self.win.show_all()
         self.layout_on_screen()
 
     def _build_header_bar(self):
@@ -1119,11 +1272,11 @@ class KeyboardApp:
         bar.pack_start(resize_box, False, False, 2)
 
         # Minimize Button (−)
-        btn_min = self._make_bar_btn("\u2212", self.minimize_to_pill)
+        btn_min = self._make_bar_btn("\u2212", lambda: self.minimize_to_pill(manual=True))
         bar.pack_start(btn_min, False, False, 1)
 
         # Close Button (✕)
-        btn_close = self._make_bar_btn("\u2715", self._destroy)
+        btn_close = self._make_bar_btn("\u2715", lambda: self.hide_keyboard(manual=True))
         btn_close.get_style_context().add_class("close")
         bar.pack_start(btn_close, False, False, 1)
 
@@ -1152,6 +1305,10 @@ class KeyboardApp:
         p.set_skip_taskbar_hint(True)
         p.set_skip_pager_hint(True)
         p.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+        screen = p.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual and screen.is_composited():
+            p.set_visual(visual)
 
         box = Gtk.EventBox()
         box.set_can_focus(False)
@@ -1747,6 +1904,12 @@ class KeyboardApp:
         self.layout_on_screen()
 
     def _update_dock_btn_label(self):
+        if hasattr(self, "win"):
+            w_sc = self.win.get_style_context()
+            if self.dock_mode == "dock":
+                w_sc.remove_class("floating")
+            else:
+                w_sc.add_class("floating")
         if hasattr(self, "btn_dock"):
             sc = self.btn_dock.get_style_context()
             if self.dock_mode == "dock":
@@ -1771,6 +1934,9 @@ class KeyboardApp:
             "oled": "\U0001f30c OLED (Neon Cyber)",
             "breeze": "\U0001f30a Breeze (KDE Native)",
             "amber": "\u26a1 Amber (Retro Terminal)",
+            "glass": "\U0001f48e Glass (80% Dark Glass)",
+            "crystal": "\U0001f52e Crystal (90% Transparent)",
+            "frost": "\u2744\ufe0f Frost (80% Light Glass)",
         }
         for tname in THEME_NAMES:
             lbl = icons.get(tname, tname.capitalize())
@@ -1823,10 +1989,15 @@ class KeyboardApp:
         self.layout_on_screen()
 
     def _toggle_auto_popup(self):
-        self.auto_popup = not self.auto_popup
+        self._set_auto_popup(not self.auto_popup)
+
+    def _set_auto_popup(self, enable):
+        self.auto_popup = bool(enable)
         self.config["auto_popup"] = self.auto_popup
         save_config(self.config)
         self._update_auto_btn_style()
+        if not self.auto_popup:
+            self._cancel_auto_hide()
 
     def _update_auto_btn_style(self):
         sc = self.btn_auto.get_style_context()
@@ -1848,7 +2019,10 @@ class KeyboardApp:
 
     # -- Minimization & Floating Pill ---------------------------------------
 
-    def minimize_to_pill(self):
+    def minimize_to_pill(self, manual=False):
+        if manual:
+            self._manual_dismiss_time = time.monotonic()
+        self._cancel_auto_hide()
         self.win.hide()
         display = Gdk.Display.get_default()
         monitor = display.get_primary_monitor() or display.get_monitor_at_point(0, 0)
@@ -1862,7 +2036,21 @@ class KeyboardApp:
         self.pill.move(pill_x, pill_y)
         self.pill.show_all()
 
+    def hide_keyboard(self, manual=False):
+        if manual:
+            self._manual_dismiss_time = time.monotonic()
+            self._closed_manually = True
+        self._cancel_auto_hide()
+        self.win.hide()
+        self.pill.hide()
+
+    def _on_delete_event(self, _widget, _event):
+        self.hide_keyboard(manual=True)
+        return True
+
     def show_keyboard(self):
+        self._closed_manually = False
+        self._cancel_auto_hide()
         self.pill.hide()
         self.win.show_all()
         self.win.present()
@@ -1873,45 +2061,294 @@ class KeyboardApp:
             self.show_keyboard()
         return True
 
-    # -- Atspi Auto-Popup Focus Detection -----------------------------------
+    # -- KDE Virtual Keyboard Setting & Auto-Popup Policy -------------------
+
+    def _is_kde_virtual_keyboard_active(self):
+        """Check whether virtual keyboard is enabled and configured for oskb in KDE settings."""
+        try:
+            desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+            if "kde" not in desktop and not os.path.exists("/usr/bin/kwin_wayland"):
+                return True
+
+            kwinrc_path = os.path.expanduser("~/.config/kwinrc")
+            if not os.path.exists(kwinrc_path):
+                return True
+
+            mtime = os.path.getmtime(kwinrc_path)
+            if self._cached_kwinrc_mtime == mtime:
+                return self._cached_kde_vk_active
+
+            cp = configparser.ConfigParser()
+            cp.read(kwinrc_path)
+
+            # 1. VirtualKeyboardMode: 0 = Never/Off, 1 = TouchOnly, 2 = On
+            mode = cp.getint("Wayland", "VirtualKeyboardMode", fallback=1)
+            if mode == 0:
+                self._cached_kwinrc_mtime = mtime
+                self._cached_kde_vk_active = False
+                return False
+
+            # 2. InputMethod: path to .desktop file or name
+            # If user selects 'None' in KDE settings, InputMethod is empty.
+            # If user selects 'On-Screen Keyboard', InputMethod contains 'oskb'.
+            im = cp.get("Wayland", "InputMethod", fallback="").strip().lower()
+            if not im or "oskb" not in im:
+                self._cached_kwinrc_mtime = mtime
+                self._cached_kde_vk_active = False
+                return False
+
+            self._cached_kwinrc_mtime = mtime
+            self._cached_kde_vk_active = True
+            return True
+        except Exception:
+            return True
+
+    def _is_auto_popup_allowed(self):
+        """Return True only if auto-popup is active, user has not closed via X, and KDE settings permit."""
+        if not self.auto_popup:
+            return False
+        if self._closed_manually:
+            return False
+        if not self._is_kde_virtual_keyboard_active():
+            return False
+        return True
+
+    # -- Auto-Popup Focus Detection (AT-SPI & KWin D-Bus) -------------------
+
+    def _ensure_accessibility_enabled(self):
+        """Ensure system-wide accessibility is active so toolkits emit AT-SPI events."""
+        try:
+            settings = Gio.Settings.new("org.gnome.desktop.interface")
+            if not settings.get_boolean("toolkit-accessibility"):
+                settings.set_boolean("toolkit-accessibility", True)
+        except Exception:
+            pass
+
+        try:
+            if not self.session_bus:
+                self.session_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            self.session_bus.call_sync(
+                "org.a11y.Bus",
+                "/org/a11y/bus",
+                "org.freedesktop.DBus.Properties",
+                "Set",
+                GLib.Variant("(ssv)", ("org.a11y.Status", "IsEnabled", GLib.Variant("b", True))),
+                None,
+                Gio.DBusCallFlags.NONE,
+                300,
+                None,
+            )
+        except Exception:
+            pass
 
     def _init_atspi(self):
+        self._ensure_accessibility_enabled()
         try:
             Atspi.init()
             self.atspi_listener = Atspi.EventListener.new(self._on_atspi_focus)
             self.atspi_listener.register("object:state-changed:focused")
+
+            self.atspi_caret_listener = Atspi.EventListener.new(self._on_atspi_caret)
+            self.atspi_caret_listener.register("object:text-caret-moved")
+            self.atspi_caret_listener.register("object:text-selection-changed")
         except Exception as e:
             print("Atspi initialization skipped: %s" % e, file=sys.stderr)
+            GLib.timeout_add_seconds(3, self._retry_atspi)
+
+    def _retry_atspi(self):
+        if self.atspi_listener is None:
+            self._init_atspi()
+        return False
+
+    def _init_kwin_dbus(self):
+        try:
+            if not self.session_bus:
+                self.session_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            self.session_bus.signal_subscribe(
+                "org.kde.KWin",
+                "org.kde.kwin.VirtualKeyboard",
+                None,
+                "/VirtualKeyboard",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_kwin_vk_signal,
+                None,
+            )
+            self.session_bus.signal_subscribe(
+                "org.kde.KWin",
+                "org.freedesktop.DBus.Properties",
+                "PropertiesChanged",
+                "/VirtualKeyboard",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_kwin_properties_changed,
+                None,
+            )
+        except Exception as e:
+            print("KWin D-Bus initialization skipped: %s" % e, file=sys.stderr)
+
+    def _on_kwin_vk_signal(self, _conn, _sender, _path, _iface, signal_name, _params, _user_data):
+        if signal_name == "activeChanged":
+            self._check_kwin_active()
+
+    def _on_kwin_properties_changed(self, _conn, _sender, _path, _iface, _signal, params, _user_data):
+        try:
+            unpacked = params.unpack()
+            if len(unpacked) >= 2 and isinstance(unpacked[1], dict):
+                changed = unpacked[1]
+                if "active" in changed:
+                    new_active = bool(changed["active"])
+                    if new_active != self._kwin_active:
+                        self._kwin_active = new_active
+                        if new_active:
+                            self._cancel_auto_hide()
+                            if self._is_auto_popup_allowed() and not self.win.get_visible():
+                                if time.monotonic() - self._manual_dismiss_time >= 0.5:
+                                    GLib.idle_add(self.show_keyboard)
+                        else:
+                            if self.win.get_visible():
+                                self._schedule_auto_hide()
+        except Exception:
+            pass
+
+    def _check_kwin_active(self):
+        if not self.session_bus or not self._is_auto_popup_allowed():
+            return
+        try:
+            val = self.session_bus.call_sync(
+                "org.kde.KWin",
+                "/VirtualKeyboard",
+                "org.freedesktop.DBus.Properties",
+                "Get",
+                GLib.Variant("(ss)", ("org.kde.kwin.VirtualKeyboard", "active")),
+                GLib.VariantType("(v)"),
+                Gio.DBusCallFlags.NONE,
+                200,
+                None,
+            )
+            if val:
+                new_active = bool(val.unpack()[0])
+                if new_active != self._kwin_active:
+                    self._kwin_active = new_active
+                    if new_active:
+                        self._cancel_auto_hide()
+                        if not self.win.get_visible():
+                            if time.monotonic() - self._manual_dismiss_time >= 0.5:
+                                GLib.idle_add(self.show_keyboard)
+                    else:
+                        if self.win.get_visible():
+                            self._schedule_auto_hide()
+        except Exception:
+            pass
+
+    def _schedule_auto_hide(self):
+        self._cancel_auto_hide()
+        self._hide_timer_id = GLib.timeout_add(350, self._auto_hide_timeout)
+
+    def _cancel_auto_hide(self):
+        if self._hide_timer_id is not None:
+            GLib.source_remove(self._hide_timer_id)
+            self._hide_timer_id = None
+
+    def _auto_hide_timeout(self):
+        self._hide_timer_id = None
+        if self.win.get_visible():
+            self.minimize_to_pill(manual=False)
+        return False
+
+    def _is_text_input(self, source):
+        if not source:
+            return False
+        try:
+            states = source.get_state_set()
+            if states.contains(Atspi.StateType.EDITABLE):
+                return True
+
+            role = (source.get_role_name() or "").lower()
+            if not role:
+                return False
+
+            if "terminal" in role:
+                return True
+
+            if role in ("entry", "password text", "search box", "editbar"):
+                return True
+
+            if ("text" in role or "document" in role) and not states.contains(Atspi.StateType.READ_ONLY):
+                if role not in ("label", "heading", "page tab", "status bar", "menu item", "push button"):
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _on_atspi_focus(self, event):
-        if not self.auto_popup:
+        if not self._is_auto_popup_allowed():
             return
-        if event.detail1 != 1:
-            return
+
         try:
             source = event.source
             if not source:
                 return
+
             # Don't trigger for our own keyboard or pill window
             if source.get_process_id() == os.getpid():
                 return
-            states = source.get_state_set()
-            is_editable = states.contains(Atspi.StateType.EDITABLE)
-            role = source.get_role_name()
-            is_text = role in ("text", "password text", "entry", "terminal", "document text")
-            if is_editable or is_text:
-                if self.suppressed_element and self._same_element(self.suppressed_element, source):
+
+            if event.detail1 == 0:
+                # Focus lost from an element
+                if self.win.get_visible():
+                    self._schedule_auto_hide()
+                return
+
+            # Focus gained (detail1 == 1)
+            if self._is_text_input(source):
+                self._cancel_auto_hide()
+                if time.monotonic() - self._manual_dismiss_time < 0.5:
                     return
-                self.suppressed_element = None
-                GLib.idle_add(self.show_keyboard)
+                self.last_focused_element = source
+                if not self.win.get_visible():
+                    GLib.idle_add(self.show_keyboard)
+            else:
+                # Focus shifted to a non-text widget (e.g. button, list item)
+                if self.win.get_visible():
+                    self._schedule_auto_hide()
         except Exception:
             pass
 
-    def _same_element(self, a, b):
+    def _on_atspi_caret(self, event):
+        if not self._is_auto_popup_allowed():
+            return
+
         try:
-            return a.get_index_in_parent() == b.get_index_in_parent() and a.get_name() == b.get_name()
+            source = event.source
+            if not source:
+                return
+
+            if source.get_process_id() == os.getpid():
+                return
+
+            states = source.get_state_set()
+            if not states.contains(Atspi.StateType.FOCUSED):
+                return
+
+            if not self._is_text_input(source):
+                return
+
+            # Active focused text input: cancel auto-hide
+            self._cancel_auto_hide()
+
+            # If already visible, user is typing or navigating caret
+            if self.win.get_visible():
+                return
+
+            # If user manually dismissed within last 0.5s, don't reopen immediately
+            if time.monotonic() - self._manual_dismiss_time < 0.5:
+                return
+
+            self.last_focused_element = source
+            GLib.idle_add(self.show_keyboard)
         except Exception:
-            return False
+            pass
 
     # -- Key Press Handling -------------------------------------------------
 
@@ -2087,20 +2524,33 @@ class KeyboardApp:
         try:
             conn, _ = self.server_sock.accept()
             data = conn.recv(1024).decode().strip()
+            if data == "status":
+                resp = f"keyboard_visible={self.win.get_visible()} pill_visible={self.pill.get_visible()} auto_popup={self.auto_popup} closed_manually={self._closed_manually} kde_vk_active={self._is_kde_virtual_keyboard_active()} theme={self.theme}\n"
+                conn.sendall(resp.encode())
+                conn.close()
+                return True
             conn.close()
             if data in ("show", ""):
                 self.show_keyboard()
             elif data == "toggle":
                 if self.win.get_visible():
-                    self.minimize_to_pill()
+                    self.minimize_to_pill(manual=True)
                 else:
                     self.show_keyboard()
             elif data == "hide":
-                self.minimize_to_pill()
+                self.minimize_to_pill(manual=True)
+            elif data == "close":
+                self.hide_keyboard(manual=True)
             elif data.startswith("theme:"):
                 self.set_theme(data.split(":", 1)[1])
             elif data == "theme":
                 self._cycle_theme()
+            elif data == "auto":
+                self._toggle_auto_popup()
+            elif data == "auto:on":
+                self._set_auto_popup(True)
+            elif data == "auto:off":
+                self._set_auto_popup(False)
             elif data == "quit":
                 self._destroy()
         except Exception:
@@ -2108,6 +2558,7 @@ class KeyboardApp:
         return True
 
     def _destroy(self, _w=None):
+        self._cancel_auto_hide()
         try:
             self.inj.ui.close()
         except Exception:
@@ -2128,6 +2579,8 @@ def main():
             cmd = "toggle"
         elif arg in ("--hide",):
             cmd = "hide"
+        elif arg in ("--close", "-c"):
+            cmd = "close"
         elif arg in ("--show", "-s"):
             cmd = "show"
         elif arg in ("--theme", "-m"):
@@ -2135,6 +2588,13 @@ def main():
                 cmd = f"theme:{sys.argv[2]}"
             else:
                 cmd = "theme"
+        elif arg in ("--auto", "-a"):
+            if len(sys.argv) > 2:
+                cmd = f"auto:{sys.argv[2]}"
+            else:
+                cmd = "auto"
+        elif arg in ("--status",):
+            cmd = "status"
         elif arg in ("--quit", "-q"):
             cmd = "quit"
         elif arg in ("--help", "-help", "-h"):
@@ -2143,7 +2603,10 @@ def main():
             print("  --show, -s          Show on-screen keyboard (default)")
             print("  --toggle, -t        Toggle keyboard visibility")
             print("  --hide              Minimize keyboard to floating pill")
-            print("  --theme, -m [NAME]  Switch theme (dark, light, oled, breeze, amber)")
+            print("  --close, -c         Hide keyboard and pill completely")
+            print("  --auto, -a [on|off] Toggle or set auto-popup on text focus")
+            print("  --status            Query status of running instance")
+            print("  --theme, -m [NAME]  Switch theme (dark, light, oled, breeze, amber, glass, crystal, frost)")
             print("  --quit, -q          Quit keyboard instance")
             sys.exit(0)
 
@@ -2157,6 +2620,8 @@ def main():
         app._init_ipc()
         if cmd == "hide":
             app.minimize_to_pill()
+        elif cmd == "close":
+            app.hide_keyboard()
         else:
             app.show_keyboard()
     except Exception as e:

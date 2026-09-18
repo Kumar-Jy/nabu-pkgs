@@ -20,6 +20,14 @@ Most Linux system monitors do not expose Adreno GPU clock/thermals, per-process 
   - RAM usage, available headroom, cache/buffers breakdown.
   - Compressed ZRAM swap usage on `/dev/zram0` (or standard swap).
   - Top memory-consuming processes.
+- **Running Applications & Process Monitor**:
+  - Live tracking of desktop applications and system processes with real-time CPU % and RAM usage.
+  - Automatic desktop app metadata resolution (friendly names and official icons from `.desktop` entries).
+  - Real-time search filter by application name, executable, PID, or command-line arguments.
+  - Filter modes: toggle between "User Applications" (interactive GUI/desktop apps) and "All Processes".
+  - Multi-column sorting: sort by Memory (RAM), CPU usage %, Alphabetical Name, or PID.
+  - One-click process termination (`SIGTERM`) directly from the UI with toast feedback.
+  - Adaptive responsive UI with edge resizing support down to 360px.
 - **Battery & Charging Monitor**:
   - State of charge with live visual level gauge.
   - Real-time charging / discharging power rate in Watts ($V \times I$).
@@ -89,6 +97,9 @@ sysmon --log cpu
 
 # Print memory and swap allocation
 sysmon --log memory
+
+# Print running applications and active processes
+sysmon --log apps
 ```
 
 ---

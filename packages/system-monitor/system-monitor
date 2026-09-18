@@ -13,7 +13,7 @@ from datetime import datetime
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Gdk, GObject
+from gi.repository import Gtk, Adw, GLib, Gdk, GObject, Pango
 
 
 def get_desktop_environment():
@@ -158,6 +158,130 @@ def format_temp(temp_c):
         badge = "🔴"
         desc = "Hot"
     return f"{badge} {temp_c:.1f} °C ({desc})"
+
+
+def load_desktop_apps_map():
+    """Maps executable names and application IDs to human-readable names and icons."""
+    apps_map = {}
+    search_dirs = [
+        os.path.expanduser('~/.local/share/applications'),
+        '/usr/local/share/applications',
+        '/usr/share/applications',
+        '/var/lib/flatpak/exports/share/applications',
+    ]
+    for d in search_dirs:
+        if not os.path.exists(d):
+            continue
+        for f in glob.glob(f'{d}/*.desktop'):
+            try:
+                name, icon, exec_cmd = '', '', ''
+                base_id = os.path.basename(f)
+                if base_id.endswith('.desktop'):
+                    base_id = base_id[:-8]
+                with open(f, errors='ignore') as fp:
+                    for line in fp:
+                        line = line.strip()
+                        if line.startswith('Name=') and not name:
+                            name = line.split('=', 1)[1].strip()
+                        elif line.startswith('Icon=') and not icon:
+                            icon = line.split('=', 1)[1].strip()
+                        elif line.startswith('Exec=') and not exec_cmd:
+                            raw = line.split('=', 1)[1].strip()
+                            parts = raw.split()
+                            if parts:
+                                exec_cmd = os.path.basename(parts[0])
+                if name:
+                    meta = {'name': name, 'icon': icon or 'application-x-executable-symbolic'}
+                    if exec_cmd:
+                        apps_map[exec_cmd] = meta
+                        apps_map[exec_cmd.lower()] = meta
+                    if base_id:
+                        apps_map[base_id] = meta
+                        apps_map[base_id.lower()] = meta
+            except Exception:
+                pass
+    return apps_map
+
+
+def scan_system_processes(last_ticks, last_total_ticks, apps_map):
+    """Scans /proc for active processes, calculating CPU% and RSS memory."""
+    total_ticks = 0
+    try:
+        with open('/proc/stat') as fp:
+            total_ticks = sum(int(x) for x in fp.readline().split()[1:])
+    except Exception:
+        pass
+
+    dt_total = max(total_ticks - last_total_ticks, 1) if last_total_ticks > 0 else 0
+    num_cpus = max(os.cpu_count() or 1, 1)
+    curr_ticks = {}
+    procs = []
+
+    for p in os.listdir('/proc'):
+        if not p.isdigit():
+            continue
+        pid = int(p)
+        try:
+            with open(f'/proc/{pid}/stat') as fp:
+                stat_content = fp.read()
+            rparen = stat_content.rfind(')')
+            fields = stat_content[rparen + 2:].split()
+            utime = int(fields[11])
+            stime = int(fields[12])
+            ticks = utime + stime
+            curr_ticks[pid] = ticks
+
+            # CPU %
+            cpu_pct = 0.0
+            if dt_total > 0 and pid in last_ticks:
+                dt_proc = max(ticks - last_ticks[pid], 0)
+                cpu_pct = (dt_proc / dt_total) * 100.0 * num_cpus
+
+            # Memory (statm field 1 = RSS pages)
+            with open(f'/proc/{pid}/statm') as fp:
+                rss_pages = int(fp.read().split()[1])
+            rss_mb = (rss_pages * 4096) / (1024 * 1024)
+
+            # Cmdline & comm
+            with open(f'/proc/{pid}/cmdline', 'rb') as fp:
+                raw_cmd = fp.read()
+            if not raw_cmd:
+                continue  # kernel thread
+            cmd_parts = [part.decode(errors='ignore') for part in raw_cmd.split(b'\0') if part]
+            if not cmd_parts:
+                continue
+
+            with open(f'/proc/{pid}/comm') as fp:
+                comm = fp.read().strip()
+
+            exe = os.path.basename(cmd_parts[0])
+            st = os.stat(f'/proc/{pid}')
+            uid = st.st_uid
+
+            app_meta = apps_map.get(exe) or apps_map.get(exe.lower()) or apps_map.get(comm) or apps_map.get(comm.lower())
+            is_desktop = app_meta is not None
+            is_user_app = is_desktop or (uid >= 1000 and not comm.startswith(('(sd-', 'dbus-')))
+
+            display_name = app_meta['name'] if app_meta else comm
+            icon_name = app_meta['icon'] if app_meta and app_meta['icon'] else 'application-x-executable-symbolic'
+
+            procs.append({
+                'pid': pid,
+                'name': display_name,
+                'comm': comm,
+                'exe': exe,
+                'cmd': ' '.join(cmd_parts),
+                'icon': icon_name,
+                'cpu_pct': cpu_pct,
+                'rss_mb': rss_mb,
+                'uid': uid,
+                'is_app': is_user_app,
+                'is_desktop': is_desktop,
+            })
+        except Exception:
+            continue
+
+    return procs, curr_ticks, total_ticks
 
 
 def build_diagnostic_report(category="all"):
@@ -411,10 +535,24 @@ def build_diagnostic_report(category="all"):
             pass
         lines.append("")
 
+    # --- RUNNING APPLICATIONS & PROCESSES SECTION ---
+    if category in ("apps", "processes", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("7. RUNNING APPLICATIONS & ACTIVE PROCESSES")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        apps_map = load_desktop_apps_map()
+        procs, _, _ = scan_system_processes({}, 0, apps_map)
+        apps_only = [p for p in procs if p['is_app']]
+        apps_only.sort(key=lambda x: x['rss_mb'], reverse=True)
+        lines.append(f"  Active User/Desktop Applications ({len(apps_only)} detected):")
+        for a in apps_only[:25]:
+            lines.append(f"    • PID {a['pid']:<6} | {a['name']:<28} | {a['rss_mb']:6.1f} MB RAM | {a['cmd'][:45]}")
+        lines.append("")
+
     # --- SYSTEM INFO SECTION ---
     if category in ("sysinfo", "all"):
         lines.append("────────────────────────────────────────────────────────────────────────")
-        lines.append("7. FIRMWARE, OS & KERNEL INFORMATION")
+        lines.append("8. FIRMWARE, OS & KERNEL INFORMATION")
         lines.append("────────────────────────────────────────────────────────────────────────")
         lines.append(f"  Hardware Model:       {hw['model']}")
         try:
@@ -454,24 +592,27 @@ SYSTEM_MONITOR_CSS = """
 .hero-card {
     padding: 16px 20px;
     border-radius: 16px;
+    background: alpha(@card_bg_color, 0.75);
+    border: 1px solid alpha(@window_fg_color, 0.08);
+    box-shadow: 0 2px 8px alpha(black, 0.04);
 }
 
 .hero-val {
-    font-size: 2.2rem;
-    font-weight: 800;
-    letter-spacing: -0.5px;
+    font-size: 1.85rem;
+    font-weight: 750;
+    letter-spacing: -0.3px;
 }
 
 .hero-sub {
-    font-size: 0.92rem;
+    font-size: 0.90rem;
     font-weight: 500;
 }
 
 .pill-badge {
-    padding: 4px 12px;
+    padding: 3px 10px;
     border-radius: 9999px;
-    font-size: 0.82rem;
-    font-weight: 700;
+    font-size: 0.80rem;
+    font-weight: 650;
     letter-spacing: 0.2px;
 }
 
@@ -496,7 +637,7 @@ SYSTEM_MONITOR_CSS = """
 }
 
 .pill-neutral {
-    background-color: alpha(@window_fg_color, 0.12);
+    background-color: alpha(@window_fg_color, 0.10);
     color: @window_fg_color;
 }
 
@@ -509,6 +650,13 @@ progressbar.hero-bar trough {
     min-height: 8px;
     border-radius: 8px;
     background-color: alpha(@window_fg_color, 0.08);
+}
+
+.proc-badge {
+    font-size: 0.78rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 600;
 }
 """
 
@@ -544,6 +692,10 @@ def create_hero_card(icon_name, initial_val, initial_sub, initial_badge="", init
     lbl_val = Gtk.Label(label=initial_val)
     lbl_val.add_css_class("hero-val")
     lbl_val.set_halign(Gtk.Align.START)
+    lbl_val.set_wrap(True)
+    lbl_val.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    lbl_val.set_ellipsize(Pango.EllipsizeMode.END)
+    lbl_val.set_max_width_chars(25)
     val_box.append(lbl_val)
     top_row.append(val_box)
 
@@ -561,6 +713,8 @@ def create_hero_card(icon_name, initial_val, initial_sub, initial_badge="", init
     lbl_sub.add_css_class("dim-label")
     lbl_sub.set_halign(Gtk.Align.START)
     lbl_sub.set_wrap(True)
+    lbl_sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    lbl_sub.set_ellipsize(Pango.EllipsizeMode.END)
     card.append(lbl_sub)
 
     pbar = Gtk.ProgressBar()
@@ -580,7 +734,8 @@ def set_badge_text_and_class(badge, text, cls_name):
 class NabuSystemMonitorWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="System Monitor")
-        self.set_default_size(980, 720)
+        self.set_default_size(840, 620)
+        self.set_resizable(True)
 
         # Detect hardware dynamically
         self.hw = detect_system_hardware()
@@ -611,6 +766,13 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.paused = False
         self.thermal_zones = self.detect_thermal_zones()
 
+        # Running applications & process monitoring state
+        self.desktop_apps_map = load_desktop_apps_map()
+        self.last_proc_ticks = {}
+        self.last_proc_total_ticks = 0
+        self.cached_procs = []
+        self.apps_row_pool = []
+
         # Keyboard shortcuts (Space = Pause/Resume, Ctrl+Q = Quit)
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self.on_key_pressed)
@@ -619,11 +781,16 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         # Layout: ToastOverlay wrapping OverlaySplitView
         self.toast_overlay = Adw.ToastOverlay()
         self.split_view = Adw.OverlaySplitView()
-        self.split_view.set_min_sidebar_width(210)
-        self.split_view.set_max_sidebar_width(280)
-        self.split_view.set_sidebar_width_fraction(0.24)
-        self.split_view.set_pin_sidebar(True)
+        self.split_view.set_min_sidebar_width(190)
+        self.split_view.set_max_sidebar_width(260)
+        self.split_view.set_sidebar_width_fraction(0.22)
+        self.split_view.set_pin_sidebar(False)
         self.split_view.set_show_sidebar(True)
+
+        # Responsive breakpoint: auto-collapse sidebar to overlay on narrower widths
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 740px"))
+        bp.add_setter(self.split_view, "collapsed", True)
+        self.add_breakpoint(bp)
 
         self.stack = Adw.ViewStack()
 
@@ -684,10 +851,11 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
 
         content_toolbar.add_top_bar(content_header)
 
-        # Build 7 View Pages into Stack
+        # Build View Pages into Stack
         self.build_gpu_page()
         self.build_cpu_page()
         self.build_memory_page()
+        self.build_apps_page()
         self.build_power_page()
         self.build_sensors_page()
         self.build_device_page()
@@ -714,6 +882,9 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         if child:
             page = stack.get_page(child)
             self.content_title.set_title(page.get_title())
+            # Close sidebar overlay on selection when in collapsed mode
+            if self.split_view.get_collapsed():
+                self.split_view.set_show_sidebar(False)
 
     def on_key_pressed(self, controller, keyval, keycode, state):
         if keyval == Gdk.KEY_space:
@@ -753,7 +924,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         about = Adw.AboutDialog(
             application_name="System Monitor",
             application_icon="system-monitor",
-            version="1.1.0",
+            version="1.2.0",
             developer_name="Kumar-Jy",
             developers=["Kumar-Jy (@Kumar-Jy) <https://github.com/Kumar-Jy>"],
             website="https://github.com/Kumar-Jy/nabu-pkgs",
@@ -948,7 +1119,268 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(page, "memory", "RAM", "drive-multidisk-symbolic")
 
     # ==========================================
-    # 4. POWER & BATTERY PAGE
+    # 4. RUNNING APPLICATIONS & PROCESSES PAGE
+    # ==========================================
+    def build_apps_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_apps_hero, self.lbl_apps_hero_val, self.badge_apps_hero, self.lbl_apps_hero_sub, self.progress_apps_hero = create_hero_card(
+            "view-app-grid-symbolic", "Scanning...", "Active User Applications & System Tasks", "Apps", "pill-accent"
+        )
+        hero_group.add(self.card_apps_hero)
+        page.add(hero_group)
+
+        # Filter & Search Controls Bar
+        ctrl_group = Adw.PreferencesGroup()
+        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        ctrl_box.set_margin_top(2)
+        ctrl_box.set_margin_bottom(2)
+
+        self.apps_search = Gtk.SearchEntry()
+        self.apps_search.set_placeholder_text("Search running apps by name, command, or PID...")
+        self.apps_search.set_hexpand(True)
+        self.apps_search.connect("search-changed", lambda s: self.on_apps_filter_changed())
+        ctrl_box.append(self.apps_search)
+
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.apps_mode_drop = Gtk.DropDown.new_from_strings(["User Applications", "All Processes"])
+        self.apps_mode_drop.set_tooltip_text("Filter between User Desktop Applications and All Processes")
+        self.apps_mode_drop.set_hexpand(True)
+        self.apps_mode_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
+        filter_row.append(self.apps_mode_drop)
+
+        self.apps_sort_drop = Gtk.DropDown.new_from_strings(["Sort: Memory", "Sort: CPU %", "Sort: Name", "Sort: PID"])
+        self.apps_sort_drop.set_tooltip_text("Sort active applications")
+        self.apps_sort_drop.set_hexpand(True)
+        self.apps_sort_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
+        filter_row.append(self.apps_sort_drop)
+
+        ctrl_box.append(filter_row)
+        ctrl_group.add(ctrl_box)
+        page.add(ctrl_group)
+
+        # Process List Group
+        self.apps_list_group = Adw.PreferencesGroup(title="Running Applications")
+        page.add(self.apps_list_group)
+
+        # Diagnostics Group
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Applications Diagnostics", "Save active process list, CPU/RAM usage and PIDs to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("apps"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "apps", "Apps", "view-app-grid-symbolic")
+
+    def get_or_create_app_row(self, index):
+        while len(self.apps_row_pool) <= index:
+            row = Adw.ActionRow()
+            row.set_title_lines(1)
+            row.set_subtitle_lines(1)
+
+            icon = Gtk.Image()
+            icon.set_pixel_size(26)
+            row.add_prefix(icon)
+
+            lbl_cpu = Gtk.Label(label="0.0% CPU")
+            lbl_cpu.add_css_class("pill-badge")
+            lbl_cpu.add_css_class("pill-accent")
+            lbl_cpu.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(lbl_cpu)
+
+            lbl_mem = Gtk.Label(label="0 MB")
+            lbl_mem.add_css_class("pill-badge")
+            lbl_mem.add_css_class("pill-neutral")
+            lbl_mem.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(lbl_mem)
+
+            btn_kill = Gtk.Button(icon_name="process-stop-symbolic")
+            btn_kill.add_css_class("flat")
+            btn_kill.set_valign(Gtk.Align.CENTER)
+            btn_kill.set_tooltip_text("End Task (SIGTERM)")
+
+            row_idx = len(self.apps_row_pool)
+            btn_kill.connect("clicked", lambda b, idx=row_idx: self.on_kill_app_clicked(idx))
+            row.add_suffix(btn_kill)
+
+            self.apps_list_group.add(row)
+            self.apps_row_pool.append({
+                'row': row,
+                'icon': icon,
+                'lbl_cpu': lbl_cpu,
+                'lbl_mem': lbl_mem,
+                'btn_kill': btn_kill,
+                'pid': None,
+                'name': '',
+            })
+        return self.apps_row_pool[index]
+
+    def on_kill_app_clicked(self, idx):
+        if idx < len(self.apps_row_pool):
+            pid = self.apps_row_pool[idx]['pid']
+            name = self.apps_row_pool[idx]['name']
+            if pid:
+                self.terminate_process(pid, name)
+
+    def terminate_process(self, pid, name):
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Terminated {name} (PID {pid})"))
+            GLib.timeout_add(300, self.refresh_apps_stats)
+        except ProcessLookupError:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Process {name} (PID {pid}) already terminated"))
+        except PermissionError:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Cannot terminate {name}: Permission denied"))
+        except Exception as e:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Error terminating {name}: {e}"))
+
+    def resolve_app_icon(self, icon_name):
+        if not icon_name:
+            return "application-x-executable-symbolic"
+        try:
+            theme = Gtk.IconTheme.get_for_display(self.get_display())
+            if theme.has_icon(icon_name):
+                return icon_name
+            if theme.has_icon(f"{icon_name}-symbolic"):
+                return f"{icon_name}-symbolic"
+            for fallback in ("application-x-executable-symbolic", "applications-system-symbolic", "system-run-symbolic"):
+                if theme.has_icon(fallback):
+                    return fallback
+        except Exception:
+            pass
+        return "application-x-executable-symbolic"
+
+    def on_apps_filter_changed(self):
+        self.update_apps_display()
+
+    def refresh_apps_stats(self):
+        procs, curr_ticks, total_ticks = scan_system_processes(
+            self.last_proc_ticks, self.last_proc_total_ticks, self.desktop_apps_map
+        )
+        self.last_proc_ticks = curr_ticks
+        self.last_proc_total_ticks = total_ticks
+        self.cached_procs = procs
+        self.update_apps_display()
+
+    def update_apps_display(self):
+        if not hasattr(self, 'cached_procs') or not hasattr(self, 'apps_search'):
+            return
+
+        search_query = self.apps_search.get_text().strip().lower()
+        mode_idx = self.apps_mode_drop.get_selected()  # 0: User Apps, 1: All Processes
+
+        filtered = []
+        total_app_ram = 0.0
+        app_count = 0
+
+        for p in self.cached_procs:
+            if p['is_app']:
+                total_app_ram += p['rss_mb']
+                app_count += 1
+
+            if mode_idx == 0 and not p['is_app']:
+                continue
+
+            if search_query:
+                if (search_query not in p['name'].lower() and
+                    search_query not in p['comm'].lower() and
+                    search_query not in str(p['pid']) and
+                    search_query not in p['cmd'].lower()):
+                    continue
+
+            filtered.append(p)
+
+        # Sort
+        sort_idx = self.apps_sort_drop.get_selected()
+        if sort_idx == 0:  # Memory
+            filtered.sort(key=lambda x: x['rss_mb'], reverse=True)
+        elif sort_idx == 1:  # CPU %
+            filtered.sort(key=lambda x: x['cpu_pct'], reverse=True)
+        elif sort_idx == 2:  # Name
+            filtered.sort(key=lambda x: x['name'].lower())
+        elif sort_idx == 3:  # PID
+            filtered.sort(key=lambda x: x['pid'])
+
+        # Update Hero Card
+        total_sys_ram_mb = 1.0
+        try:
+            with open('/proc/meminfo') as fp:
+                for line in fp:
+                    if line.startswith('MemTotal:'):
+                        total_sys_ram_mb = int(line.split()[1]) / 1024.0
+                        break
+        except Exception:
+            pass
+
+        ram_pct = (total_app_ram / max(total_sys_ram_mb, 1.0)) * 100.0
+        self.lbl_apps_hero_val.set_label(f"{app_count} Active Apps")
+        self.lbl_apps_hero_sub.set_label(
+            f"{app_count} Applications Running • {total_app_ram/1024:.2f} GB RAM ({ram_pct:.1f}%) • {len(self.cached_procs)} Total System Tasks"
+        )
+        self.progress_apps_hero.set_fraction(min(total_app_ram / max(total_sys_ram_mb, 1.0), 1.0))
+        set_badge_text_and_class(self.badge_apps_hero, f"{len(filtered)} Visible", "pill-accent")
+
+        mode_label = "Running Applications" if mode_idx == 0 else "Active System Processes"
+        self.apps_list_group.set_title(f"{mode_label} ({len(filtered)})")
+
+        max_rows = 45
+        display_items = filtered[:max_rows]
+
+        if not display_items:
+            empty_row = self.get_or_create_app_row(0)
+            empty_row['pid'] = None
+            empty_row['name'] = ''
+            empty_row['row'].set_title("No applications or processes found")
+            empty_row['row'].set_subtitle("Try adjusting your search filter or switch to 'All Processes'")
+            empty_row['icon'].set_from_icon_name("system-search-symbolic")
+            empty_row['lbl_cpu'].set_label("")
+            empty_row['lbl_mem'].set_label("")
+            empty_row['btn_kill'].set_visible(False)
+            empty_row['row'].set_visible(True)
+            for j in range(1, len(self.apps_row_pool)):
+                self.apps_row_pool[j]['row'].set_visible(False)
+        else:
+            for i, item in enumerate(display_items):
+                row_data = self.get_or_create_app_row(i)
+                row_data['pid'] = item['pid']
+                row_data['name'] = item['name']
+
+                row_data['row'].set_title(item['name'])
+                sub_info = f"PID: {item['pid']}  •  {item['comm']}"
+                row_data['row'].set_subtitle(sub_info)
+
+                resolved_icon = self.resolve_app_icon(item['icon'])
+                row_data['icon'].set_from_icon_name(resolved_icon)
+
+                row_data['lbl_cpu'].set_label(f"{item['cpu_pct']:.1f}% CPU")
+                for c in ("pill-accent", "pill-warning", "pill-error", "pill-neutral"):
+                    row_data['lbl_cpu'].remove_css_class(c)
+                if item['cpu_pct'] >= 50.0:
+                    row_data['lbl_cpu'].add_css_class("pill-error")
+                elif item['cpu_pct'] >= 15.0:
+                    row_data['lbl_cpu'].add_css_class("pill-warning")
+                else:
+                    row_data['lbl_cpu'].add_css_class("pill-accent")
+
+                if item['rss_mb'] >= 1024.0:
+                    row_data['lbl_mem'].set_label(f"{item['rss_mb']/1024:.2f} GB")
+                else:
+                    row_data['lbl_mem'].set_label(f"{item['rss_mb']:.1f} MB")
+
+                row_data['btn_kill'].set_visible(True)
+                row_data['row'].set_visible(True)
+
+            for j in range(len(display_items), len(self.apps_row_pool)):
+                self.apps_row_pool[j]['row'].set_visible(False)
+
+    # ==========================================
+    # 5. POWER & BATTERY PAGE
     # ==========================================
     def build_power_page(self):
         page = Adw.PreferencesPage()
@@ -1253,7 +1685,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         # Hero Branding Card
         hero_group = Adw.PreferencesGroup()
         self.card_about_hero, self.lbl_about_hero_val, self.badge_about_hero, self.lbl_about_hero_sub, self.progress_about_hero = create_hero_card(
-            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.1.0", "pill-accent"
+            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.2.0", "pill-accent"
         )
         self.progress_about_hero.set_visible(False)
         hero_group.add(self.card_about_hero)
@@ -1310,6 +1742,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.refresh_gpu_stats()
         self.refresh_cpu_stats()
         self.refresh_memory_stats()
+        self.refresh_apps_stats()
         self.refresh_power_stats()
         self.refresh_sensors_stats()
         self.refresh_device_stats()
@@ -2008,18 +2441,18 @@ class NabuSystemMonitorApp(Adw.Application):
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
-        print("System Monitor 1.1.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.2.0 — Built by Kumar-Jy (@Kumar-Jy)")
         print("https://github.com/Kumar-Jy/nabu-pkgs")
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h'):
-        print("System Monitor 1.1.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.2.0 — Built by Kumar-Jy (@Kumar-Jy)")
         print("Usage:")
         print("  system-monitor              Launch GTK4/Libadwaita GUI")
         print("  system-monitor --log [CAT]  Print diagnostic log to stdout")
         print("  system-monitor --version    Show version and author information")
         print()
         print("Categories for --log:")
-        print("  all, gpu, cpu, memory, power, sensors, device, sysinfo")
+        print("  all, gpu, cpu, memory, apps, power, sensors, device, sysinfo")
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ('--log', '-l'):
         cat = sys.argv[2] if len(sys.argv) > 2 else 'all'
