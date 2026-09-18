@@ -2,13 +2,13 @@
 # Full-fledged Camera & Image Processing Studio for Linux
 
 pkgname=camera-studio
-pkgver=1.0.1
+pkgver=1.0.5
 pkgrel=1
 pkgdesc="Full-fledged hardware camera with real-time color grading, filters, and resolution controls"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('MIT')
-depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugin-gtk4' 'gst-plugin-libcamera' 'libcamera' 'v4l-utils' 'iio-sensor-proxy' 'hicolor-icon-theme')
+depends=('python' 'python-gobject' 'python-pillow' 'libadwaita' 'gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugin-gtk4' 'gst-plugin-libcamera' 'libcamera' 'v4l-utils' 'iio-sensor-proxy' 'hicolor-icon-theme')
 optdepends=('pipewire: audio shutter feedback'
             'libcanberra: system camera shutter sounds')
 provides=('pro-camera' 'cam-studio')

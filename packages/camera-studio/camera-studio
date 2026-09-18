@@ -103,21 +103,31 @@ COLOR_PRESETS = [
     {
         'id': 'natural',
         'name': '🌿 Natural',
-        'desc': 'Standard neutral colors',
-        'brightness': 0.0,
-        'contrast': 1.0,
-        'saturation': 1.0,
-        'hue': 0.0,
+        'desc': 'Calibrated neutral balance without sensor green fog',
+        'brightness': 0.02,
+        'contrast': 1.05,
+        'saturation': 1.05,
+        'hue': -0.04,
         'gamma': 1.0
+    },
+    {
+        'id': 'portrait',
+        'name': '👤 Portrait',
+        'desc': 'Warm, vibrant skin tones and softened highlights',
+        'brightness': 0.04,
+        'contrast': 1.08,
+        'saturation': 1.10,
+        'hue': -0.06,
+        'gamma': 1.02
     },
     {
         'id': 'vivid',
         'name': '🌈 Vivid',
         'desc': 'Punchy vibrant colors & crisp contrast',
         'brightness': 0.04,
-        'contrast': 1.25,
-        'saturation': 1.35,
-        'hue': 0.0,
+        'contrast': 1.22,
+        'saturation': 1.30,
+        'hue': -0.03,
         'gamma': 1.0
     },
     {
@@ -127,7 +137,7 @@ COLOR_PRESETS = [
         'brightness': 0.02,
         'contrast': 1.20,
         'saturation': 1.15,
-        'hue': 0.08,
+        'hue': 0.05,
         'gamma': 1.05
     },
     {
@@ -183,13 +193,12 @@ COLOR_PRESETS = [
 ]
 
 RESOLUTION_PRESETS = [
-    {'name': 'Full Sensor Native', 'w': 0, 'h': 0, 'desc': 'Maximum camera resolution'},
-    {'name': '4K UHD (16:9)', 'w': 3840, 'h': 2160, 'desc': '3840 × 2160 • 8.3 MP'},
-    {'name': '2K QHD (16:9)', 'w': 2560, 'h': 1440, 'desc': '2560 × 1440 • 3.7 MP'},
-    {'name': 'Full HD (16:9)', 'w': 1920, 'h': 1080, 'desc': '1920 × 1080 • 2.1 MP'},
-    {'name': 'HD (16:9)', 'w': 1280, 'h': 720, 'desc': '1280 × 720 • 0.9 MP'},
-    {'name': '4:3 Standard', 'w': 2048, 'h': 1536, 'desc': '2048 × 1536 • 3.1 MP'},
-    {'name': '1:1 Square (Avatar)', 'w': 2160, 'h': 2160, 'desc': '2160 × 2160 • Square'}
+    {'name': 'Max Clarity (13MP 4:3)', 'short': '13 MP (4:3)', 'w': 4160, 'h': 3120, 'desc': '4160 × 3120 • 13.0 MP Full Sensor Resolution'},
+    {'name': 'Ultra High Res (8MP 4:3)', 'short': '8 MP (4:3)', 'w': 3264, 'h': 2448, 'desc': '3264 × 2448 • 8.0 MP High Definition'},
+    {'name': 'Full Sensor Native (4:3)', 'short': '3.2 MP (4:3)', 'w': 2048, 'h': 1536, 'desc': '2048 × 1536 • 3.2 MP Fast Native Capture'},
+    {'name': '4K UHD (16:9)', 'short': '4K (16:9)', 'w': 3840, 'h': 2160, 'desc': '3840 × 2160 • 8.3 MP Cinematic Widescreen'},
+    {'name': 'Full HD (16:9)', 'short': '1080p (16:9)', 'w': 1920, 'h': 1080, 'desc': '1920 × 1080 • 2.1 MP Standard Widescreen'},
+    {'name': '1:1 Square (Avatar)', 'short': '1:1 Square', 'w': 2048, 'h': 2048, 'desc': '2048 × 2048 • Square Photo'}
 ]
 
 
@@ -222,17 +231,24 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.bal_elem = None
         self.gam_elem = None
         self.flip_elem = None
+        self.cam_elem = None
+
+        # Hardware Sensor controls (EV Bias, Sharpness, Computational Enhancement)
+        self.ev_bias = 0.0
+        self.cam_sharpness = 1.2
+        self.enable_enhancement = True
+        self.EV_CYCLE = [0.0, 0.5, 1.0, 1.5, -0.5]
 
         # Flashlight & Flash mode: 'off', 'auto', 'torch'
         self.flash_mode = 'off'
         self.flash_brightness = 255
         self.torch_on = False
 
-        # Image processing states
-        self.brightness = 0.0
-        self.contrast = 1.0
-        self.saturation = 1.0
-        self.hue = 0.0
+        # Image processing states (calibrated defaults without green haze)
+        self.brightness = 0.02
+        self.contrast = 1.05
+        self.saturation = 1.05
+        self.hue = -0.04
         self.gamma = 1.0
         self.mirrored = False
         self.rotation_degrees = 0
@@ -279,8 +295,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     def scan_recent_photos(self):
         files = glob.glob(os.path.join(self.save_dir, 'IMG_*.*'))
+        files = [f for f in files if os.path.isfile(f) and os.path.getsize(f) > 0]
         files.sort(key=os.path.getmtime, reverse=True)
-        return files[:20]
+        return files[:50]
 
     def set_hardware_led(self, state: bool, brightness: int = 255):
         """Controls the physical rear camera LED flash/torch."""
@@ -397,6 +414,15 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         top_capsule.append(self.btn_flash)
         self.update_flash_button()
 
+        # 3. Dedicated Resolution Selector Button with Dropdown Popover
+        self.btn_res = Gtk.MenuButton()
+        self.btn_res.add_css_class("res-badge-btn")
+        self.btn_res.set_always_show_arrow(True)
+        self.btn_res.set_valign(Gtk.Align.CENTER)
+        self.btn_res.set_popover(self.build_resolution_popover())
+        top_capsule.append(self.btn_res)
+        self.update_resolution_ui()
+
         spacer_top = Gtk.Box()
         spacer_top.set_hexpand(True)
         top_capsule.append(spacer_top)
@@ -433,6 +459,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_rotate.connect('clicked', self.on_rotate_camera)
         top_capsule.append(self.btn_rotate)
         self.update_rotate_button()
+
+        # Quick EV Exposure Compensation Button
+        self.btn_ev_quick = Gtk.Button(icon_name="weather-clear-symbolic")
+        self.btn_ev_quick.add_css_class("top-tool-btn")
+        self.btn_ev_quick.set_valign(Gtk.Align.CENTER)
+        self.btn_ev_quick.set_tooltip_text("Quick Exposure Bias (Tap to cycle: 0 -> +0.5 -> +1.0 -> +1.5 -> -0.5)")
+        self.btn_ev_quick.connect('clicked', self.on_cycle_ev)
+        top_capsule.append(self.btn_ev_quick)
 
         # Customization Sheet Toggle
         self.btn_settings = Gtk.Button(icon_name="emblem-system-symbolic")
@@ -474,33 +508,19 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         center_spacer.set_vexpand(True)
         controls_layout.append(center_spacer)
 
-        # --- Middle Filter Presets Strip ---
-        filter_scroll = Gtk.ScrolledWindow()
-        filter_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        filter_scroll.set_margin_bottom(10)
-        filter_scroll.set_margin_start(16)
-        filter_scroll.set_margin_end(16)
-        filter_scroll.set_halign(Gtk.Align.CENTER)
-        filter_scroll.set_valign(Gtk.Align.CENTER)
+        # --- Live Pro Controls & Looks HUD (Viewfinder Stays Visible) ---
+        self.hud_revealer = Gtk.Revealer()
+        self.hud_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.hud_revealer.set_reveal_child(True)
+        self.hud_revealer.set_valign(Gtk.Align.CENTER)
+        self.hud_revealer.set_halign(Gtk.Align.CENTER)
+        self.hud_revealer.set_margin_bottom(10)
+        self.hud_revealer.set_margin_start(16)
+        self.hud_revealer.set_margin_end(16)
 
-        preset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        preset_box.add_css_class("preset-pill-strip")
-        preset_box.set_valign(Gtk.Align.CENTER)
-
-        self.preset_buttons = {}
-        for p in COLOR_PRESETS:
-            btn = Gtk.Button(label=p['name'])
-            btn.set_tooltip_text(p['desc'])
-            btn.add_css_class("preset-pill")
-            btn.set_valign(Gtk.Align.CENTER)
-            if p['id'] == 'natural':
-                btn.add_css_class("preset-pill-active")
-            btn.connect('clicked', self.on_preset_clicked, p)
-            preset_box.append(btn)
-            self.preset_buttons[p['id']] = btn
-
-        filter_scroll.set_child(preset_box)
-        controls_layout.append(filter_scroll)
+        hud_content = self.build_live_pro_hud()
+        self.hud_revealer.set_child(hud_content)
+        controls_layout.append(self.hud_revealer)
 
         # --- Bottom Shutter & Controls Bar ---
         bottom_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -521,7 +541,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         left_box.set_valign(Gtk.Align.CENTER)
 
         self.btn_gallery = Gtk.Button()
-        self.btn_gallery.set_tooltip_text("Open Gallery & Photo Inspector")
+        self.btn_gallery.set_tooltip_text("Open Gallery & Photo Inspector (Long-press to open in Image Viewer)")
         self.btn_gallery.add_css_class("thumbnail-button")
         self.btn_gallery.set_valign(Gtk.Align.CENTER)
         self.btn_gallery.set_halign(Gtk.Align.CENTER)
@@ -531,15 +551,28 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.img_thumb.set_halign(Gtk.Align.CENTER)
         self.btn_gallery.set_child(self.img_thumb)
         self.btn_gallery.connect('clicked', self.on_open_gallery)
+
+        # Long-press gesture (touchscreen hold) to open directly in system image viewer
+        lp_gallery = Gtk.GestureLongPress()
+        lp_gallery.connect('pressed', lambda *_: self.open_last_photo_external())
+        self.btn_gallery.add_controller(lp_gallery)
+
+        # Right-click gesture to open directly in system image viewer
+        rc_gallery = Gtk.GestureClick()
+        rc_gallery.set_button(3)
+        rc_gallery.connect('pressed', lambda *_: self.open_last_photo_external())
+        self.btn_gallery.add_controller(rc_gallery)
+
         left_box.append(self.btn_gallery)
         self.update_thumbnail_preview()
 
         self.btn_adjust_color = Gtk.Button(icon_name="color-select-symbolic")
-        self.btn_adjust_color.set_tooltip_text("Fine-tune Image Colors & Resolution Controls")
+        self.btn_adjust_color.set_tooltip_text("Toggle Live Pro Image Tuning & Color Looks HUD (Pro Mode)")
         self.btn_adjust_color.add_css_class("action-circle-btn")
+        self.btn_adjust_color.add_css_class("hud-active-btn")
         self.btn_adjust_color.set_valign(Gtk.Align.CENTER)
         self.btn_adjust_color.set_halign(Gtk.Align.CENTER)
-        self.btn_adjust_color.connect('clicked', lambda _: self.drawer_revealer.set_reveal_child(not self.drawer_revealer.get_reveal_child()))
+        self.btn_adjust_color.connect('clicked', self.on_toggle_hud)
         left_box.append(self.btn_adjust_color)
 
         # 2. Center: Large Concentric Circular Shutter Button
@@ -612,6 +645,296 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # Load Custom CSS styling
         self.apply_css()
 
+    def build_resolution_popover(self):
+        self.popover_res = Gtk.Popover()
+        pop_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        pop_box.set_margin_top(8)
+        pop_box.set_margin_bottom(8)
+        pop_box.set_margin_start(8)
+        pop_box.set_margin_end(8)
+
+        lbl_header = Gtk.Label(label="Capture Resolution")
+        lbl_header.add_css_class("heading")
+        lbl_header.set_halign(Gtk.Align.START)
+        lbl_header.set_margin_bottom(4)
+        lbl_header.set_margin_start(6)
+        pop_box.append(lbl_header)
+
+        self.res_pop_checks = []
+        for idx, p in enumerate(RESOLUTION_PRESETS):
+            btn = Gtk.Button()
+            btn.add_css_class("flat")
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_margin_start(4)
+            row.set_margin_end(6)
+            row.set_margin_top(3)
+            row.set_margin_bottom(3)
+
+            check = Gtk.Image(icon_name="object-select-symbolic")
+            check.set_pixel_size(16)
+            check.set_visible(idx == self.target_res_idx)
+            self.res_pop_checks.append(check)
+            row.append(check)
+
+            tbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            tlbl = Gtk.Label(label=p['name'])
+            tlbl.set_halign(Gtk.Align.START)
+            tlbl.add_css_class("title-4")
+            dlbl = Gtk.Label(label=p['desc'])
+            dlbl.set_halign(Gtk.Align.START)
+            dlbl.add_css_class("dim-label")
+            dlbl.add_css_class("caption")
+            tbox.append(tlbl)
+            tbox.append(dlbl)
+            row.append(tbox)
+
+            btn.set_child(row)
+            btn.connect('clicked', lambda _b, i=idx: self.set_target_resolution(i))
+            pop_box.append(btn)
+
+        self.popover_res.set_child(pop_box)
+        return self.popover_res
+
+    def build_live_pro_hud(self):
+        hud_capsule = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        hud_capsule.add_css_class("live-pro-capsule")
+
+        # Row 1: Category Switcher Tab Bar
+        hud_tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        hud_tab_bar.set_halign(Gtk.Align.CENTER)
+        hud_tab_bar.set_valign(Gtk.Align.CENTER)
+
+        self.hud_tab_buttons = {}
+        tabs = [
+            ('looks', '🎨 Looks', 'Color Grading & Filter Presets'),
+            ('ev', '☀️ Exposure', 'Exposure Bias (EV) - Brighten or Darken Scene'),
+            ('tint', '🌡️ WB Tint', 'White Balance Tint - Magenta ↔ Green Balance'),
+            ('contrast', '🌗 Contrast', 'Contrast & Visual Clarity'),
+            ('sat', '🌈 Vibrance', 'Color Vibrance & Saturation'),
+            ('sharp', '✨ Sharpness', 'Hardware Sensor Edge Sharpness'),
+        ]
+
+        for tid, tlabel, ttip in tabs:
+            tbtn = Gtk.Button(label=tlabel)
+            tbtn.set_tooltip_text(ttip)
+            tbtn.add_css_class("hud-tab-btn")
+            if tid == 'looks':
+                tbtn.add_css_class("hud-tab-btn-active")
+            tbtn.connect('clicked', lambda _b, t=tid: self.switch_hud_tab(t))
+            hud_tab_bar.append(tbtn)
+            self.hud_tab_buttons[tid] = tbtn
+
+        # Reset button on right
+        btn_hud_reset = Gtk.Button(label="↺ Reset")
+        btn_hud_reset.set_tooltip_text("Reset all adjustments to neutral calibrated defaults")
+        btn_hud_reset.add_css_class("hud-tab-btn")
+        btn_hud_reset.add_css_class("hud-reset-btn")
+        btn_hud_reset.connect('clicked', self.on_reset_all_processing)
+        hud_tab_bar.append(btn_hud_reset)
+
+        hud_capsule.append(hud_tab_bar)
+
+        # Row 2: Dynamic Stack of Controls
+        self.hud_stack = Gtk.Stack()
+        self.hud_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.hud_stack.set_transition_duration(120)
+        self.hud_stack.set_halign(Gtk.Align.CENTER)
+
+        # --- 1. Page: Looks (Preset Pills) ---
+        filter_scroll = Gtk.ScrolledWindow()
+        filter_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        filter_scroll.set_halign(Gtk.Align.CENTER)
+        filter_scroll.set_valign(Gtk.Align.CENTER)
+
+        preset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        preset_box.add_css_class("preset-pill-strip")
+        preset_box.set_valign(Gtk.Align.CENTER)
+
+        self.preset_buttons = {}
+        for p in COLOR_PRESETS:
+            btn = Gtk.Button(label=p['name'])
+            btn.set_tooltip_text(p['desc'])
+            btn.add_css_class("preset-pill")
+            btn.set_valign(Gtk.Align.CENTER)
+            if p['id'] == 'natural':
+                btn.add_css_class("preset-pill-active")
+            btn.connect('clicked', self.on_preset_clicked, p)
+            preset_box.append(btn)
+            self.preset_buttons[p['id']] = btn
+
+        filter_scroll.set_child(preset_box)
+        self.hud_stack.add_named(filter_scroll, 'looks')
+
+        # --- 2. Page: Exposure (EV Bias) ---
+        box_ev = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_ev.set_halign(Gtk.Align.CENTER)
+        box_ev.set_valign(Gtk.Align.CENTER)
+
+        lbl_ev_tag = Gtk.Label(label="EV:")
+        lbl_ev_tag.add_css_class("hud-control-label")
+        box_ev.append(lbl_ev_tag)
+
+        self.hud_scale_ev = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -2.0, 2.0, 0.1)
+        self.hud_scale_ev.set_value(self.ev_bias)
+        self.hud_scale_ev.set_size_request(200, -1)
+        self.hud_scale_ev.connect('value-changed', lambda s: self.set_ev_bias(s.get_value(), update_hud=False))
+        box_ev.append(self.hud_scale_ev)
+
+        self.hud_lbl_ev = Gtk.Label(label=f"{self.ev_bias:+.1f} EV")
+        self.hud_lbl_ev.add_css_class("hud-value-badge")
+        self.hud_lbl_ev.set_width_chars(8)
+        box_ev.append(self.hud_lbl_ev)
+
+        ev_chips = [(-1.0, "🌙 -1.0"), (0.0, "☀️ 0.0"), (0.5, "💡 +0.5"), (1.0, "✨ +1.0"), (1.5, "🌟 +1.5")]
+        for val, name in ev_chips:
+            b = Gtk.Button(label=name)
+            b.add_css_class("hud-chip-btn")
+            b.connect('clicked', lambda _b, v=val: self.set_ev_bias(v))
+            box_ev.append(b)
+
+        self.hud_stack.add_named(box_ev, 'ev')
+
+        # --- 3. Page: WB Tint (Green ↔ Magenta Balance) ---
+        box_tint = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_tint.set_halign(Gtk.Align.CENTER)
+        box_tint.set_valign(Gtk.Align.CENTER)
+
+        lbl_mag = Gtk.Label(label="🌸 Magenta")
+        lbl_mag.add_css_class("dim-label")
+        box_tint.append(lbl_mag)
+
+        self.hud_scale_tint = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -0.5, 0.5, 0.01)
+        self.hud_scale_tint.set_value(self.hue)
+        self.hud_scale_tint.set_size_request(180, -1)
+        self.hud_scale_tint.connect('value-changed', lambda s: self.set_hue_tint(s.get_value(), update_hud=False))
+        box_tint.append(self.hud_scale_tint)
+
+        lbl_grn = Gtk.Label(label="🌿 Green")
+        lbl_grn.add_css_class("dim-label")
+        box_tint.append(lbl_grn)
+
+        self.hud_lbl_tint = Gtk.Label(label=f"{self.hue:+.2f}")
+        self.hud_lbl_tint.add_css_class("hud-value-badge")
+        self.hud_lbl_tint.set_width_chars(6)
+        box_tint.append(self.hud_lbl_tint)
+
+        tint_chips = [(-0.15, "🌸 Magenta"), (-0.04, "⚖️ Auto Cal"), (0.0, "⚪ Neutral"), (0.10, "🌿 Warm")]
+        for val, name in tint_chips:
+            b = Gtk.Button(label=name)
+            b.add_css_class("hud-chip-btn")
+            b.connect('clicked', lambda _b, v=val: self.set_hue_tint(v))
+            box_tint.append(b)
+
+        self.hud_stack.add_named(box_tint, 'tint')
+
+        # --- 4. Page: Contrast & Clarity ---
+        box_c = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_c.set_halign(Gtk.Align.CENTER)
+        box_c.set_valign(Gtk.Align.CENTER)
+
+        lbl_c_tag = Gtk.Label(label="Contrast:")
+        lbl_c_tag.add_css_class("hud-control-label")
+        box_c.append(lbl_c_tag)
+
+        self.hud_scale_contrast = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 2.0, 0.05)
+        self.hud_scale_contrast.set_value(self.contrast)
+        self.hud_scale_contrast.set_size_request(180, -1)
+        self.hud_scale_contrast.connect('value-changed', lambda s: self.set_contrast_val(s.get_value(), update_hud=False))
+        box_c.append(self.hud_scale_contrast)
+
+        self.hud_lbl_contrast = Gtk.Label(label=f"{self.contrast:.2f}")
+        self.hud_lbl_contrast.add_css_class("hud-value-badge")
+        self.hud_lbl_contrast.set_width_chars(5)
+        box_c.append(self.hud_lbl_contrast)
+
+        c_chips = [(0.90, "Soft 0.9"), (1.05, "Default 1.05"), (1.25, "Punchy 1.25"), (1.45, "High 1.45")]
+        for val, name in c_chips:
+            b = Gtk.Button(label=name)
+            b.add_css_class("hud-chip-btn")
+            b.connect('clicked', lambda _b, v=val: self.set_contrast_val(v))
+            box_c.append(b)
+
+        self.hud_stack.add_named(box_c, 'contrast')
+
+        # --- 5. Page: Vibrance / Saturation ---
+        box_s = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_s.set_halign(Gtk.Align.CENTER)
+        box_s.set_valign(Gtk.Align.CENTER)
+
+        lbl_s_tag = Gtk.Label(label="Vibrance:")
+        lbl_s_tag.add_css_class("hud-control-label")
+        box_s.append(lbl_s_tag)
+
+        self.hud_scale_sat = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.05)
+        self.hud_scale_sat.set_value(self.saturation)
+        self.hud_scale_sat.set_size_request(180, -1)
+        self.hud_scale_sat.connect('value-changed', lambda s: self.set_saturation_val(s.get_value(), update_hud=False))
+        box_s.append(self.hud_scale_sat)
+
+        self.hud_lbl_sat = Gtk.Label(label=f"{self.saturation:.2f}")
+        self.hud_lbl_sat.add_css_class("hud-value-badge")
+        self.hud_lbl_sat.set_width_chars(5)
+        box_s.append(self.hud_lbl_sat)
+
+        s_chips = [(0.0, "Mono 0.0"), (0.80, "Muted 0.8"), (1.05, "Natural 1.05"), (1.30, "Vivid 1.30")]
+        for val, name in s_chips:
+            b = Gtk.Button(label=name)
+            b.add_css_class("hud-chip-btn")
+            b.connect('clicked', lambda _b, v=val: self.set_saturation_val(v))
+            box_s.append(b)
+
+        self.hud_stack.add_named(box_s, 'sat')
+
+        # --- 6. Page: Sharpness ---
+        box_sh = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_sh.set_halign(Gtk.Align.CENTER)
+        box_sh.set_valign(Gtk.Align.CENTER)
+
+        lbl_sh_tag = Gtk.Label(label="Sharpness:")
+        lbl_sh_tag.add_css_class("hud-control-label")
+        box_sh.append(lbl_sh_tag)
+
+        self.hud_scale_sharp = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.1)
+        self.hud_scale_sharp.set_value(self.cam_sharpness)
+        self.hud_scale_sharp.set_size_request(180, -1)
+        self.hud_scale_sharp.connect('value-changed', lambda s: self.set_sharpness_val(s.get_value(), update_hud=False))
+        box_sh.append(self.hud_scale_sharp)
+
+        self.hud_lbl_sharp = Gtk.Label(label=f"{self.cam_sharpness:.1f}")
+        self.hud_lbl_sharp.add_css_class("hud-value-badge")
+        self.hud_lbl_sharp.set_width_chars(5)
+        box_sh.append(self.hud_lbl_sharp)
+
+        sh_chips = [(0.5, "Soft 0.5"), (1.0, "Std 1.0"), (1.5, "Crisp 1.5"), (2.0, "Max 2.0")]
+        for val, name in sh_chips:
+            b = Gtk.Button(label=name)
+            b.add_css_class("hud-chip-btn")
+            b.connect('clicked', lambda _b, v=val: self.set_sharpness_val(v))
+            box_sh.append(b)
+
+        self.hud_stack.add_named(box_sh, 'sharp')
+
+        hud_capsule.append(self.hud_stack)
+        return hud_capsule
+
+    def switch_hud_tab(self, tab_id):
+        cur = self.hud_stack.get_visible_child_name()
+        target = 'looks' if (cur == tab_id and tab_id != 'looks') else tab_id
+        self.hud_stack.set_visible_child_name(target)
+        for tid, btn in self.hud_tab_buttons.items():
+            if tid == target:
+                btn.add_css_class("hud-tab-btn-active")
+            else:
+                btn.remove_css_class("hud-tab-btn-active")
+
+    def on_toggle_hud(self, _btn=None):
+        revealed = self.hud_revealer.get_reveal_child()
+        self.hud_revealer.set_reveal_child(not revealed)
+        if not revealed:
+            self.btn_adjust_color.add_css_class("hud-active-btn")
+        else:
+            self.btn_adjust_color.remove_css_class("hud-active-btn")
+
     def build_customization_drawer(self):
         card = Adw.PreferencesPage()
         card.set_size_request(580, -1)
@@ -622,8 +945,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header_box.set_valign(Gtk.Align.CENTER)
         
-        lbl_drawer_title = Gtk.Label(label="Image Processing &amp; Resolution")
-        lbl_drawer_title.set_use_markup(True)
+        lbl_drawer_title = Gtk.Label(label="Image Processing & Resolution")
         lbl_drawer_title.add_css_class("title-2")
         lbl_drawer_title.set_hexpand(True)
         lbl_drawer_title.set_halign(Gtk.Align.START)
@@ -639,7 +961,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         card.add(header_group)
 
         # --- SECTION: CAMERA & FLASHLIGHT ILLUMINATION ---
-        cam_group = Adw.PreferencesGroup(title="Camera Hardware &amp; Flashlight", description="Toggle sensors and illumination modes")
+        cam_group = Adw.PreferencesGroup(title="Camera Hardware and Flashlight", description="Toggle sensors and illumination modes")
 
         # Camera Switcher Row
         self.row_active_cam = Adw.ActionRow(title="Active Camera Sensor")
@@ -719,16 +1041,93 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
             card.add(self.focus_group)
 
+        # --- SECTION: HARDWARE EXPOSURE & SENSOR ISP ---
+        isp_group = Adw.PreferencesGroup(title="Hardware Exposure and Clarity", description="Control exposure bias and hardware edge enhancement")
+
+        # Exposure Value (EV Bias) Slider
+        self.row_ev = Adw.ActionRow(title="Exposure Bias (EV)", subtitle="Instantly brighten or darken scene without waiting for auto-exposure")
+        self.scale_ev = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -2.0, 2.0, 0.25)
+        self.scale_ev.set_value(0.0)
+        self.scale_ev.add_mark(-1.0, Gtk.PositionType.BOTTOM, "-1.0")
+        self.scale_ev.add_mark(0.0, Gtk.PositionType.BOTTOM, "0.0")
+        self.scale_ev.add_mark(1.0, Gtk.PositionType.BOTTOM, "+1.0")
+        self.scale_ev.set_size_request(200, -1)
+        self.scale_ev.connect('value-changed', self.on_ev_slider_changed)
+        self.lbl_ev_val = Gtk.Label(label="+0.00")
+        self.lbl_ev_val.set_width_chars(6)
+        box_ev = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_ev.append(self.scale_ev)
+        box_ev.append(self.lbl_ev_val)
+        self.row_ev.add_suffix(box_ev)
+        isp_group.add(self.row_ev)
+
+        # Quick EV Presets Strip (full-width pill bar, prevents layout overflow)
+        row_ev_presets = Adw.PreferencesRow()
+        box_ev_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box_ev_row.set_margin_top(8)
+        box_ev_row.set_margin_bottom(8)
+        box_ev_row.set_margin_start(12)
+        box_ev_row.set_margin_end(12)
+
+        lbl_ev_p = Gtk.Label(label="Quick Light Presets")
+        lbl_ev_p.add_css_class("dim-label")
+        lbl_ev_p.set_halign(Gtk.Align.START)
+        box_ev_row.append(lbl_ev_p)
+
+        box_evp = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box_evp.set_homogeneous(True)
+        box_evp.set_valign(Gtk.Align.CENTER)
+        for lbl, ev_val, tip in [
+            ("🌙 -1.0", -1.0, "Dark / Shadow Exposure (-1.0 EV)"),
+            ("☀️ 0.0", 0.0, "Normal / Auto Exposure (0.0 EV)"),
+            ("💡 +0.5", 0.5, "Slight Boost (+0.5 EV)"),
+            ("✨ +1.0", 1.0, "Low-Light Boost (+1.0 EV)"),
+            ("🌟 +1.5", 1.5, "Night Mode (+1.5 EV)")
+        ]:
+            btn_ev = Gtk.Button(label=lbl)
+            btn_ev.set_tooltip_text(tip)
+            btn_ev.add_css_class("flat")
+            btn_ev.connect('clicked', lambda _, v=ev_val: self.scale_ev.set_value(v))
+            box_evp.append(btn_ev)
+        box_ev_row.append(box_evp)
+        row_ev_presets.set_child(box_ev_row)
+        isp_group.add(row_ev_presets)
+
+        # Sensor Sharpness
+        self.row_sharp = Adw.ActionRow(title="Edge Sharpness", subtitle="Hardware high-frequency edge enhancement for crisp textures")
+        self.scale_sharp = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.1)
+        self.scale_sharp.set_value(1.2)
+        self.scale_sharp.set_size_request(200, -1)
+        self.scale_sharp.connect('value-changed', self.on_sharpness_slider_changed)
+        self.lbl_sharp_val = Gtk.Label(label="1.2")
+        self.lbl_sharp_val.set_width_chars(5)
+        box_s = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box_s.append(self.scale_sharp)
+        box_s.append(self.lbl_sharp_val)
+        self.row_sharp.add_suffix(box_s)
+        isp_group.add(self.row_sharp)
+
+        # Computational Photography Enhancement Toggle
+        row_enhance = Adw.ActionRow(title="Computational Photography (AI/Pro)", subtitle="Auto-contrast dynamic range, edge unsharp mask, and vibrant color tone curve")
+        self.switch_enhance = Gtk.Switch()
+        self.switch_enhance.set_valign(Gtk.Align.CENTER)
+        self.switch_enhance.set_active(True)
+        self.switch_enhance.connect('notify::active', lambda s, _: setattr(self, 'enable_enhancement', s.get_active()))
+        row_enhance.add_suffix(self.switch_enhance)
+        isp_group.add(row_enhance)
+
+        card.add(isp_group)
+
         # --- SECTION: COLOR ADJUSTMENTS ---
         color_group = Adw.PreferencesGroup(title="Live Color Tuning", description="Adjust real-time image sensor parameters")
 
         # Brightness Slider
         self.row_brightness = Adw.ActionRow(title="Brightness")
-        self.scale_brightness = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.05)
-        self.scale_brightness.set_value(0.0)
+        self.scale_brightness = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.02)
+        self.scale_brightness.set_value(self.brightness)
         self.scale_brightness.set_size_request(200, -1)
         self.scale_brightness.connect('value-changed', self.on_color_slider_changed)
-        self.lbl_brightness_val = Gtk.Label(label="0.00")
+        self.lbl_brightness_val = Gtk.Label(label=f"{self.brightness:+.2f}")
         self.lbl_brightness_val.set_width_chars(5)
         box_b = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box_b.append(self.scale_brightness)
@@ -739,10 +1138,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # Contrast Slider
         self.row_contrast = Adw.ActionRow(title="Contrast")
         self.scale_contrast = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.05)
-        self.scale_contrast.set_value(1.0)
+        self.scale_contrast.set_value(self.contrast)
         self.scale_contrast.set_size_request(200, -1)
         self.scale_contrast.connect('value-changed', self.on_color_slider_changed)
-        self.lbl_contrast_val = Gtk.Label(label="1.00")
+        self.lbl_contrast_val = Gtk.Label(label=f"{self.contrast:.2f}")
         self.lbl_contrast_val.set_width_chars(5)
         box_c = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box_c.append(self.scale_contrast)
@@ -753,10 +1152,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # Saturation Slider
         self.row_saturation = Adw.ActionRow(title="Saturation")
         self.scale_saturation = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 2.0, 0.05)
-        self.scale_saturation.set_value(1.0)
+        self.scale_saturation.set_value(self.saturation)
         self.scale_saturation.set_size_request(200, -1)
         self.scale_saturation.connect('value-changed', self.on_color_slider_changed)
-        self.lbl_saturation_val = Gtk.Label(label="1.00")
+        self.lbl_saturation_val = Gtk.Label(label=f"{self.saturation:.2f}")
         self.lbl_saturation_val.set_width_chars(5)
         box_s = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box_s.append(self.scale_saturation)
@@ -764,13 +1163,16 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.row_saturation.add_suffix(box_s)
         color_group.add(self.row_saturation)
 
-        # Hue Slider
-        self.row_hue = Adw.ActionRow(title="Hue Tint")
-        self.scale_hue = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.05)
-        self.scale_hue.set_value(0.0)
+        # White Balance Tint (Green ↔ Magenta) Slider
+        self.row_hue = Adw.ActionRow(title="White Balance Tint", subtitle="Green ↔ Magenta balance (negative values eliminate green haze)")
+        self.scale_hue = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -0.5, 0.5, 0.01)
+        self.scale_hue.set_value(self.hue)
+        self.scale_hue.add_mark(-0.3, Gtk.PositionType.BOTTOM, "Magenta")
+        self.scale_hue.add_mark(0.0, Gtk.PositionType.BOTTOM, "Neutral")
+        self.scale_hue.add_mark(0.3, Gtk.PositionType.BOTTOM, "Green")
         self.scale_hue.set_size_request(200, -1)
         self.scale_hue.connect('value-changed', self.on_color_slider_changed)
-        self.lbl_hue_val = Gtk.Label(label="0.00")
+        self.lbl_hue_val = Gtk.Label(label=f"{self.hue:+.2f}")
         self.lbl_hue_val.set_width_chars(5)
         box_h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box_h.append(self.scale_hue)
@@ -804,25 +1206,28 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         card.add(color_group)
 
         # --- SECTION: RESOLUTION & CAPTURE FORMAT ---
-        res_group = Adw.PreferencesGroup(title="Resolution &amp; Image Format", description="Customize photo dimensions and file encoding")
+        res_group = Adw.PreferencesGroup(title="Resolution and Image Format", description="Customize photo dimensions and file encoding")
 
-        # Resolution Dropdown
-        row_res = Adw.ActionRow(title="Capture Resolution")
-        self.combo_res = Gtk.DropDown.new_from_strings([f"{p['name']} ({p['desc']})" for p in RESOLUTION_PRESETS])
-        self.combo_res.set_valign(Gtk.Align.CENTER)
-        self.combo_res.set_selected(0)
-        self.combo_res.connect('notify::selected', self.on_resolution_changed)
-        row_res.add_suffix(self.combo_res)
-        res_group.add(row_res)
+        # Resolution ComboRow (Native Libadwaita row, clean layout, never squashes title)
+        res_names = [p['name'] for p in RESOLUTION_PRESETS]
+        self.row_res = Adw.ComboRow(
+            title="Capture Resolution",
+            subtitle=RESOLUTION_PRESETS[self.target_res_idx]['desc'],
+            model=Gtk.StringList.new(res_names)
+        )
+        self.row_res.set_selected(self.target_res_idx)
+        self.row_res.connect('notify::selected', self.on_resolution_changed)
+        res_group.add(self.row_res)
 
         # Output Format Selector (JPEG, PNG, WebP)
-        row_fmt = Adw.ActionRow(title="Image File Format")
-        self.combo_fmt = Gtk.DropDown.new_from_strings(["JPEG (.jpg - Standard)", "PNG (.png - Lossless)", "WebP (.webp - Compact)"])
-        self.combo_fmt.set_valign(Gtk.Align.CENTER)
-        self.combo_fmt.set_selected(0)
-        self.combo_fmt.connect('notify::selected', self.on_format_changed)
-        row_fmt.add_suffix(self.combo_fmt)
-        res_group.add(row_fmt)
+        self.row_fmt = Adw.ComboRow(
+            title="Image File Format",
+            subtitle="Standard compressed photo (95% quality)",
+            model=Gtk.StringList.new(["JPEG (.jpg)", "PNG (.png)", "WebP (.webp)"])
+        )
+        self.row_fmt.set_selected(0)
+        self.row_fmt.connect('notify::selected', self.on_format_changed)
+        res_group.add(self.row_fmt)
 
         # Compression Quality Slider
         self.row_quality = Adw.ActionRow(title="Compression Quality")
@@ -1017,6 +1422,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             border-color: #38bdf8;
             transform: scale(1.04);
         }
+        .thumbnail-button:active {
+            border-color: #38bdf8;
+            transform: scale(0.95);
+        }
         .preset-pill-strip {
             background-color: rgba(18, 21, 28, 0.80);
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1068,6 +1477,94 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .grid-line-vertical {
             border-right: 1px solid rgba(255, 255, 255, 0.28);
+        }
+        .res-badge-btn {
+            font-weight: 700;
+            font-size: 13px;
+            color: #c084fc;
+            background-color: rgba(192, 132, 252, 0.12);
+            border: 1px solid rgba(192, 132, 252, 0.32);
+            border-radius: 18px;
+            padding: 4px 12px;
+            min-height: 36px;
+            transition: all 120ms ease;
+        }
+        .res-badge-btn:hover {
+            background-color: rgba(192, 132, 252, 0.25);
+            border-color: #c084fc;
+        }
+        .live-pro-capsule {
+            background-color: rgba(18, 21, 28, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 26px;
+            padding: 8px 16px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+        }
+        .hud-tab-btn {
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 12px;
+            min-height: 30px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            color: #cbd5e1;
+            transition: all 120ms ease;
+        }
+        .hud-tab-btn:hover {
+            background-color: rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+        }
+        .hud-tab-btn-active {
+            background-color: #38bdf8;
+            border-color: #38bdf8;
+            color: #0f172a;
+            font-weight: 700;
+        }
+        .hud-reset-btn {
+            color: #f87171;
+            border-color: rgba(248, 113, 113, 0.3);
+            background: rgba(248, 113, 113, 0.08);
+        }
+        .hud-reset-btn:hover {
+            background-color: #ef4444;
+            color: #ffffff;
+            border-color: #ef4444;
+        }
+        .hud-control-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #94a3b8;
+        }
+        .hud-value-badge {
+            font-family: monospace;
+            font-weight: 700;
+            font-size: 13px;
+            color: #38bdf8;
+            background-color: rgba(56, 189, 248, 0.12);
+            border-radius: 8px;
+            padding: 2px 6px;
+        }
+        .hud-chip-btn {
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            min-height: 26px;
+            background-color: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #f1f5f9;
+            transition: all 100ms ease;
+        }
+        .hud-chip-btn:hover {
+            background-color: rgba(255, 255, 255, 0.20);
+            border-color: rgba(255, 255, 255, 0.30);
+            color: #ffffff;
+        }
+        .hud-active-btn {
+            background-color: rgba(56, 189, 248, 0.25);
+            border-color: #38bdf8;
+            color: #38bdf8;
         }
         """
         provider = Gtk.CssProvider()
@@ -1484,6 +1981,12 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         cam = self.cameras[self.cur_cam_idx]
         is_front = cam.get('is_front', False)
 
+        # Adapt resolution preset when switching between front (8MP max) and rear (13MP max)
+        if is_front and self.target_res_idx == 0:
+            self.set_target_resolution(1, update_drawer=True)
+        elif not is_front and self.target_res_idx == 1:
+            self.set_target_resolution(0, update_drawer=True)
+
         # Auto-configure mirror (selfies look natural mirrored)
         self.mirrored = is_front
         self.update_mirror_button()
@@ -1491,6 +1994,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         self.update_camera_switcher_button()
         self.update_flash_button()
+        self.update_resolution_ui()
         if hasattr(self, 'focus_group'):
             self.focus_group.set_visible(not is_front)
         self.show_toast(f"Switched to {cam['name']} ({cam['megapixels']})")
@@ -1498,7 +2002,98 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # Restart pipeline with the new camera
         self.start_camera_pipeline()
 
-    # --- Live Color Adjustments ---
+    # --- Unified Live Control Setters (Dual HUD & Drawer Sync) ---
+    def set_ev_bias(self, val, update_hud=True, update_drawer=True):
+        self.ev_bias = round(val, 2)
+        if hasattr(self, 'hud_lbl_ev'):
+            self.hud_lbl_ev.set_label(f"{self.ev_bias:+.1f} EV")
+        if hasattr(self, 'lbl_ev_val'):
+            self.lbl_ev_val.set_label(f"{self.ev_bias:+.2f}")
+        if update_hud and hasattr(self, 'hud_scale_ev'):
+            self.hud_scale_ev.set_value(self.ev_bias)
+        if update_drawer and hasattr(self, 'scale_ev'):
+            self.scale_ev.set_value(self.ev_bias)
+
+        if self.cam_elem:
+            try:
+                self.cam_elem.set_property('exposure-value', float(self.ev_bias))
+            except Exception:
+                pass
+        if self.bal_elem:
+            try:
+                effective_bright = max(-1.0, min(1.0, self.brightness + self.ev_bias * 0.18))
+                self.bal_elem.set_property('brightness', effective_bright)
+            except Exception:
+                pass
+
+    def set_hue_tint(self, val, update_hud=True, update_drawer=True):
+        self.hue = round(val, 2)
+        if hasattr(self, 'hud_lbl_tint'):
+            self.hud_lbl_tint.set_label(f"{self.hue:+.2f}")
+        if hasattr(self, 'lbl_hue_val'):
+            self.lbl_hue_val.set_label(f"{self.hue:+.2f}")
+        if update_hud and hasattr(self, 'hud_scale_tint'):
+            self.hud_scale_tint.set_value(self.hue)
+        if update_drawer and hasattr(self, 'scale_hue'):
+            self.scale_hue.set_value(self.hue)
+
+        if self.bal_elem:
+            try:
+                self.bal_elem.set_property('hue', self.hue)
+            except Exception:
+                pass
+
+    def set_contrast_val(self, val, update_hud=True, update_drawer=True):
+        self.contrast = round(val, 2)
+        if hasattr(self, 'hud_lbl_contrast'):
+            self.hud_lbl_contrast.set_label(f"{self.contrast:.2f}")
+        if hasattr(self, 'lbl_contrast_val'):
+            self.lbl_contrast_val.set_label(f"{self.contrast:.2f}")
+        if update_hud and hasattr(self, 'hud_scale_contrast'):
+            self.hud_scale_contrast.set_value(self.contrast)
+        if update_drawer and hasattr(self, 'scale_contrast'):
+            self.scale_contrast.set_value(self.contrast)
+
+        if self.bal_elem:
+            try:
+                self.bal_elem.set_property('contrast', self.contrast)
+            except Exception:
+                pass
+
+    def set_saturation_val(self, val, update_hud=True, update_drawer=True):
+        self.saturation = round(val, 2)
+        if hasattr(self, 'hud_lbl_sat'):
+            self.hud_lbl_sat.set_label(f"{self.saturation:.2f}")
+        if hasattr(self, 'lbl_saturation_val'):
+            self.lbl_saturation_val.set_label(f"{self.saturation:.2f}")
+        if update_hud and hasattr(self, 'hud_scale_sat'):
+            self.hud_scale_sat.set_value(self.saturation)
+        if update_drawer and hasattr(self, 'scale_saturation'):
+            self.scale_saturation.set_value(self.saturation)
+
+        if self.bal_elem:
+            try:
+                self.bal_elem.set_property('saturation', self.saturation)
+            except Exception:
+                pass
+
+    def set_sharpness_val(self, val, update_hud=True, update_drawer=True):
+        self.cam_sharpness = round(val, 1)
+        if hasattr(self, 'hud_lbl_sharp'):
+            self.hud_lbl_sharp.set_label(f"{self.cam_sharpness:.1f}")
+        if hasattr(self, 'lbl_sharp_val'):
+            self.lbl_sharp_val.set_label(f"{self.cam_sharpness:.1f}")
+        if update_hud and hasattr(self, 'hud_scale_sharp'):
+            self.hud_scale_sharp.set_value(self.cam_sharpness)
+        if update_drawer and hasattr(self, 'scale_sharp'):
+            self.scale_sharp.set_value(self.cam_sharpness)
+
+        if self.cam_elem:
+            try:
+                self.cam_elem.set_property('sharpness', float(self.cam_sharpness))
+            except Exception:
+                pass
+
     def on_color_slider_changed(self, _scale):
         self.brightness = self.scale_brightness.get_value()
         self.contrast = self.scale_contrast.get_value()
@@ -1512,8 +2107,23 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.lbl_hue_val.set_label(f"{self.hue:+.2f}")
         self.lbl_gamma_val.set_label(f"{self.gamma:.2f}")
 
+        # Keep HUD in sync
+        if hasattr(self, 'hud_scale_contrast'):
+            self.hud_scale_contrast.set_value(self.contrast)
+        if hasattr(self, 'hud_lbl_contrast'):
+            self.hud_lbl_contrast.set_label(f"{self.contrast:.2f}")
+        if hasattr(self, 'hud_scale_sat'):
+            self.hud_scale_sat.set_value(self.saturation)
+        if hasattr(self, 'hud_lbl_sat'):
+            self.hud_lbl_sat.set_label(f"{self.saturation:.2f}")
+        if hasattr(self, 'hud_scale_tint'):
+            self.hud_scale_tint.set_value(self.hue)
+        if hasattr(self, 'hud_lbl_tint'):
+            self.hud_lbl_tint.set_label(f"{self.hue:+.2f}")
+
         if self.bal_elem:
-            self.bal_elem.set_property('brightness', self.brightness)
+            effective_bright = max(-1.0, min(1.0, self.brightness + self.ev_bias * 0.18))
+            self.bal_elem.set_property('brightness', effective_bright)
             self.bal_elem.set_property('contrast', self.contrast)
             self.bal_elem.set_property('saturation', self.saturation)
             self.bal_elem.set_property('hue', self.hue)
@@ -1523,28 +2133,85 @@ class CameraStudioWindow(Adw.ApplicationWindow):
     def on_preset_clicked(self, _btn, preset):
         for btn in self.preset_buttons.values():
             btn.remove_css_class("preset-pill-active")
-        self.preset_buttons[preset['id']].add_css_class("preset-pill-active")
+        if preset['id'] in self.preset_buttons:
+            self.preset_buttons[preset['id']].add_css_class("preset-pill-active")
 
-        # Set slider values
-        self.scale_brightness.set_value(preset['brightness'])
-        self.scale_contrast.set_value(preset['contrast'])
-        self.scale_saturation.set_value(preset['saturation'])
-        self.scale_hue.set_value(preset['hue'])
-        self.scale_gamma.set_value(preset['gamma'])
+        self.brightness = preset['brightness']
+        self.gamma = preset['gamma']
+        self.set_contrast_val(preset['contrast'])
+        self.set_saturation_val(preset['saturation'])
+        self.set_hue_tint(preset['hue'])
+
+        if hasattr(self, 'scale_brightness'):
+            self.scale_brightness.set_value(self.brightness)
+        if hasattr(self, 'scale_gamma'):
+            self.scale_gamma.set_value(self.gamma)
+        if hasattr(self, 'lbl_brightness_val'):
+            self.lbl_brightness_val.set_label(f"{self.brightness:+.2f}")
+        if hasattr(self, 'lbl_gamma_val'):
+            self.lbl_gamma_val.set_label(f"{self.gamma:.2f}")
+
+        if self.bal_elem:
+            try:
+                effective_bright = max(-1.0, min(1.0, self.brightness + self.ev_bias * 0.18))
+                self.bal_elem.set_property('brightness', effective_bright)
+            except Exception:
+                pass
+        if self.gam_elem:
+            try:
+                self.gam_elem.set_property('gamma', max(0.1, self.gamma))
+            except Exception:
+                pass
         self.show_toast(f"Look: {preset['name']}")
 
-    def on_reset_colors(self, _btn):
+    def on_reset_all_processing(self, _btn=None):
+        self.set_ev_bias(0.0)
+        self.set_sharpness_val(1.0)
         self.on_preset_clicked(None, COLOR_PRESETS[0])
+        self.show_toast("🌿 Image adjustments reset to Natural")
+
+    def on_reset_colors(self, _btn):
+        self.on_reset_all_processing()
 
     def on_resolution_changed(self, dropdown, _pspec):
-        self.target_res_idx = dropdown.get_selected()
+        idx = dropdown.get_selected()
+        if idx != self.target_res_idx:
+            self.set_target_resolution(idx, update_drawer=False)
+
+    def set_target_resolution(self, idx, update_drawer=True):
+        if idx < 0 or idx >= len(RESOLUTION_PRESETS):
+            return
+        self.target_res_idx = idx
         preset = RESOLUTION_PRESETS[self.target_res_idx]
+        self.update_resolution_ui()
+        if update_drawer and hasattr(self, 'row_res'):
+            if self.row_res.get_selected() != idx:
+                self.row_res.set_selected(idx)
+            self.row_res.set_subtitle(preset['desc'])
+        if hasattr(self, 'popover_res'):
+            self.popover_res.popdown()
         self.show_toast(f"Target Resolution: {preset['name']}")
+
+    def update_resolution_ui(self):
+        preset = RESOLUTION_PRESETS[self.target_res_idx]
+        if hasattr(self, 'btn_res'):
+            self.btn_res.set_label(f"📐 {preset['short']}")
+            self.btn_res.set_tooltip_text(f"Capture Resolution: {preset['name']} ({preset['desc']})")
+        if hasattr(self, 'res_pop_checks'):
+            for i, check in enumerate(self.res_pop_checks):
+                check.set_visible(i == self.target_res_idx)
 
     def on_format_changed(self, dropdown, _pspec):
         idx = dropdown.get_selected()
         fmts = ['jpeg', 'png', 'webp']
+        subtitles = [
+            "Standard compressed photo (95% quality)",
+            "Lossless uncompressed image (larger file size)",
+            "Next-gen high-efficiency web format"
+        ]
         self.output_format = fmts[idx]
+        if hasattr(self, 'row_fmt'):
+            self.row_fmt.set_subtitle(subtitles[idx])
         self.row_quality.set_sensitive(self.output_format in ('jpeg', 'webp'))
         self.show_toast(f"Format: {self.output_format.upper()}")
 
@@ -1561,12 +2228,17 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         cam = self.cameras[self.cur_cam_idx]
 
         # Build pipeline string based on camera type
+        # Use native 4:3 sensor mode (2048x1536) to prevent 16:9 cropping and maximize light capture
         if cam['type'] == 'libcamera':
-            src_str = f'libcamerasrc camera-name="{cam["id"]}" ! video/x-raw,width=1920,height=1080'
+            src_str = (
+                f'libcamerasrc name=cam camera-name="{cam["id"]}" '
+                f'exposure-value={self.ev_bias} sharpness={self.cam_sharpness} '
+                f'! video/x-raw,width=2048,height=1536'
+            )
         elif cam['type'] == 'v4l2':
             src_str = f'v4l2src device="{cam["id"]}" ! video/x-raw,width=1920,height=1080'
         else:
-            src_str = 'videotestsrc pattern=ball ! video/x-raw,width=1920,height=1080'
+            src_str = 'videotestsrc pattern=ball ! video/x-raw,width=2048,height=1536'
 
         pipe_str = (
             f'{src_str} ! videoconvert ! '
@@ -1579,6 +2251,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         try:
             self.pipeline = Gst.parse_launch(pipe_str)
+            self.cam_elem = self.pipeline.get_by_name('cam')
             self.bal_elem = self.pipeline.get_by_name('bal')
             self.gam_elem = self.pipeline.get_by_name('gam')
             self.flip_elem = self.pipeline.get_by_name('flip')
@@ -1595,6 +2268,23 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         except Exception as e:
             self.show_toast(f"Camera launch error: {e}")
             print("Pipeline launch failed:", e)
+
+    # --- Hardware Sensor & Exposure Control Handlers ---
+    def on_ev_slider_changed(self, scale):
+        self.set_ev_bias(scale.get_value(), update_drawer=False)
+
+    def on_cycle_ev(self, _btn=None):
+        cur = self.ev_bias
+        try:
+            idx = self.EV_CYCLE.index(cur)
+            nxt = self.EV_CYCLE[(idx + 1) % len(self.EV_CYCLE)]
+        except ValueError:
+            nxt = 0.5
+        self.set_ev_bias(nxt)
+        self.show_toast(f"Exposure Bias: {nxt:+.1f} EV")
+
+    def on_sharpness_slider_changed(self, scale):
+        self.set_sharpness_val(scale.get_value(), update_drawer=False)
 
     # --- Shutter & Photo Capture ---
     def on_shutter_clicked(self, _btn):
@@ -1711,19 +2401,81 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         def save_worker():
             try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(gb, GdkPixbuf.Colorspace.RGB, has_alpha, 8, w, h, expected_rowstride)
-                if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
-                    pixbuf = pixbuf.scale_simple(target_w, target_h, GdkPixbuf.InterpType.BILINEAR)
+                use_pillow = False
+                try:
+                    from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+                    use_pillow = True
+                except ImportError:
+                    pass
 
-                if output_format == 'jpeg':
-                    pixbuf.savev(filepath, 'jpeg', ['quality'], [quality_val])
-                elif output_format == 'webp':
-                    pixbuf.savev(filepath, 'webp', ['quality'], [quality_val])
+                if use_pillow:
+                    raw_data = bytes(gb)
+                    mode = 'RGBA' if has_alpha else 'RGB'
+                    img = Image.frombytes(mode, (w, h), raw_data, 'raw', mode, expected_rowstride)
+                    if has_alpha and output_format == 'jpeg':
+                        img = img.convert('RGB')
+
+                    # Target resolution scaling with high-quality anti-aliasing Lanczos filter
+                    if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
+                        img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+                    # Computational image enhancement pipeline (Android / GCam style)
+                    if getattr(self, 'enable_enhancement', True):
+                        # 1. Adaptive White Balance & Color Normalization (removes green haze / blue cast)
+                        try:
+                            from PIL import ImageStat
+                            stat = ImageStat.Stat(img)
+                            rm, gm, bm = stat.mean[:3]
+                            if rm > 1.0 and gm > 1.0 and bm > 1.0:
+                                mean_ch = (rm + gm + bm) / 3.0
+                                # Calculate adaptive channel gains to neutralize sensor color cast
+                                r_gain = 1.0 + (mean_ch / rm - 1.0) * 0.85
+                                g_gain = 1.0 + (mean_ch / gm - 1.0) * 0.85
+                                b_gain = 1.0 + (mean_ch / bm - 1.0) * 0.85
+                                r_lut = [min(255, max(0, int(i * r_gain))) for i in range(256)]
+                                g_lut = [min(255, max(0, int(i * g_gain))) for i in range(256)]
+                                b_lut = [min(255, max(0, int(i * b_gain))) for i in range(256)]
+                                r_ch, g_ch, b_ch = img.split()
+                                img = Image.merge('RGB', (r_ch.point(r_lut), g_ch.point(g_lut), b_ch.point(b_lut)))
+                        except Exception as e_awb:
+                            print("Adaptive AWB error:", e_awb)
+
+                        # 2. Exposure Value (EV Bias) Compensation
+                        if self.ev_bias != 0.0:
+                            exp_factor = 2.0 ** (self.ev_bias * 0.5)
+                            img = ImageEnhance.Brightness(img).enhance(exp_factor)
+
+                        # 3. Micro-contrast & tone curve
+                        img = ImageEnhance.Contrast(img).enhance(1.08)
+                        # 4. Color vibrancy boost (lifts dull sRGB colors)
+                        img = ImageEnhance.Color(img).enhance(1.10)
+                        # 5. Dynamic range expansion (gentle shadow lift)
+                        img = ImageOps.autocontrast(img, cutoff=0.3)
+                        # 6. Unsharp masking for crisp textures & fine details
+                        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=125, threshold=3))
+
+                    saved_w, saved_h = img.size
+                    q = int(quality_val)
+                    if output_format == 'jpeg':
+                        img.save(filepath, 'JPEG', quality=q, subsampling=0)
+                    elif output_format == 'webp':
+                        img.save(filepath, 'WEBP', quality=q, method=6)
+                    else:
+                        img.save(filepath, 'PNG', optimize=True)
                 else:
-                    pixbuf.savev(filepath, 'png', [], [])
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(gb, GdkPixbuf.Colorspace.RGB, has_alpha, 8, w, h, expected_rowstride)
+                    if target_w > 0 and target_h > 0 and (target_w != w or target_h != h):
+                        pixbuf = pixbuf.scale_simple(target_w, target_h, GdkPixbuf.InterpType.BILINEAR)
 
-                saved_w = pixbuf.get_width()
-                saved_h = pixbuf.get_height()
+                    if output_format == 'jpeg':
+                        pixbuf.savev(filepath, 'jpeg', ['quality'], [quality_val])
+                    elif output_format == 'webp':
+                        pixbuf.savev(filepath, 'webp', ['quality'], [quality_val])
+                    else:
+                        pixbuf.savev(filepath, 'png', [], [])
+
+                    saved_w = pixbuf.get_width()
+                    saved_h = pixbuf.get_height()
 
                 def on_save_complete():
                     self.last_saved_path = filepath
@@ -1749,7 +2501,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             pass
 
     def update_thumbnail_preview(self):
-        if self.last_saved_path and os.path.exists(self.last_saved_path):
+        if self.last_saved_path and os.path.exists(self.last_saved_path) and os.path.getsize(self.last_saved_path) > 0:
             try:
                 pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.last_saved_path, 52, 52, True)
                 self.img_thumb.set_from_pixbuf(pb)
@@ -1759,13 +2511,24 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.img_thumb.set_from_icon_name("image-x-generic-symbolic")
 
     # --- In-App Photo Gallery & Inspector ---
-    def on_open_gallery(self, _btn):
+    def on_open_gallery(self, _btn=None):
+        self.recent_photos = self.scan_recent_photos()
         if not self.recent_photos or not os.path.exists(self.recent_photos[0]):
             self.show_toast("No photos taken yet")
             return
 
         dialog = GalleryInspectorDialog(self, self.recent_photos)
-        dialog.present(self)
+        dialog.present()
+
+    def open_last_photo_external(self):
+        self.recent_photos = self.scan_recent_photos()
+        if self.recent_photos and os.path.exists(self.recent_photos[0]):
+            try:
+                subprocess.Popen(['xdg-open', self.recent_photos[0]])
+            except Exception as e:
+                self.show_toast(f"Error opening viewer: {e}")
+        else:
+            self.show_toast("No photos taken yet")
 
     def on_toggle_fullscreen(self, _btn=None):
         if self.is_fullscreen():
@@ -1787,6 +2550,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             return True
         elif keyval in (Gdk.KEY_c, Gdk.KEY_C):
             self.on_switch_camera(None)
+            return True
+        elif keyval in (Gdk.KEY_e, Gdk.KEY_E):
+            self.on_cycle_ev()
             return True
         elif keyval in (Gdk.KEY_f, Gdk.KEY_F):
             self.on_cycle_flash(None)
@@ -1836,12 +2602,12 @@ class GalleryInspectorDialog(Adw.Window):
 
     def __init__(self, parent_win, photo_list):
         super().__init__(title="Photo Inspector & Studio")
-        self.set_default_size(780, 600)
+        self.set_default_size(880, 620)
         self.set_modal(True)
         self.set_transient_for(parent_win)
 
         self.parent_win = parent_win
-        self.photo_list = [p for p in photo_list if os.path.exists(p)]
+        self.photo_list = [p for p in photo_list if os.path.isfile(p) and os.path.getsize(p) > 0]
         self.cur_idx = 0
 
         # Style & Dark theme
@@ -1849,6 +2615,12 @@ class GalleryInspectorDialog(Adw.Window):
         style_mgr.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
 
         self.build_ui()
+
+        # Keyboard shortcuts (Esc=Close, Left/Right=Navigate, Enter=Open Viewer, Del=Delete)
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect('key-pressed', self.on_key_pressed)
+        self.add_controller(key_controller)
+
         self.load_current_photo()
 
     def build_ui(self):
@@ -1863,7 +2635,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         # Open in Loupe / Image Viewer button
         btn_open_external = Gtk.Button(icon_name="document-open-symbolic")
-        btn_open_external.set_tooltip_text("Open in System Image Viewer (Loupe)")
+        btn_open_external.set_tooltip_text("Open in System Image Viewer (Gwenview)")
         btn_open_external.connect('clicked', self.on_open_external)
         header_bar.pack_end(btn_open_external)
 
@@ -1877,15 +2649,26 @@ class GalleryInspectorDialog(Adw.Window):
 
         # Content: Horizontal Paned (Image on left, Info on right)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(520)
+        paned.set_position(540)
 
-        # Left: Photo Preview with Navigation buttons
+        # Left: Photo Preview with Navigation buttons & Gestures
         left_overlay = Gtk.Overlay()
         self.pic_preview = Gtk.Picture()
         self.pic_preview.set_hexpand(True)
         self.pic_preview.set_vexpand(True)
         self.pic_preview.set_can_shrink(True)
+        self.pic_preview.set_content_fit(Gtk.ContentFit.CONTAIN)
         left_overlay.set_child(self.pic_preview)
+
+        # Double-click gesture on photo preview to open in full viewer
+        double_click = Gtk.GestureClick()
+        double_click.connect('pressed', self.on_preview_clicked)
+        self.pic_preview.add_controller(double_click)
+
+        # Touchscreen swipe gesture (swipe left -> next, swipe right -> prev)
+        swipe_gesture = Gtk.GestureSwipe()
+        swipe_gesture.connect('swipe', self.on_preview_swiped)
+        left_overlay.add_controller(swipe_gesture)
 
         # Nav buttons (Prev / Next)
         nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -1895,6 +2678,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         self.btn_prev = Gtk.Button(icon_name="go-previous-symbolic")
         self.btn_prev.add_css_class("action-circle-btn")
+        self.btn_prev.set_tooltip_text("Previous Photo (Left Arrow)")
         self.btn_prev.connect('clicked', self.on_prev_photo)
         nav_box.append(self.btn_prev)
 
@@ -1904,6 +2688,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         self.btn_next = Gtk.Button(icon_name="go-next-symbolic")
         self.btn_next.add_css_class("action-circle-btn")
+        self.btn_next.set_tooltip_text("Next Photo (Right Arrow)")
         self.btn_next.connect('clicked', self.on_next_photo)
         nav_box.append(self.btn_next)
 
@@ -1931,6 +2716,15 @@ class GalleryInspectorDialog(Adw.Window):
         # Actions Group
         action_group = Adw.PreferencesGroup(title="Actions")
         
+        # Open in System Viewer action row
+        row_open = Adw.ActionRow(title="System Viewer", subtitle="Open full resolution in default image viewer")
+        btn_open = Gtk.Button(label="Open")
+        btn_open.add_css_class("suggested-action")
+        btn_open.connect('clicked', self.on_open_external)
+        row_open.add_suffix(btn_open)
+        row_open.set_activatable_widget(btn_open)
+        action_group.add(row_open)
+
         # Delete button
         row_del = Adw.ActionRow(title="Remove Photo")
         btn_del = Gtk.Button(label="Delete")
@@ -1956,9 +2750,9 @@ class GalleryInspectorDialog(Adw.Window):
         self.btn_next.set_sensitive(self.cur_idx < len(self.photo_list) - 1)
 
         try:
-            pb = GdkPixbuf.Pixbuf.new_from_file(path)
-            self.pic_preview.set_pixbuf(pb)
+            self.pic_preview.set_filename(path)
 
+            pb = GdkPixbuf.Pixbuf.new_from_file(path)
             w, h = pb.get_width(), pb.get_height()
             mp = (w * h) / 1000000.0
             size_kb = os.path.getsize(path) / 1024.0
@@ -1971,21 +2765,52 @@ class GalleryInspectorDialog(Adw.Window):
         except Exception as e:
             print("Failed to load photo:", e)
 
-    def on_prev_photo(self, _btn):
+    def on_preview_clicked(self, _gesture, n_press, _x, _y):
+        if n_press >= 2:
+            self.on_open_external()
+
+    def on_preview_swiped(self, _gesture, vx, _vy):
+        if vx < -100:
+            self.on_next_photo()
+        elif vx > 100:
+            self.on_prev_photo()
+
+    def on_key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval in (Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q):
+            self.close()
+            return True
+        elif keyval in (Gdk.KEY_Left, Gdk.KEY_h, Gdk.KEY_Page_Up):
+            self.on_prev_photo()
+            return True
+        elif keyval in (Gdk.KEY_Right, Gdk.KEY_l, Gdk.KEY_Page_Down):
+            self.on_next_photo()
+            return True
+        elif keyval in (Gdk.KEY_Return, Gdk.KEY_space, Gdk.KEY_o, Gdk.KEY_O):
+            self.on_open_external()
+            return True
+        elif keyval in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
+            self.on_delete_photo()
+            return True
+        return False
+
+    def on_prev_photo(self, _btn=None):
         if self.cur_idx > 0:
             self.cur_idx -= 1
             self.load_current_photo()
 
-    def on_next_photo(self, _btn):
+    def on_next_photo(self, _btn=None):
         if self.cur_idx < len(self.photo_list) - 1:
             self.cur_idx += 1
             self.load_current_photo()
 
-    def on_open_external(self, _btn):
-        if self.photo_list:
-            subprocess.Popen(['xdg-open', self.photo_list[self.cur_idx]])
+    def on_open_external(self, _btn=None):
+        if self.photo_list and self.cur_idx < len(self.photo_list):
+            try:
+                subprocess.Popen(['xdg-open', self.photo_list[self.cur_idx]])
+            except Exception as e:
+                print("Failed to open external viewer:", e)
 
-    def on_delete_photo(self, _btn):
+    def on_delete_photo(self, _btn=None):
         if not self.photo_list:
             return
         path = self.photo_list[self.cur_idx]
@@ -1993,7 +2818,11 @@ class GalleryInspectorDialog(Adw.Window):
             os.remove(path)
             self.photo_list.pop(self.cur_idx)
             self.parent_win.recent_photos = self.photo_list
+            self.parent_win.last_saved_path = self.photo_list[0] if self.photo_list else None
             self.parent_win.update_thumbnail_preview()
+            if not self.photo_list:
+                self.close()
+                return
             if self.cur_idx >= len(self.photo_list):
                 self.cur_idx = max(0, len(self.photo_list) - 1)
             self.load_current_photo()
