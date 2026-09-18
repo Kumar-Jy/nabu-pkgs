@@ -3,25 +3,38 @@
 
 pkgname=iris-vaapi
 pkgver=0.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc="VA-API driver for the Qualcomm SM8150 Iris1 decoder"
 arch=('aarch64')
 url="https://github.com/CFM880/iris-vaapi"
 license=('GPL-2.0-or-later')
 depends=('libva' 'libdrm')
 makedepends=('gcc' 'make' 'pkg-config' 'vulkan-headers' 'libva' 'libdrm')
-source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/refs/heads/main.tar.gz"
+# Pin to the exact commit that recorded the full Fluster suite passing with
+# stock FFmpeg (b0ef8f75, 2026-09-14). Rolling main.tar.gz moves daily and
+# ships untested decoders after that point.
+_iris_pin=b0ef8f7512321d36d52e4a1a52fd3eb0eec9a107
+source=("iris-vaapi-${pkgver}.tar.gz::https://github.com/CFM880/iris-vaapi/archive/${_iris_pin}.tar.gz"
         '99-iris-dmaheap.rules'
-        '99-iris-vaapi.conf')
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+        '99-iris-vaapi.conf'
+        '0001-vaapi-support-vaAcquireBufferHandle-and-default-expo.patch')
+sha256sums=('b2dff66d6285815c4805eda3658d3d162a4773f3709b23a9a0664ecec2bb1f8d'
+            'SKIP'
+            'SKIP'
+            '7844f9a29a77b83c858b60263d726dfe4899434ed5e7d264de4e924fd57cd565')
+
+prepare() {
+  cd "$srcdir/iris-vaapi-${_iris_pin}"
+  patch -p1 -i "$srcdir/0001-vaapi-support-vaAcquireBufferHandle-and-default-expo.patch"
+}
 
 build() {
-  cd "$srcdir/iris-vaapi-main"
+  cd "$srcdir/iris-vaapi-${_iris_pin}"
   make DRIVERDIR=/usr/lib/dri
 }
 
 package() {
-  cd "$srcdir/iris-vaapi-main"
+  cd "$srcdir/iris-vaapi-${_iris_pin}"
   make install DESTDIR="$pkgdir" DRIVERDIR=/usr/lib/dri
 
   # Chrome needs DMA-heap surfaces; default root-only breaks EGL import.

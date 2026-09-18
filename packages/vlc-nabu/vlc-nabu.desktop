@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=VLC media player (Hardware Accelerated)
+Comment=Media player with Qualcomm Iris hardware video decoding
+Exec=/usr/bin/vlc-nabu --started-from-file %U
+Icon=vlc
+Terminal=false
+Type=Application
+Categories=AudioVideo;Player;Recorder;
+MimeType=video/mp4;video/mkv;video/webm;video/x-matroska;video/quicktime;video/x-msvideo;video/x-flv;
+StartupNotify=true

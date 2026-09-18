@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+# vlc-nabu: Launch VLC with Qualcomm Iris VA-API hardware decoding
+export LIBVA_DRIVER_NAME="vpu"
+
+exec /usr/bin/vlc --avcodec-hw=vaapi "$@"

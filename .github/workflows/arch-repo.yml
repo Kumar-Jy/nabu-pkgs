@@ -103,6 +103,10 @@ on:
         type: boolean
         default: true
         description: Build mpv-iris
+      build_vlc_nabu:
+        type: boolean
+        default: true
+        description: Build vlc-nabu
 
 jobs:
   resolve-packages:
@@ -141,6 +145,7 @@ jobs:
               --argjson sddm_nabu "${{ inputs.build_sddm_nabu }}" \
               --argjson ffmpeg_iris "${{ inputs.build_ffmpeg_iris }}" \
               --argjson mpv_iris "${{ inputs.build_mpv_iris }}" \
+              --argjson vlc_nabu "${{ inputs.build_vlc_nabu }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -165,9 +170,10 @@ jobs:
                  if $nabu_torch then "nabu-torch" else empty end,
                  if $sddm_nabu then "sddm-nabu" else empty end,
                  if $ffmpeg_iris then "ffmpeg-iris" else empty end,
-                 if $mpv_iris then "mpv-iris" else empty end ]' > matrix.json
+                 if $mpv_iris then "mpv-iris" else empty end,
+                 if $vlc_nabu then "vlc-nabu" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"

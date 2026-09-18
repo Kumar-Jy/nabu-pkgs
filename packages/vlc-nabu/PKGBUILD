@@ -1,0 +1,22 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# vlc-nabu: VLC launcher wired to Qualcomm Iris VA-API hardware decoding
+# for H.264/HEVC/VP9 on Xiaomi Pad 5 (nabu).
+
+pkgname=vlc-nabu
+pkgver=3.0.23
+pkgrel=1
+pkgdesc="VLC launcher and dependencies for Qualcomm Iris hardware video decoding (nabu)"
+arch=('aarch64')
+url="https://www.videolan.org/vlc/"
+license=('GPL-2.0-or-later')
+depends=('vlc' 'vlc-plugin-ffmpeg' 'iris-vaapi')
+
+source=('vlc-nabu'
+        'vlc-nabu.desktop')
+sha256sums=('0a899856626d93f803fac7c09ef2d40dc6b171bc06d3889c86fa5d0f0f366ee5'
+            '2b655471c1af1463ec310d1dcfe84cf805279260a7e10d30ed64293c99905389')
+
+package() {
+  install -Dm755 "$srcdir/vlc-nabu" "$pkgdir/usr/bin/vlc-nabu"
+  install -Dm644 "$srcdir/vlc-nabu.desktop" "$pkgdir/usr/share/applications/vlc-nabu.desktop"
+}

@@ -38,6 +38,7 @@ sudo pacman -Syu
 | **`iris-vaapi`** | `sudo pacman -S iris-vaapi` | VA-API hardware video decode driver for the Qualcomm Snapdragon 860 (SM8150) Iris VPU (H.264, HEVC 10-bit, VP9). Pinned to Fluster test-validated builds. |
 | **`ffmpeg-iris`** | `sudo pacman -S ffmpeg-iris` | Self-contained FFmpeg build with Qualcomm Iris V4L2 mem2mem + DRM-Prime P010 (10-bit) hardware decoding. Isolated in `/usr/lib/iris-ffmpeg` with `ffmpeg-iris` and `ffprobe-iris` companion wrappers so it never conflicts with system FFmpeg. |
 | **`mpv-iris`** | `sudo pacman -S mpv-iris` | Dedicated MPV launcher configured for Qualcomm Iris hardware video decode via `--hwdec=v4l2m2m` and `--vo=dmabuf-wayland` using the `ffmpeg-iris` libraries. |
+| **`vlc-nabu`** | `sudo pacman -S vlc-nabu` | Hardware-accelerated VLC player launcher and dependencies for Xiaomi Pad 5. Configures VLC with Qualcomm Iris VA-API hardware decoding and installs a ready-to-use desktop application shortcut. |
 
 ---
 
@@ -89,7 +90,7 @@ sudo pacman -Syu
 | **`oskb`** | `sudo pacman -S oskb` | Responsive on-screen touch keyboard designed for touch Linux devices and KDE Plasma / GNOME. Features auto-adapt portrait/landscape layouts, navigation/arrow keys, function keys, key size scaling (S, M, L), font scaling, and floating/docked positioning. |
 | **`nabu-autobrightness`** | `sudo pacman -S nabu-autobrightness` | Ambient light sensor auto-brightness daemon for Xiaomi Pad 5. Uses a calibrated logarithmic curve with hysteresis to prevent screen flicker; includes a desktop toggle and launcher. |
 | **`camera-studio`** | `sudo pacman -S camera-studio` | GTK4/Libadwaita camera application featuring real-time tablet orientation tracking, VCM autofocus control (tap-to-focus, slider, presets), manual exposure and gain adjustment, color presets, and built-in photo gallery. |
-| **`system-monitor`** | `sudo pacman -S system-monitor` | Universal hardware telemetry and system monitor application / system tray utility displaying real-time CPU, Adreno 640 GPU usage, RAM, temperatures, battery charge rate, and sensor statuses. |
+| **`system-monitor`** | `sudo pacman -S system-monitor` | Universal hardware telemetry and system monitor for Linux displaying real-time CPU, Adreno 640 GPU usage, RAM, Running Applications / Processes (with search, filter, and task termination), battery charging power (W), and sensor statuses. Features an adaptive responsive UI with edge resizing. |
 | **`nabu-torch`** | `sudo pacman -S nabu-torch` | Rear dual-LED flashlight controller for Xiaomi Pad 5 with interactive slider GUI, desktop toggle launcher, and CLI command (`torch on`, `torch off`, `torch set <val>`). |
 
 ---
