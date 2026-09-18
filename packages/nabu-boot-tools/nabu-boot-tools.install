@@ -1,0 +1,9 @@
+post_install() {
+  if [ -x /usr/bin/nabu-boot-repair ]; then
+    /usr/bin/nabu-boot-repair
+  fi
+}
+
+post_upgrade() {
+  post_install
+}

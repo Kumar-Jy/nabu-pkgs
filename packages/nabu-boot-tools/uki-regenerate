@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fallback handler for regenerating the nabu UKI. Triggered by the pacman
+# hook; usable directly after installing any (even custom/local) kernel.
+
+resolve_kernver() {
+    if [ -n "${1:-}" ]; then
+        printf '%s\n' "$1"
+        return 0
+    fi
+
+    local p v
+    # 1. Ask pacman which module tree the installed linux-nabu package owns
+    for p in $(pacman -Qq 2>/dev/null | grep -E '^linux-nabu' || true); do
+        # Method A: module metadata tracked by pacman (modules.builtin or modules.order)
+        v=$(pacman -Qlq "$p" 2>/dev/null \
+            | awk -F/ '/\/usr\/lib\/modules\/[^\/]+\/modules\.(builtin|order)$/ {print $5; exit}' || true)
+
+        # Method B: boot kernel image tracked by pacman
+        if [ -z "$v" ]; then
+            v=$(pacman -Qlq "$p" 2>/dev/null \
+                | awk -F/ '/\/boot\/vmlinu[zx]-[^\/]+$/ && $3 !~ /^vmlinu[zx]-linux-nabu$/ {sub("^vmlinu[zx]-", "", $3); print $3; exit}' || true)
+        fi
+
+        case "$v" in
+            ''|*.old|*.safe) continue ;;
+        esac
+        if [ -f "/boot/vmlinuz-${v}" ] || [ -f "/boot/vmlinux-${v}" ]; then
+            printf '%s\n' "$v"
+            return 0
+        fi
+    done
+
+    # 2. Fallback: newest module tree that still has a kernel image, sorted by version descending
+    local d
+    for d in $(ls -1d /usr/lib/modules/*/ 2>/dev/null | sort -V -r || true); do
+        v=${d%/}
+        v=${v##*/}
+        case "$v" in
+            *.old|*.safe) continue ;;
+        esac
+        if [ -f "/boot/vmlinuz-${v}" ] || [ -f "/boot/vmlinux-${v}" ]; then
+            printf '%s\n' "$v"
+            return 0
+        fi
+    done
+
+    # 3. Last resort fallback: check where /boot/vmlinuz-linux-nabu symlink points
+    if [ -L "/boot/vmlinuz-linux-nabu" ]; then
+        local target
+        target="$(readlink -f /boot/vmlinuz-linux-nabu 2>/dev/null || true)"
+        v="${target##*/vmlinuz-}"
+        case "$v" in
+            ''|*.old|*.safe|linux-nabu) ;;
+            *)
+                if [ -d "/usr/lib/modules/${v}" ]; then
+                    printf '%s\n' "$v"
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+}
+
+kernver="$(resolve_kernver "${1:-}")"
+if [ -z "$kernver" ]; then
+    echo "ERROR: No valid kernel version found" >&2
+    exit 1
+fi
+
+kimage="/boot/vmlinuz-${kernver}"
+[ -f "$kimage" ] || kimage="/boot/vmlinux-${kernver}"
+
+if [ ! -f "$kimage" ]; then
+    echo "ERROR: Kernel image not found at $kimage" >&2
+    exit 1
+fi
+
+echo "Regenerating UKI for kernel ${kernver}..."
+
+# Ensure a kernel command line exists for the UKI (custom kernels may omit it).
+# iris/venus video decode is enabled by default; strip the stale blacklist that
+# older images shipped in root.conf so it never survives on a fresh install.
+if [ ! -f /etc/cmdline.d/root.conf ]; then
+    mkdir -p /etc/cmdline.d
+    printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive acpi=off\n' > /etc/cmdline.d/root.conf
+else
+    sed -i -e 's/ modprobe.blacklist=venus_core,qcom_iris//' \
+           -e 's/ module_blacklist=venus_core,qcom_iris//' \
+           /etc/cmdline.d/root.conf
+    if ! grep -q 'acpi=off' /etc/cmdline.d/root.conf; then
+        sed -i 's/$/ acpi=off/' /etc/cmdline.d/root.conf
+    fi
+    if ! grep -q 'fw_devlink=permissive' /etc/cmdline.d/root.conf; then
+        sed -i 's/$/ fw_devlink=permissive/' /etc/cmdline.d/root.conf
+    fi
+fi
+
+cat > /etc/mkinitcpio.d/linux-nabu.preset << PRESET
+# mkinitcpio preset file for the 'linux-nabu' package
+
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="${kimage}"
+
+PRESETS=('default')
+
+default_uki="/boot/efi/EFI/arch/arch-linux-nabu.efi"
+default_cmdline="/etc/cmdline.d/root.conf"
+PRESET
+
+mkdir -p /etc/kernel
+if [ ! -f /etc/kernel/uki.conf ]; then
+    if [ -f /usr/lib/kernel/uki.conf ]; then
+        cp /usr/lib/kernel/uki.conf /etc/kernel/uki.conf
+    else
+        printf '[UKI]\n' > /etc/kernel/uki.conf
+    fi
+fi
+
+dtb_target="/boot/dtb-${kernver}"
+if [ ! -f "$dtb_target" ] && [ -f "/boot/dtb-linux-nabu" ]; then
+    dtb_target="/boot/dtb-linux-nabu"
+fi
+
+if [ ! -f "$dtb_target" ]; then
+    echo "ERROR: Device Tree file not found at $dtb_target" >&2
+    exit 1
+fi
+
+if grep -q '^DeviceTree=' /etc/kernel/uki.conf; then
+    sed -i "s|^DeviceTree=.*|DeviceTree=${dtb_target}|" /etc/kernel/uki.conf
+elif grep -q '^\\[UKI\\]' /etc/kernel/uki.conf; then
+    sed -i "/^\\[UKI\\]/a DeviceTree=${dtb_target}" /etc/kernel/uki.conf
+else
+    printf '\n[UKI]\nDeviceTree=%s\n' "${dtb_target}" >> /etc/kernel/uki.conf
+fi
+
+ESP="/boot/efi"
+if ! findmnt -M "$ESP" > /dev/null 2>&1; then
+    echo "ESP not mounted at $ESP, attempting mount..."
+    mkdir -p "$ESP"
+    if ! mount PARTLABEL=esp "$ESP" 2>/dev/null \
+        && ! mount /dev/disk/by-partlabel/esp "$ESP" 2>/dev/null \
+        && ! mount /dev/block/by-name/esp "$ESP" 2>/dev/null; then
+        echo "WARNING: could not mount ESP at $ESP; verify the output UKI path" >&2
+    fi
+fi
+
+# Re-link any preserved old module directories so WiFi/BT/touch/sound work in fallback
+for olddir in /usr/lib/modules/*.old /usr/lib/modules/*.safe; do
+    [ -d "$olddir" ] || continue
+    base=$(basename "$olddir")
+    base="${base%.old}"
+    base="${base%.safe}"
+    if [ ! -e "/usr/lib/modules/${base}" ]; then
+        ln -sf "$(basename "$olddir")" "/usr/lib/modules/${base}" 2>/dev/null || true
+    fi
+done
+
+mkdir -p "$ESP/EFI/arch"
+
+# Snapshot the current UKI before rebuilding so a failed build never overwrites
+# the known-good fallback. If mkinitcpio fails, the trap automatically restores
+# the snapshot back to arch-linux-nabu.efi so the device stays bootable.
+prev_uki=""
+cleanup_prev_uki() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ] && [ -n "$prev_uki" ] && [ -f "$prev_uki" ]; then
+        echo "WARNING: UKI generation failed (exit $exit_code). Restoring previous working UKI..." >&2
+        cp -f "$prev_uki" "$ESP/EFI/arch/arch-linux-nabu.efi"
+    fi
+    [ -z "$prev_uki" ] || rm -f "$prev_uki"
+}
+trap cleanup_prev_uki EXIT
+
+if [ -f "$ESP/EFI/arch/arch-linux-nabu.efi" ]; then
+    prev_uki="$(mktemp)"
+    cp -f "$ESP/EFI/arch/arch-linux-nabu.efi" "$prev_uki"
+fi
+
+# Build. With pipefail (set at the top) a failed build aborts the script instead
+# of printing success and leaving the stale UKI in place.
+mkinitcpio -P 2>&1 | { grep -v 'gzip: stdout: Broken pipe' || true; }
+
+# Verify that the generated UKI binary exists and is non-empty
+if [ ! -s "$ESP/EFI/arch/arch-linux-nabu.efi" ]; then
+    echo "ERROR: Generated UKI binary is missing or empty!" >&2
+    exit 1
+fi
+
+# Only now, after a verified successful build, is it safe to keep the previous kernel as fallback
+if [ -n "$prev_uki" ]; then
+    cp -f "$prev_uki" "$ESP/EFI/arch/arch-linux-nabu-old.efi"
+    echo "Preserved previous UKI as arch-linux-nabu-old.efi"
+fi
+
+echo "UKI regeneration complete for kernel ${kernver}"

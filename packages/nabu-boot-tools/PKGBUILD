@@ -1,0 +1,24 @@
+# Maintainer: Kumar-Jy
+# Boot and UKI management tools for Xiaomi Pad 5 (nabu)
+
+pkgname=nabu-boot-tools
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Boot and UKI management tools for Xiaomi Pad 5 (nabu)"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('GPL2')
+depends=('bash' 'mkinitcpio' 'ukify' 'sed' 'grep' 'coreutils' 'util-linux')
+install=nabu-boot-tools.install
+source=(
+  'uki-regenerate'
+  'nabu-boot-repair'
+  '90-linux-nabu.uki.hook'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/uki-regenerate" "$pkgdir/usr/libexec/nabu/uki-regenerate"
+  install -Dm755 "$srcdir/nabu-boot-repair" "$pkgdir/usr/bin/nabu-boot-repair"
+  install -Dm644 "$srcdir/90-linux-nabu.uki.hook" "$pkgdir/etc/pacman.d/hooks/90-linux-nabu.uki.hook"
+}

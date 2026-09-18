@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Nabu Boot & System Repair Tool ==="
+
+# 1. Check and fix /etc/pacman.conf
+if [ -f /etc/pacman.conf ]; then
+    echo "Checking /etc/pacman.conf..."
+    if grep -qE '^IgnorePkg.*linux-nabu' /etc/pacman.conf; then
+        echo "  -> Removing linux-nabu from IgnorePkg to allow updates..."
+        sed -i 's/\blinux-nabu-headers\b//g; s/\blinux-nabu\b//g' /etc/pacman.conf
+        sed -i -E 's/^[[:space:]]*IgnorePkg[[:space:]]*=[[:space:]]*$/#IgnorePkg =/' /etc/pacman.conf
+    fi
+
+    if grep -qE '^NoExtract.*firmware' /etc/pacman.conf; then
+        echo "  -> Cleaning obsolete firmware NoExtract rules..."
+        sed -i '/^NoExtract.*firmware/d' /etc/pacman.conf
+    fi
+fi
+
+# 2. Check and fix /etc/cmdline.d/root.conf
+echo "Checking /etc/cmdline.d/root.conf..."
+mkdir -p /etc/cmdline.d
+if [ ! -f /etc/cmdline.d/root.conf ]; then
+    echo "  -> Creating default /etc/cmdline.d/root.conf..."
+    printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive acpi=off\n' > /etc/cmdline.d/root.conf
+else
+    sed -i -e 's/ modprobe.blacklist=venus_core,qcom_iris//' \
+           -e 's/ module_blacklist=venus_core,qcom_iris//' \
+           /etc/cmdline.d/root.conf
+    if ! grep -q 'acpi=off' /etc/cmdline.d/root.conf; then
+        echo "  -> Adding acpi=off..."
+        sed -i 's/$/ acpi=off/' /etc/cmdline.d/root.conf
+    fi
+    if ! grep -q 'fw_devlink=permissive' /etc/cmdline.d/root.conf; then
+        echo "  -> Adding fw_devlink=permissive..."
+        sed -i 's/$/ fw_devlink=permissive/' /etc/cmdline.d/root.conf
+    fi
+fi
+
+# 3. Check and fix /etc/kernel/uki.conf
+echo "Checking /etc/kernel/uki.conf..."
+mkdir -p /etc/kernel
+if [ ! -f /etc/kernel/uki.conf ]; then
+    printf '[UKI]\nDeviceTree=/boot/dtb-linux-nabu\n' > /etc/kernel/uki.conf
+elif ! grep -q '^DeviceTree=' /etc/kernel/uki.conf; then
+    if grep -q '^\\[UKI\\]' /etc/kernel/uki.conf; then
+        sed -i '/^\\[UKI\\]/a DeviceTree=/boot/dtb-linux-nabu' /etc/kernel/uki.conf
+    else
+        printf '\n[UKI]\nDeviceTree=/boot/dtb-linux-nabu\n' >> /etc/kernel/uki.conf
+    fi
+fi
+
+# 4. Check ESP mount and space
+echo "Checking ESP partition..."
+ESP="/boot/efi"
+if ! findmnt -M "$ESP" > /dev/null 2>&1; then
+    echo "  -> Mounting ESP partition at $ESP..."
+    mkdir -p "$ESP"
+    mount PARTLABEL=esp "$ESP" 2>/dev/null \
+        || mount /dev/disk/by-partlabel/esp "$ESP" 2>/dev/null \
+        || mount /dev/block/by-name/esp "$ESP" 2>/dev/null || true
+fi
+
+if ! findmnt -M "$ESP" > /dev/null 2>&1; then
+    echo "ERROR: /boot/efi is not mounted! Please mount your ESP partition first." >&2
+    exit 1
+fi
+
+avail_mb=$(df -m "$ESP" | awk 'NR==2 {print $4}')
+echo "  -> ESP free space: ${avail_mb} MB"
+if [ "$avail_mb" -lt 35 ]; then
+    echo "WARNING: ESP partition has less than 35 MB free space (${avail_mb} MB)." >&2
+fi
+
+# 5. Regenerate UKI if helper is available
+if [ -x /usr/libexec/nabu/uki-regenerate ]; then
+    echo "Regenerating UKI to ensure bootability..."
+    /usr/libexec/nabu/uki-regenerate
+fi
+
+echo "=== System boot configuration successfully verified and repaired! ==="
