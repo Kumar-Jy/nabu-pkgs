@@ -1,0 +1,94 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Recover Nabu's SLPI -> FastRPC -> SSC -> SensorProxy chain after s2idle.
+#
+# Ordering notes (pkgrel 5):
+# - hexagonrpcd's own package ships hexagonrpcd-suspend.service /
+#   hexagonrpcd-resume.service (WantedBy=suspend.target) that stop the daemon
+#   before suspend and restart it once after.  pkgrel 4 restarted the daemon a
+#   second time from here while libssc was mid-handshake, which churned the
+#   FastRPC/SSC clients and left SensorProxy advertising an accelerometer that
+#   briefly streamed then silently stopped (orientation stuck "undefined").
+# - So this script now waits for the official resume restart instead of
+#   issuing its own, and only falls back to it when the unit is missing.
+
+set -u
+
+tag=nabu-sensors-recover
+
+log()
+{
+    /usr/bin/logger -t "$tag" -- "$*"
+}
+
+wait_for_slpi()
+{
+    local state i
+
+    for i in {1..50}; do
+        state=$(cat /sys/class/remoteproc/remoteproc0/state 2>/dev/null || true)
+        [ "$state" = running ] && return 0
+        sleep 0.1
+    done
+
+    return 1
+}
+
+wait_for_sensor_proxy()
+{
+    local value i
+
+    for i in {1..40}; do
+        value=$(/usr/bin/busctl get-property net.hadess.SensorProxy \
+            /net/hadess/SensorProxy net.hadess.SensorProxy HasAccelerometer \
+            2>/dev/null || true)
+        [ "$value" = "b true" ] && return 0
+        sleep 0.1
+    done
+
+    return 1
+}
+
+# The tablet-mode package can be installed without the optional sensor stack.
+if ! /usr/bin/systemctl cat hexagonrpcd.service >/dev/null 2>&1 ||
+   ! /usr/bin/systemctl cat iio-sensor-proxy.service >/dev/null 2>&1; then
+    exit 0
+fi
+
+if ! wait_for_slpi; then
+    log "SLPI was not ready after resume; sensor services left unchanged"
+    exit 0
+fi
+
+# Let hexagonrpcd-resume.service perform its single restart of the daemon.
+# Fall back to restarting it ourselves only if the unit is absent or already
+# finished while the daemon stayed down (restarting it twice, as pkgrel 4
+# did, re-corrupts the SSC stream).
+sleep 2
+
+if ! /usr/bin/systemctl -q is-active hexagonrpcd.service; then
+    /usr/bin/systemctl restart hexagonrpcd.service || {
+        log "failed to restart hexagonrpcd"
+        exit 0
+    }
+    log "restarted hexagonrpcd (hexagonrpcd-resume.service did not run)"
+fi
+
+# Give the freshly attached registry time to settle before creating the QRTR
+# consumer.  Starting SensorProxy in parallel left it advertising an
+# accelerometer while returning no samples (orientation "undefined").
+sleep 2
+
+/usr/bin/systemctl restart iio-sensor-proxy.service || {
+    log "failed to restart iio-sensor-proxy"
+    exit 0
+}
+
+if wait_for_sensor_proxy; then
+    log "SLPI sensor path recovered"
+    # Re-announce tablet mode after SensorProxy's D-Bus owner transition so
+    # Mutter/KWin reclaims rotation if it missed the change while suspended.
+    /usr/bin/killall -USR1 nabu-tablet-mode 2>/dev/null || true
+else
+    log "SensorProxy did not rediscover the accelerometer"
+fi
