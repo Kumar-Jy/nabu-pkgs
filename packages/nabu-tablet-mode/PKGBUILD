@@ -3,7 +3,7 @@
 
 pkgname=nabu-tablet-mode
 pkgver=1.0.0
-pkgrel=5
+pkgrel=6
 pkgdesc="Tablet mode switch helper and sensor resume hook for GNOME/Plasma on Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/Kumar-Jy/nabu-pkgs"

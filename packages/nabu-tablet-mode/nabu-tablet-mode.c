@@ -63,7 +63,7 @@ static int set_tablet_mode(int fd, bool enabled)
 	return emit_event(fd, EV_SYN, SYN_REPORT, 0);
 }
 
-static bool graphical_user_shell_running(void)
+static bool gnome_user_shell_running(void)
 {
 	struct dirent *entry;
 	DIR *proc;
@@ -105,20 +105,17 @@ static bool graphical_user_shell_running(void)
 		comm[length] = '\0';
 		bool is_gnome = (strcmp(comm, "gnome-shell\n") == 0 ||
 				 strcmp(comm, "gnome-shell") == 0);
-		bool is_plasma = (strcmp(comm, "kwin_wayland\n") == 0 ||
-				  strcmp(comm, "kwin_wayland") == 0 ||
-				  strcmp(comm, "plasmashell\n") == 0 ||
-				  strcmp(comm, "plasmashell") == 0);
 
-		if (!is_gnome && !is_plasma)
+		if (!is_gnome)
 			continue;
 
 		/*
-		 * Greeters (GDM/SDDM) also run shells/compositors, commonly under
-		 * system UIDs or dynamically allocated UIDs above 1000. Do not treat
-		 * the greeter as the user's shell: if tablet mode is enabled before
-		 * the real session starts, the compositor can inhibit orientation
-		 * tracking during its native portrait initialization.
+		 * The GDM greeter also runs gnome-shell, commonly under a
+		 * dynamically allocated UID above 1000, so it passes the uid
+		 * check above.  Do not treat the greeter as the user's shell:
+		 * if tablet mode is enabled before the real session starts,
+		 * the compositor can inhibit orientation tracking during its
+		 * native portrait initialization.
 		 */
 		(void)snprintf(path, sizeof(path), "/proc/%ld/cmdline", pid);
 		cmdline_fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -126,14 +123,10 @@ static bool graphical_user_shell_running(void)
 			cmdline_length = read(cmdline_fd, cmdline,
 					      sizeof(cmdline));
 			close(cmdline_fd);
-			if (cmdline_length > 0) {
-				if (is_gnome && memmem(cmdline, (size_t)cmdline_length,
-						       "--mode=gdm", strlen("--mode=gdm")))
-					continue;
-				if (is_plasma && memmem(cmdline, (size_t)cmdline_length,
-							"greeter", strlen("greeter")))
-					continue;
-			}
+			if (cmdline_length > 0 &&
+			    memmem(cmdline, (size_t)cmdline_length,
+				   "--mode=gdm", strlen("--mode=gdm")))
+				continue;
 		}
 
 		found = true;
@@ -199,7 +192,7 @@ int main(int argc, char **argv)
 		goto out_destroy;
 	}
 
-	printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; waiting for a graphical user shell\n");
+	printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; waiting for a GNOME session\n");
 	fflush(stdout);
 
 	sigemptyset(&action.sa_mask);
@@ -232,7 +225,7 @@ int main(int argc, char **argv)
 			}
 		}
 
-		if (graphical_user_shell_running()) {
+		if (gnome_user_shell_running()) {
 			if (shell_ticks < USER_SHELL_DELAY_TICKS)
 				shell_ticks++;
 			if (!enabled && shell_ticks == USER_SHELL_DELAY_TICKS) {
@@ -252,7 +245,7 @@ int main(int argc, char **argv)
 					goto out_destroy;
 				}
 				enabled = false;
-				printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; graphical user shell exited\n");
+				printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; GNOME session exited\n");
 				fflush(stdout);
 			}
 		}

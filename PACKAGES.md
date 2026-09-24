@@ -60,7 +60,7 @@ sudo pacman -Syu
 | **`rmtfs`** | `sudo pacman -S rmtfs` | Qualcomm Remote Filesystem daemon managing modem and DSP access to storage partition sectors and EFS calibration files. |
 | **`tqftpserv`** | `sudo pacman -S tqftpserv` | Qualcomm TFTP server over QRTR/QMI for firmware and memory configuration transfers to DSP subsystems. |
 | **`nabu-pmac`** | `sudo pacman -S nabu-pmac` | Generates a persistent, deterministic Wi-Fi MAC address derived from the tablet's unique motherboard serial number to prevent randomized MACs on boot. |
-| **`nabu-tablet-mode`** | `sudo pacman -S nabu-tablet-mode` | Tablet mode helper daemon and post-suspend resume hook for GNOME and KDE Plasma to restore orientation and sensor tracking upon waking from sleep. |
+| **`nabu-tablet-mode`** | `sudo pacman -S nabu-tablet-mode` | Exposes Nabu's tablet mode switch to GNOME/Mutter (auto-rotation, on-screen keyboard) and a post-suspend resume hook that restores orientation and sensor tracking for GNOME and KDE Plasma after waking from sleep. |
 
 ---
 
