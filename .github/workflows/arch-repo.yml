@@ -340,12 +340,14 @@ jobs:
       - name: Drop superseded versions of rebuilt packages
         run: |
           cd repo/aarch64
-          # Remove 6.16 packages to prevent autoupdate (both .pkg and .sig).
+          # Blacklist: versions that must never be served (problematic
+          # releases; both .pkg and .sig).
           rm -f linux-nabu-6.16.* linux-nabu-headers-6.16.* linux-nabu-uki-6.16.* \
-                 linux-nabu-6.16.*.sig linux-nabu-headers-6.16.*.sig linux-nabu-uki-6.16.*.sig 2>/dev/null || true
+                 linux-nabu-6.14.11-9* linux-nabu-headers-6.14.11-9* linux-nabu-uki-6.14.11-9* 2>/dev/null || true
           # Packages rebuilt in this run supersede every older version of the
           # same pkgname (including third-party binaries the same filename
-          # previously carried). Never prune the kernel backup versions.
+          # previously carried). Kernel versions are kept for rollback only
+          # per the retention rule below.
           shopt -s nullglob
           cd ../new-pkgs
           for f in *.pkg.tar.zst *.pkg.tar.xz; do
@@ -363,6 +365,18 @@ jobs:
           done
           # Overlay newly built packages onto the repo.
           cp ../new-pkgs/*.pkg.tar.* ../aarch64/
+          # Retention: keep the newest 2 kernel versions per pkgname as
+          # rollback backups; prune everything older (blacklist already gone).
+          cd ../aarch64
+          for name in linux-nabu linux-nabu-headers linux-nabu-uki; do
+            keep=$(ls -1v "${name}"-[0-9]*.pkg.tar.xz "${name}"-[0-9]*.pkg.tar.zst 2>/dev/null | tail -n 2 | tr '\n' ' ')
+            for f in "${name}"-[0-9]*.pkg.tar.xz "${name}"-[0-9]*.pkg.tar.zst; do
+              case " $keep " in
+                *" $f "*) ;;
+                *) echo "  pruning $(basename "$f")"; rm -f "$f" "${f}.sig" ;;
+              esac
+            done
+          done
 
       - name: Fix permissions
         run: sudo chown -R "$USER:$USER" repo/aarch64/
@@ -393,7 +407,10 @@ jobs:
               pacman -S --noconfirm pacman-contrib
               shopt -s nullglob
               rm -f nabu.db* nabu.files*
-              repo-add nabu.db.tar.gz *.pkg.tar.zst *.pkg.tar.xz
+              # repo-add keeps only the last-processed version per pkgname, so
+              # feed files in version order (not lexical: 6.14.11-10 < -5) so
+              # the newest package wins.
+              ls -1v *.pkg.tar.zst *.pkg.tar.xz | xargs repo-add nabu.db.tar.gz
             "
           # Fail (never publish) if the database could not be built: an empty
           # db must not replace the working release below.
