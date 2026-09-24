@@ -204,7 +204,11 @@ jobs:
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
             *)
-              sig="$pkg-$pkgver-$pkgrel"
+              # Key the build cache by source commit so ANY PKGBUILD/source
+              # change (even without a pkgrel bump) forces a real rebuild
+              # instead of serving stale cached artifacts.
+              sha=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+              sig="$pkg-$pkgver-$pkgrel-$sha"
               ;;
           esac
           echo "sig=$sig" >> "$GITHUB_OUTPUT"
