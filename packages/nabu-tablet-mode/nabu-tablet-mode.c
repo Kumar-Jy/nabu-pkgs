@@ -21,6 +21,7 @@
 #define DEVICE_NAME "Nabu Tablet Mode Switch"
 #define USER_SHELL_DELAY_TICKS 25
 #define POLL_NSEC 200000000L
+#define RUN_STATE_DIR "/run/nabu-tablet-mode"
 #define RUN_MODE_FILE "/run/nabu-tablet-mode/mode"
 #define CONF_FILE "/etc/nabu-tablet-mode.conf"
 
@@ -317,6 +318,9 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: %s\n", argv[0]);
 		return EXIT_FAILURE;
 	}
+
+	(void)mkdir(RUN_STATE_DIR, 0777);
+	(void)chmod(RUN_STATE_DIR, 0777);
 
 	fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
