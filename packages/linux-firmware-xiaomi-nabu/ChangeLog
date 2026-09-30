@@ -1,0 +1,7 @@
+2026-09-30 Kumar <kumar@nabu>
+	* 25.04.26-3:
+	- Source: Restore permanent upstream archive download source
+	- Packaging: Add in-terminal update notifications and package changelog
+	- Dependencies: Clean dependencies on linux-firmware-whence and linux-firmware-atheros
+	- Subsystems: Qualcomm ADSP, CDSP, SLPI sensor registry, Adreno 640 GPU firmware
+

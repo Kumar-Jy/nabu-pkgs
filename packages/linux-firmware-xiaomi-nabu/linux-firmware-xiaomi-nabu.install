@@ -1,0 +1,13 @@
+post_install() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mlinux-firmware-xiaomi-nabu ($1) installed:\e[0m"
+    echo "   * Hardware firmware loaded for Qualcomm DSP, SLPI sensors, and Adreno GPU"
+    echo ""
+}
+
+post_upgrade() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mlinux-firmware-xiaomi-nabu ($1) changelog highlights:\e[0m"
+    echo "   * CI & Source: Restored permanent upstream archive download source"
+    echo "   * Clean Dependencies: Uses linux-firmware-whence and linux-firmware-atheros"
+    echo "   * Subsystems: Verified SLPI sensor registry and Qualcomm DSP firmware integrity"
+    echo ""
+}

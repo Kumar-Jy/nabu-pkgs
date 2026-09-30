@@ -2,23 +2,27 @@
 # Qualcomm/DSP firmware blobs for Xiaomi Pad 5 (nabu).
 #
 # The blobs are proprietary binaries extracted from the device and have no
-# redistribution terms upstream. Their canonical snapshot lives in this
-# repository's own release, so the package is self-hosted: the build source
-# is the previously published package, repacked as-is. To update the blobs,
-# replace the source asset and bump pkgrel.
+# redistribution terms upstream. Source archive is hosted on the upstream
+# release.
 
 pkgname=linux-firmware-xiaomi-nabu
 pkgver=25.04.26
-pkgrel=2
-_src_pkgrel=1
+pkgrel=3
 pkgdesc="Qualcomm/DSP firmware for Xiaomi Pad 5 (nabu)"
 arch=('any')
 url="https://github.com/linux-msm/linux-firmware-msm"
 license=('custom:proprietary')
+changelog=ChangeLog
+install=linux-firmware-xiaomi-nabu.install
 depends=('linux-firmware-whence' 'linux-firmware-atheros')
-source=("fw-src.pkg.tar.xz::https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/$pkgname-$pkgver-$_src_pkgrel-any.pkg.tar.xz")
-sha256sums=('SKIP')
+source=("fw-src.pkg.tar.xz::https://github.com/rodriguezst/arch-repo/releases/download/aarch64/$pkgname-$pkgver-1-any.pkg.tar.xz"
+        "ChangeLog"
+        "$pkgname.install")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
 
 package() {
   cp -a "$srcdir/usr" "$pkgdir/"
+  install -Dm644 "$srcdir/ChangeLog" "$pkgdir/usr/share/doc/$pkgname/ChangeLog"
 }
