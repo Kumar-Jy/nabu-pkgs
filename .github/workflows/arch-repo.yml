@@ -205,7 +205,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            oskb|nabu-autobrightness|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|iio-sensor-proxy)
+            oskb|nabu-autobrightness|nabu-tablet-mode|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|iio-sensor-proxy)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
