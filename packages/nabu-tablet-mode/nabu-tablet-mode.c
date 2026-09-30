@@ -19,8 +19,8 @@
 #include <unistd.h>
 
 #define DEVICE_NAME "Nabu Tablet Mode Switch"
-#define USER_SHELL_DELAY_TICKS 25
-#define POLL_NSEC 200000000L
+#define USER_SHELL_DELAY_TICKS 5
+#define POLL_SEC 1
 #define RUN_STATE_DIR "/run/nabu-tablet-mode"
 #define RUN_MODE_FILE "/run/nabu-tablet-mode/mode"
 #define CONF_FILE "/etc/nabu-tablet-mode.conf"
@@ -206,8 +206,16 @@ static bool is_physical_keyboard_present(void)
 	return found;
 }
 
+static pid_t cached_shell_pid = 0;
+
 static bool graphical_user_shell_running(void)
 {
+	if (cached_shell_pid > 0) {
+		if (kill(cached_shell_pid, 0) == 0)
+			return true;
+		cached_shell_pid = 0;
+	}
+
 	struct dirent *entry;
 	DIR *proc;
 	bool found = false;
@@ -278,12 +286,31 @@ static bool graphical_user_shell_running(void)
 			}
 		}
 
+		cached_shell_pid = (pid_t)pid;
 		found = true;
 		break;
 	}
 
 	closedir(proc);
 	return found;
+}
+
+static time_t last_mode_mtime = 0;
+
+static void check_mode_file_update(tablet_op_mode_t *op_mode)
+{
+	struct stat st;
+	if (stat(RUN_MODE_FILE, &st) == 0) {
+		if (st.st_mtime != last_mode_mtime) {
+			last_mode_mtime = st.st_mtime;
+			tablet_op_mode_t new_mode = read_configured_mode();
+			if (new_mode != *op_mode) {
+				*op_mode = new_mode;
+				printf(DEVICE_NAME ": mode changed -> %s\n", mode_name(*op_mode));
+				fflush(stdout);
+			}
+		}
+	}
 }
 
 int main(int argc, char **argv)
@@ -310,7 +337,6 @@ int main(int argc, char **argv)
 	int fd;
 	int status = EXIT_FAILURE;
 	unsigned int shell_ticks = 0;
-	unsigned int kbd_poll_ticks = 0;
 	bool enabled = false;
 	tablet_op_mode_t op_mode = MODE_AUTO;
 
@@ -375,7 +401,8 @@ int main(int argc, char **argv)
 
 	while (!stopping) {
 		struct timespec delay = {
-			.tv_nsec = POLL_NSEC,
+			.tv_sec = POLL_SEC,
+			.tv_nsec = 0,
 		};
 
 		if (reload_mode) {
@@ -385,19 +412,19 @@ int main(int argc, char **argv)
 			fflush(stdout);
 		}
 
+		check_mode_file_update(&op_mode);
+
 		if (retrigger) {
 			retrigger = 0;
-			if (enabled) {
-				/* Pulse 1 -> 0 -> 1 so KWin/Mutter immediately re-claims SensorProxy */
-				if (set_tablet_mode(fd, false) < 0)
-					perror("pulse tablet mode off on retrigger");
-				struct timespec pulse = { .tv_nsec = 50000000L }; /* 50ms */
-				nanosleep(&pulse, NULL);
-				if (set_tablet_mode(fd, true) < 0)
-					perror("pulse tablet mode on on retrigger");
-				printf(DEVICE_NAME ": SW_TABLET_MODE=ON (pulsed for wake/retrigger)\n");
-				fflush(stdout);
-			}
+			/* Pulse state so KWin/Mutter immediately re-evaluates/re-claims SensorProxy */
+			if (set_tablet_mode(fd, !enabled) < 0)
+				perror("pulse tablet mode off on retrigger");
+			struct timespec pulse = { .tv_nsec = 50000000L }; /* 50ms */
+			nanosleep(&pulse, NULL);
+			if (set_tablet_mode(fd, enabled) < 0)
+				perror("pulse tablet mode on on retrigger");
+			printf(DEVICE_NAME ": pulsed SW_TABLET_MODE=%s for wake/retrigger\n", enabled ? "ON" : "OFF");
+			fflush(stdout);
 		}
 
 		if (graphical_user_shell_running()) {
@@ -408,11 +435,7 @@ int main(int argc, char **argv)
 					initial_eval = true;
 			}
 
-			/* Initial evaluation after delay, then periodic check every 1 second (5 ticks) */
-			bool should_evaluate = initial_eval || (shell_ticks >= USER_SHELL_DELAY_TICKS && ++kbd_poll_ticks >= 5);
-
-			if (should_evaluate) {
-				kbd_poll_ticks = 0;
+			if (initial_eval || shell_ticks >= USER_SHELL_DELAY_TICKS) {
 				bool desired = false;
 
 				if (op_mode == MODE_TABLET) {
@@ -438,7 +461,6 @@ int main(int argc, char **argv)
 			}
 		} else {
 			shell_ticks = 0;
-			kbd_poll_ticks = 0;
 			if (enabled) {
 				if (set_tablet_mode(fd, false) < 0) {
 					perror("disable tablet mode on shell exit");

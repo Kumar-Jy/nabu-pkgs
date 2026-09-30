@@ -89,6 +89,17 @@ if wait_for_sensor_proxy; then
     # Re-announce tablet mode after SensorProxy's D-Bus owner transition so
     # Mutter/KWin reclaims rotation if it missed the change while suspended.
     /usr/bin/killall -USR1 nabu-tablet-mode 2>/dev/null || true
+
+    # Notify any active KWin session to reconfigure output sensor availability
+    for uid_dir in /run/user/*; do
+        [ -d "$uid_dir" ] || continue
+        uid=$(basename "$uid_dir")
+        [ "$uid" -ge 1000 ] 2>/dev/null || continue
+        user_name=$(id -nu "$uid" 2>/dev/null || true)
+        [ -n "$user_name" ] || continue
+        sudo -u "$user_name" DBUS_SESSION_BUS_ADDRESS="unix:path=$uid_dir/bus" \
+            /usr/bin/busctl --user call org.kde.KWin /KWin org.kde.KWin reconfigure >/dev/null 2>&1 || true
+    done
 else
     log "SensorProxy did not rediscover the accelerometer"
 fi
