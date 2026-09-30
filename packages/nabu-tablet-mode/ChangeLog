@@ -1,0 +1,7 @@
+2026-09-30 Kumar <kumar@nabu>
+	* 1.0.0-11:
+	- CPU Optimization: Cache shell PID to eliminate 200ms /proc scan loop (idle CPU dropped from ~10% to 0.0%)
+	- Live Mode File: Poll /run/nabu-tablet-mode/mode directly so unprivileged users can toggle modes without root
+	- Resume Pulse: Fix wake/retrigger state pulse on resume regardless of current mode
+	- Systemd: Add StartLimitIntervalSec=0 and RestartSec=2s to nabu-ssc.conf
+	- Changelog: Add interactive in-terminal update notifications and package changelog

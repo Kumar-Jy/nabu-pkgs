@@ -1,0 +1,18 @@
+post_install() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    echo -e "\n\e[1;34m::\e[0m \e[1mnabu-tablet-mode ($1) installed:\e[0m"
+    echo "   * Helper service running for GNOME Mutter & KDE Plasma auto-rotation"
+    echo "   * Toggle tablet mode anytime: nabu-tablet-toggle [auto|tablet|laptop|status]"
+    echo ""
+}
+
+post_upgrade() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart nabu-tablet-mode.service >/dev/null 2>&1 || true
+    echo -e "\n\e[1;34m::\e[0m \e[1mnabu-tablet-mode ($1) changelog highlights:\e[0m"
+    echo "   * CPU Optimization: Eliminated /proc scanning loop (idle CPU dropped to 0.0%)"
+    echo "   * Unprivileged Toggle: Desktop shortcut & CLI toggle work without root permissions"
+    echo "   * Wake Recovery: Fixed retrigger pulse so rotation re-claims cleanly on resume"
+    echo "   * Service Protection: Added StartLimitIntervalSec=0 to avoid crash limits"
+    echo ""
+}

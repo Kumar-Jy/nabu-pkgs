@@ -3,11 +3,13 @@
 
 pkgname=nabu-tablet-mode
 pkgver=1.0.0
-pkgrel=10
+pkgrel=11
 pkgdesc="Tablet mode switch helper and sensor resume hook for GNOME/Plasma on Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('GPL2')
+changelog=ChangeLog
+install=nabu-tablet-mode.install
 depends=('glibc' 'iio-sensor-proxy' 'hexagonrpcd' 'psmisc')
 makedepends=('gcc')
 backup=('etc/nabu-tablet-mode.conf')
@@ -19,8 +21,10 @@ source=('nabu-tablet-mode.c'
         'nabu-ssc.conf'
         'nabu-tablet-mode.conf'
         'nabu-tablet-toggle'
-        'nabu-tablet-toggle.desktop')
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        'nabu-tablet-toggle.desktop'
+        'ChangeLog'
+        'nabu-tablet-mode.install')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 build() {
   cd "$srcdir"
@@ -37,4 +41,5 @@ package() {
   install -Dm755 "$srcdir/nabu-sensors-recover" "$pkgdir/usr/libexec/nabu-sensors-recover"
   install -Dm644 "$srcdir/90-nabu-ssc-accelerometer.rules" "$pkgdir/usr/lib/udev/rules.d/90-nabu-ssc-accelerometer.rules"
   install -Dm644 "$srcdir/nabu-ssc.conf" "$pkgdir/usr/lib/systemd/system/iio-sensor-proxy.service.d/nabu-ssc.conf"
+  install -Dm644 "$srcdir/ChangeLog" "$pkgdir/usr/share/doc/nabu-tablet-mode/ChangeLog"
 }
