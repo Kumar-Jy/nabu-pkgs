@@ -1,0 +1,7 @@
+2026-09-30 Kumar <kumar@nabu>
+	* 3.9-4:
+	- SSC: Implement discovery retry timer so daemon stays alive instead of hitting systemd start limit
+	- D-Bus: Allow broadcast signals (destination_bus_name == NULL) for KWin and desktop listeners
+	- Queueing: Initialize delayed invocations early to eliminate race condition when claimed before discovery
+	- Systemd: Protect against restart crash limits on slow SLPI/FastRPC boot
+	- Changelog: Add interactive in-terminal update notifications and package changelog

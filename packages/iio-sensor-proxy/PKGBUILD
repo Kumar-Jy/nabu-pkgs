@@ -3,11 +3,13 @@
 
 pkgname=iio-sensor-proxy
 pkgver=3.9
-pkgrel=3
+pkgrel=4
 pkgdesc='IIO accelerometer sensor to input device proxy (with Snapdragon SSC fix)'
 arch=('aarch64')
 url='https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/'
 license=('GPL-3.0-only')
+changelog=ChangeLog
+install=iio-sensor-proxy.install
 depends=(glib2
          glibc
          libgcc
@@ -18,8 +20,12 @@ makedepends=(git
              meson
              ninja)
 source=("git+https://gitlab.freedesktop.org/hadess/iio-sensor-proxy#tag=$pkgver"
-        "0001-fix-ssc-race-condition.patch")
+        "0001-fix-ssc-race-condition.patch"
+        "ChangeLog"
+        "iio-sensor-proxy.install")
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP')
 
 prepare() {
@@ -38,4 +44,5 @@ build() {
 
 package() {
   meson install -C build --destdir="$pkgdir"
+  install -Dm644 "$srcdir/ChangeLog" "$pkgdir/usr/share/doc/$pkgname/ChangeLog"
 }

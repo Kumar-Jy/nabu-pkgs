@@ -1,0 +1,18 @@
+post_install() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl restart iio-sensor-proxy.service >/dev/null 2>&1 || true
+    echo -e "\n\e[1;34m::\e[0m \e[1miio-sensor-proxy ($1) installed:\e[0m"
+    echo "   * Snapdragon SSC: Added discovery retry so daemon never crashes on slow boot/wake"
+    echo "   * Broadcast Signals: Fixed D-Bus PropertiesChanged delivery to KWin & desktop shells"
+    echo ""
+}
+
+post_upgrade() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart iio-sensor-proxy.service >/dev/null 2>&1 || true
+    echo -e "\n\e[1;34m::\e[0m \e[1miio-sensor-proxy ($1) changelog highlights:\e[0m"
+    echo "   * Snapdragon SSC: Added discovery retry so daemon never crashes on slow boot/wake"
+    echo "   * Broadcast Signals: Fixed D-Bus PropertiesChanged delivery to KWin & desktop shells"
+    echo "   * Startup Queue: Fixed race condition when sensors claimed before discovery completed"
+    echo ""
+}
