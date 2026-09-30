@@ -1,0 +1,8 @@
+2026-09-30 Kumar <kumar@nabu>
+	* 6.14.11-10.6:
+	- KTZ8866: Add PM resume hook (ktz8866_resume) to restore backlight reliably after s2idle
+	- Suspend: Reduce s2idle sleep entry grace from 2000ms to 300ms
+	- FastRPC SLPI: Enable stable QRTR communication with sensor subsystems
+	- Camera: Full support for OV13B10 rear, OV8856 front, and CN3927 autofocus
+	- Audio: 24-bit microphone capture fix and speaker routing
+	- Display: 120Hz native panel with orientation quirks

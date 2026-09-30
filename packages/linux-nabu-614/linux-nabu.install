@@ -82,8 +82,18 @@ pre_upgrade() {
     done
 }
 
+show_changelog() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mlinux-nabu ($1) changelog highlights:\e[0m"
+    echo "   * KTZ8866: Added PM resume hook (ktz8866_resume) to restore backlight on wake"
+    echo "   * Power: Reduced s2idle sleep entry grace from 2000ms to 300ms"
+    echo "   * SLPI/Sensors: Fully integrated with iio-sensor-proxy 3.9"
+    echo "   * Camera & Audio: Hardware video decode, 24-bit mic capture, 120Hz display"
+    echo ""
+}
+
 post_install() {
     regenerate_uki
+    show_changelog "$1"
 }
 
 post_upgrade() {
@@ -97,6 +107,7 @@ post_upgrade() {
     done
 
     regenerate_uki
+    show_changelog "$1"
 }
 
 post_remove() {
