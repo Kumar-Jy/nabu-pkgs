@@ -74,7 +74,8 @@ _package() {
   pkgdesc="The Linux Kernel and modules for the Xiaomi Pad 5 (nabu)"
   depends=('coreutils' 'linux-firmware-whence' 'linux-firmware-atheros' 'kmod' 'mkinitcpio>=0.7' 'ukify')
   optdepends=('wireless-regdb: to set the correct wireless channels of your country'
-              'linux-firmware-xiaomi-nabu: camera/iris/SLPI firmware (venus.mbn, slpi_nb.mbn) - not in standard repos')
+              'linux-firmware-xiaomi-nabu: camera/iris/SLPI firmware (venus.mbn, slpi_nb.mbn) - not in standard repos'
+              'nabu-kclean: clean up older backed-up kernel modules and UKIs after updates')
   provides=("linux=${pkgver}")
   conflicts=('linux')
   install="linux-nabu.install"

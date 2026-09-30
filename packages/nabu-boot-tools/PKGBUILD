@@ -3,12 +3,12 @@
 
 pkgname=nabu-boot-tools
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Boot and UKI management tools for Xiaomi Pad 5 (nabu)"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
 license=('GPL2')
-depends=('bash' 'mkinitcpio' 'ukify' 'sed' 'grep' 'coreutils' 'util-linux')
+depends=('bash' 'mkinitcpio' 'ukify' 'sed' 'grep' 'coreutils' 'util-linux' 'nabu-kclean')
 install=nabu-boot-tools.install
 source=(
   'uki-regenerate'

@@ -88,6 +88,7 @@ show_changelog() {
     echo "   * Power: Reduced s2idle sleep entry grace from 2000ms to 300ms"
     echo "   * SLPI/Sensors: Fully integrated with iio-sensor-proxy 3.9"
     echo "   * Camera & Audio: Hardware video decode, 24-bit mic capture, 120Hz display"
+    echo "   * Cleanup: Run 'sudo nabu-kclean' to remove previous kernel backups and reclaim disk space"
     echo ""
 }
 

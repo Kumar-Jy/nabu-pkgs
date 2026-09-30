@@ -1,0 +1,22 @@
+# Maintainer: Kumar-Jy
+# Safe kernel backup cleanup tool for Xiaomi Pad 5 (nabu)
+
+pkgname=nabu-kclean
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Safe kernel backup and old modules cleanup tool for Xiaomi Pad 5 (nabu)"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('GPL2')
+depends=('bash' 'coreutils')
+provides=('nabu-kernel-clean')
+changelog=ChangeLog
+source=('nabu-kclean')
+sha256sums=('SKIP')
+
+package() {
+  install -Dm755 "$srcdir/nabu-kclean" "$pkgdir/usr/bin/nabu-kclean"
+  ln -sf nabu-kclean "$pkgdir/usr/bin/kclean"
+  ln -sf nabu-kclean "$pkgdir/usr/bin/nabu-clean-old-kernels"
+  ln -sf nabu-kclean "$pkgdir/usr/bin/nabu-kernel-clean"
+}

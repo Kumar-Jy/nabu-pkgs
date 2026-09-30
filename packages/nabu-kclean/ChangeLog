@@ -1,0 +1,7 @@
+2026-09-30 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 1.0.0-1: Initial release of nabu-kclean tool.
+	  - Safely cleans up backed-up kernel modules (*.old), backup UKIs (*-old.efi),
+	    and orphaned kernel files.
+	  - Protects currently running and active installed kernels.
+	  - Provides --dry-run and interactive confirmation.
+	  - Provides kclean and nabu-kernel-clean aliases.

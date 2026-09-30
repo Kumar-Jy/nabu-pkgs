@@ -94,7 +94,7 @@ on:
       build_nabu_boot_tools:
         type: boolean
         default: true
-        description: Build nabu-boot-tools
+        description: Build Nabu boot & maintenance tools (nabu-boot-tools, nabu-kclean)
       build_iio_sensor_proxy:
         type: boolean
         default: true
@@ -158,10 +158,10 @@ jobs:
                  if $camera_studio then "camera-studio" else empty end,
                  if $nabu_torch then "nabu-torch" else empty end,
                  if $sddm_nabu then "sddm-nabu" else empty end,
-                 if $nabu_boot_tools then "nabu-boot-tools" else empty end,
+                 if $nabu_boot_tools then "nabu-boot-tools", "nabu-kclean" else empty end,
                  if $iio_sensor_proxy then "iio-sensor-proxy" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","iio-sensor-proxy"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -205,7 +205,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            oskb|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|iio-sensor-proxy)
+            oskb|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
