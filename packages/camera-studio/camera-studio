@@ -32,6 +32,27 @@ def find_focus_device():
             pass
     return None
 
+def prime_sensor_exposure(is_front=False):
+    """Pre-seed sensor exposure and analogue gain so viewfinder launches brightly with zero black-screen lag."""
+    target = 'ov8856' if is_front else 'ov13b10'
+    gain = 400 if is_front else 384
+    exp = 1000
+    try:
+        for dev in sorted(glob.glob('/sys/class/video4linux/v4l-subdev*')):
+            name_file = os.path.join(dev, 'name')
+            if os.path.exists(name_file):
+                with open(name_file, 'r') as f:
+                    name = f.read().strip()
+                if target in name:
+                    node = f"/dev/{os.path.basename(dev)}"
+                    subprocess.run(
+                        ['v4l2-ctl', '-d', node, '-c', f'exposure={exp},analogue_gain={gain}'],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+                    )
+                    break
+    except Exception as e:
+        print("Sensor exposure priming error:", e)
+
 # Discover Available Cameras
 def discover_cameras():
     cameras = []
@@ -219,9 +240,22 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         theme.add_search_path('/usr/share/pixmaps')
         self.set_icon_name("camera-studio")
 
-        # Save Directory
+        # Save Directories
         self.save_dir = os.path.expanduser('~/Pictures/Camera')
+        self.video_save_dir = os.path.expanduser('~/Videos/Camera')
         os.makedirs(self.save_dir, exist_ok=True)
+        os.makedirs(self.video_save_dir, exist_ok=True)
+
+        # Mode & Video recording state
+        self.camera_mode = 'photo'  # 'photo' or 'video'
+        self.is_recording = False
+        self.record_bin = None
+        self.record_tee_pad = None
+        self.record_sink_pad = None
+        self.record_start_time = 0
+        self.record_timer_id = None
+        self.current_video_path = None
+        self.tee = None
 
         # Camera state
         self.cameras = discover_cameras()
@@ -232,6 +266,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.gam_elem = None
         self.flip_elem = None
         self.cam_elem = None
+
+        # Pre-seed camera sensors so viewfinder starts immediately bright
+        prime_sensor_exposure(False)
+        prime_sensor_exposure(True)
 
         # Hardware Sensor controls (EV Bias, Sharpness, Computational Enhancement)
         self.ev_bias = 0.0
@@ -294,8 +332,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.start_camera_pipeline()
 
     def scan_recent_photos(self):
-        files = glob.glob(os.path.join(self.save_dir, 'IMG_*.*'))
-        files = [f for f in files if os.path.isfile(f) and os.path.getsize(f) > 0]
+        photo_files = glob.glob(os.path.join(self.save_dir, 'IMG_*.*'))
+        video_files = glob.glob(os.path.join(self.video_save_dir, 'VID_*.*'))
+        files = [f for f in (photo_files + video_files) if os.path.isfile(f) and os.path.getsize(f) > 0]
         files.sort(key=os.path.getmtime, reverse=True)
         return files[:50]
 
@@ -378,7 +417,25 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.fill_light_box.set_can_target(False)
         self.overlay.add_overlay(self.fill_light_box)
 
-        # 6. Main UI Controls Overlay (Top Bar + Preset Strip + Bottom Bar + Slide-in Drawer)
+        # 6. Overlay: Video Recording Indicator & Elapsed Timer Badge (Top Center)
+        self.rec_indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.rec_indicator_box.set_halign(Gtk.Align.CENTER)
+        self.rec_indicator_box.set_valign(Gtk.Align.START)
+        self.rec_indicator_box.set_margin_top(20)
+        self.rec_indicator_box.add_css_class("rec-indicator-badge")
+        self.rec_indicator_box.set_visible(False)
+        self.rec_indicator_box.set_can_target(False)
+
+        self.rec_dot = Gtk.Box()
+        self.rec_dot.add_css_class("rec-pulse-dot")
+        self.rec_indicator_box.append(self.rec_dot)
+
+        self.lbl_rec_timer = Gtk.Label(label="REC 00:00")
+        self.lbl_rec_timer.add_css_class("rec-timer-text")
+        self.rec_indicator_box.append(self.lbl_rec_timer)
+        self.overlay.add_overlay(self.rec_indicator_box)
+
+        # 7. Main UI Controls Overlay (Top Bar + Preset Strip + Bottom Bar + Slide-in Drawer)
         controls_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         controls_layout.set_hexpand(True)
         controls_layout.set_vexpand(True)
@@ -522,6 +579,26 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_revealer.set_child(hud_content)
         controls_layout.append(self.hud_revealer)
 
+        # --- Camera Mode Switcher (PHOTO / VIDEO) ---
+        mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        mode_box.set_halign(Gtk.Align.CENTER)
+        mode_box.set_valign(Gtk.Align.CENTER)
+        mode_box.set_margin_bottom(8)
+        mode_box.add_css_class("mode-switcher-container")
+
+        self.btn_mode_photo = Gtk.Button(label="PHOTO")
+        self.btn_mode_photo.add_css_class("mode-btn")
+        self.btn_mode_photo.add_css_class("mode-btn-active")
+        self.btn_mode_photo.connect('clicked', lambda _: self.set_camera_mode('photo'))
+        mode_box.append(self.btn_mode_photo)
+
+        self.btn_mode_video = Gtk.Button(label="VIDEO")
+        self.btn_mode_video.add_css_class("mode-btn")
+        self.btn_mode_video.connect('clicked', lambda _: self.set_camera_mode('video'))
+        mode_box.append(self.btn_mode_video)
+
+        controls_layout.append(mode_box)
+
         # --- Bottom Shutter & Controls Bar ---
         bottom_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         bottom_bar_wrapper.set_halign(Gtk.Align.CENTER)
@@ -587,11 +664,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_shutter.add_css_class("shutter-button")
         self.btn_shutter.set_valign(Gtk.Align.CENTER)
         self.btn_shutter.set_halign(Gtk.Align.CENTER)
-        shutter_inner = Gtk.Box()
-        shutter_inner.add_css_class("shutter-inner-circle")
-        shutter_inner.set_valign(Gtk.Align.CENTER)
-        shutter_inner.set_halign(Gtk.Align.CENTER)
-        self.btn_shutter.set_child(shutter_inner)
+        self.shutter_inner = Gtk.Box()
+        self.shutter_inner.add_css_class("shutter-inner-circle")
+        self.shutter_inner.set_valign(Gtk.Align.CENTER)
+        self.shutter_inner.set_halign(Gtk.Align.CENTER)
+        self.btn_shutter.set_child(self.shutter_inner)
         self.btn_shutter.connect('clicked', self.on_shutter_clicked)
         center_box.append(self.btn_shutter)
 
@@ -1382,6 +1459,71 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .shutter-button:active .shutter-inner-circle {
             background-color: #38bdf8;
+        }
+        .mode-switcher-container {
+            background-color: rgba(18, 21, 28, 0.82);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            padding: 3px 6px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+        }
+        .mode-btn {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            padding: 5px 14px;
+            border-radius: 16px;
+            color: rgba(255, 255, 255, 0.60);
+            background: transparent;
+            border: none;
+            transition: all 120ms ease;
+        }
+        .mode-btn:hover {
+            color: #ffffff;
+        }
+        .mode-btn-active {
+            color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.20);
+        }
+        .shutter-button-video {
+            border-color: #ef4444;
+        }
+        .shutter-inner-video {
+            background-color: #ef4444 !important;
+            border-radius: 9999px;
+            min-width: 56px;
+            min-height: 56px;
+            transition: all 180ms ease;
+        }
+        .shutter-button-recording {
+            border-color: #ef4444 !important;
+        }
+        .shutter-inner-recording {
+            background-color: #ef4444 !important;
+            border-radius: 10px !important;
+            min-width: 32px !important;
+            min-height: 32px !important;
+            transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .rec-indicator-badge {
+            background-color: rgba(239, 68, 68, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            padding: 4px 14px;
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.5);
+        }
+        .rec-pulse-dot {
+            min-width: 10px;
+            min-height: 10px;
+            border-radius: 9999px;
+            background-color: #ffffff;
+        }
+        .rec-timer-text {
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            font-family: monospace;
+            letter-spacing: 0.5px;
         }
         .action-circle-btn {
             border-radius: 9999px;
@@ -2217,6 +2359,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     # --- Camera Pipeline Setup ---
     def start_camera_pipeline(self):
+        if self.is_recording:
+            self.stop_video_recording()
+
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
             self.pipeline = None
@@ -2226,6 +2371,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             return
 
         cam = self.cameras[self.cur_cam_idx]
+        is_front = cam.get('is_front', False)
+
+        # Pre-seed hardware sensor registers to immediately eliminate black screen
+        prime_sensor_exposure(is_front)
 
         # Build pipeline string based on camera type
         # Use native 4:3 sensor mode (2048x1536) to prevent 16:9 cropping and maximize light capture
@@ -2245,6 +2394,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             f'videobalance name=bal brightness={self.brightness} contrast={self.contrast} saturation={self.saturation} hue={self.hue} ! '
             f'gamma name=gam gamma={self.gamma} ! '
             f'videoflip name=flip ! '
+            f'tee name=t '
+            f't. ! queue name=q_view leaky=downstream max-size-buffers=3 ! '
             f'video/x-raw,format=RGB ! '
             f'gtk4paintablesink name=sink'
         )
@@ -2255,6 +2406,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             self.bal_elem = self.pipeline.get_by_name('bal')
             self.gam_elem = self.pipeline.get_by_name('gam')
             self.flip_elem = self.pipeline.get_by_name('flip')
+            self.tee = self.pipeline.get_by_name('t')
             self.paintable_sink = self.pipeline.get_by_name('sink')
 
             self.update_video_direction()
@@ -2286,8 +2438,15 @@ class CameraStudioWindow(Adw.ApplicationWindow):
     def on_sharpness_slider_changed(self, scale):
         self.set_sharpness_val(scale.get_value(), update_drawer=False)
 
-    # --- Shutter & Photo Capture ---
+    # --- Shutter & Photo / Video Capture ---
     def on_shutter_clicked(self, _btn):
+        if self.camera_mode == 'video':
+            if self.is_recording:
+                self.stop_video_recording()
+            else:
+                self.start_video_recording()
+            return
+
         if self.countdown_remaining > 0:
             if self.countdown_source_id:
                 GLib.source_remove(self.countdown_source_id)
@@ -2376,9 +2535,10 @@ class CameraStudioWindow(Adw.ApplicationWindow):
                 for row in range(h):
                     raw_bytes[row * expected_rowstride : (row + 1) * expected_rowstride] = \
                         map_info.data[row * actual_stride : row * actual_stride + expected_rowstride]
-                gb = GLib.Bytes.new(bytes(raw_bytes))
+                raw_data = bytes(raw_bytes)
             else:
-                gb = GLib.Bytes.new(bytes(map_info.data))
+                raw_data = bytes(map_info.data)
+            gb = GLib.Bytes.new(raw_data)
         except Exception as e:
             self.show_toast(f"Capture error: {e}")
             print("Buffer extraction failed:", e)
@@ -2409,7 +2569,6 @@ class CameraStudioWindow(Adw.ApplicationWindow):
                     pass
 
                 if use_pillow:
-                    raw_data = bytes(gb)
                     mode = 'RGBA' if has_alpha else 'RGB'
                     img = Image.frombytes(mode, (w, h), raw_data, 'raw', mode, expected_rowstride)
                     if has_alpha and output_format == 'jpeg':
@@ -2490,6 +2649,156 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         threading.Thread(target=save_worker, daemon=True).start()
 
+    # --- Mode & Video Recording Handlers ---
+    def set_camera_mode(self, mode):
+        if self.is_recording:
+            self.show_toast("Please stop recording first")
+            return
+        if mode == self.camera_mode:
+            return
+        self.camera_mode = mode
+        if mode == 'photo':
+            self.btn_mode_photo.add_css_class("mode-btn-active")
+            self.btn_mode_video.remove_css_class("mode-btn-active")
+            self.btn_shutter.set_tooltip_text("Capture Photo (Space)")
+            self.btn_shutter.remove_css_class("shutter-button-video")
+            self.btn_shutter.remove_css_class("shutter-button-recording")
+            self.shutter_inner.remove_css_class("shutter-inner-video")
+            self.shutter_inner.remove_css_class("shutter-inner-recording")
+            self.show_toast("Mode: PHOTO")
+        else:
+            self.btn_mode_video.add_css_class("mode-btn-active")
+            self.btn_mode_photo.remove_css_class("mode-btn-active")
+            self.btn_shutter.set_tooltip_text("Start Recording (Space)")
+            self.btn_shutter.add_css_class("shutter-button-video")
+            self.shutter_inner.add_css_class("shutter-inner-video")
+            self.show_toast("Mode: VIDEO")
+
+    def toggle_camera_mode(self):
+        new_mode = 'video' if self.camera_mode == 'photo' else 'photo'
+        self.set_camera_mode(new_mode)
+
+    def start_video_recording(self):
+        if self.is_recording:
+            return
+        if not self.pipeline or not self.tee:
+            self.show_toast("Camera not ready for recording")
+            return
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"VID_{timestamp}.mp4"
+        filepath = os.path.join(self.video_save_dir, filename)
+        self.current_video_path = filepath
+
+        # Pipeline branch for MP4 recording using ultrafast zerolatency x264enc
+        rec_bin_str = (
+            f'queue name=q_rec max-size-buffers=30 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! '
+            f'x264enc tune=zerolatency speed-preset=ultrafast bitrate=6000 key-int-max=30 ! '
+            f'h264parse ! mp4mux ! filesink location="{filepath}" name=fsink'
+        )
+
+        try:
+            self.record_bin = Gst.parse_bin_from_description(rec_bin_str, True)
+            self.pipeline.add(self.record_bin)
+            self.record_bin.sync_state_with_parent()
+
+            self.record_tee_pad = self.tee.request_pad_simple('src_%u')
+            self.record_sink_pad = self.record_bin.get_static_pad('sink')
+            self.record_tee_pad.link(self.record_sink_pad)
+
+            self.is_recording = True
+            self.record_start_time = time.time()
+
+            # Update UI
+            self.btn_shutter.add_css_class("shutter-button-recording")
+            self.shutter_inner.add_css_class("shutter-inner-recording")
+            self.btn_shutter.set_tooltip_text("Stop Recording (Space)")
+            self.btn_mode_photo.set_sensitive(False)
+            self.btn_mode_video.set_sensitive(False)
+            self.btn_switch_cam.set_sensitive(False)
+            self.rec_indicator_box.set_visible(True)
+            self.lbl_rec_timer.set_label("REC 00:00")
+            self.record_timer_id = GLib.timeout_add(1000, self.on_record_timer_tick)
+
+            self.play_shutter_sound()
+            self.show_toast("Recording started...")
+        except Exception as e:
+            print("Failed to start recording:", e)
+            self.show_toast(f"Recording error: {e}")
+            if self.record_bin:
+                self.record_bin.set_state(Gst.State.NULL)
+                self.pipeline.remove(self.record_bin)
+                self.record_bin = None
+            self.is_recording = False
+
+    def on_record_timer_tick(self):
+        if not self.is_recording:
+            return False
+        elapsed = int(time.time() - self.record_start_time)
+        mins, secs = divmod(elapsed, 60)
+        hours, mins = divmod(mins, 60)
+        if hours > 0:
+            self.lbl_rec_timer.set_label(f"REC {hours:02d}:{mins:02d}:{secs:02d}")
+        else:
+            self.lbl_rec_timer.set_label(f"REC {mins:02d}:{secs:02d}")
+        return True
+
+    def stop_video_recording(self):
+        if not self.is_recording:
+            return
+
+        if self.record_timer_id:
+            GLib.source_remove(self.record_timer_id)
+            self.record_timer_id = None
+
+        filepath = self.current_video_path
+        duration = max(0, time.time() - self.record_start_time)
+        filename = os.path.basename(filepath) if filepath else "video"
+
+        # Block pad and unlink cleanly with downstream EOS event
+        def stop_probe(pad, info):
+            if self.record_sink_pad and pad:
+                pad.unlink(self.record_sink_pad)
+            if self.tee and pad:
+                self.tee.release_request_pad(pad)
+            if self.record_sink_pad:
+                self.record_sink_pad.send_event(Gst.Event.new_eos())
+            return Gst.PadProbeReturn.REMOVE
+
+        if self.record_tee_pad:
+            self.record_tee_pad.add_probe(Gst.PadProbeType.BLOCK_DOWNSTREAM, stop_probe)
+
+        # Allow EOS to flush through mp4mux and filesink before freeing bin
+        def finalize_stop():
+            if self.record_bin:
+                self.record_bin.set_state(Gst.State.NULL)
+                self.pipeline.remove(self.record_bin)
+                self.record_bin = None
+            self.record_tee_pad = None
+            self.record_sink_pad = None
+            self.is_recording = False
+
+            # Reset UI
+            self.rec_indicator_box.set_visible(False)
+            self.btn_shutter.remove_css_class("shutter-button-recording")
+            self.shutter_inner.remove_css_class("shutter-inner-recording")
+            self.btn_shutter.set_tooltip_text("Start Recording (Space)")
+            self.btn_mode_photo.set_sensitive(True)
+            self.btn_mode_video.set_sensitive(True)
+            self.btn_switch_cam.set_sensitive(True)
+
+            if filepath and os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                self.last_saved_path = filepath
+                self.recent_photos.insert(0, filepath)
+                self.update_thumbnail_preview()
+                mins, secs = divmod(int(duration), 60)
+                self.show_toast(f"Saved: {filename} ({mins:02d}:{secs:02d})")
+            else:
+                self.show_toast("Recording stopped")
+            return False
+
+        GLib.timeout_add(400, finalize_stop)
+
     def play_shutter_sound(self):
         try:
             sound_file = '/usr/share/sounds/freedesktop/stereo/camera-shutter.oga'
@@ -2502,6 +2811,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     def update_thumbnail_preview(self):
         if self.last_saved_path and os.path.exists(self.last_saved_path) and os.path.getsize(self.last_saved_path) > 0:
+            if self.last_saved_path.lower().endswith(('.mp4', '.mkv', '.webm')):
+                self.img_thumb.set_from_icon_name("video-x-generic-symbolic")
+                return
             try:
                 pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.last_saved_path, 52, 52, True)
                 self.img_thumb.set_from_pixbuf(pb)
@@ -2514,7 +2826,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
     def on_open_gallery(self, _btn=None):
         self.recent_photos = self.scan_recent_photos()
         if not self.recent_photos or not os.path.exists(self.recent_photos[0]):
-            self.show_toast("No photos taken yet")
+            self.show_toast("No photos or videos taken yet")
             return
 
         dialog = GalleryInspectorDialog(self, self.recent_photos)
@@ -2528,7 +2840,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             except Exception as e:
                 self.show_toast(f"Error opening viewer: {e}")
         else:
-            self.show_toast("No photos taken yet")
+            self.show_toast("No photos or videos taken yet")
 
     def on_toggle_fullscreen(self, _btn=None):
         if self.is_fullscreen():
@@ -2547,6 +2859,15 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             return True
         elif keyval in (Gdk.KEY_space, Gdk.KEY_Return):
             self.on_shutter_clicked(None)
+            return True
+        elif keyval in (Gdk.KEY_v, Gdk.KEY_V):
+            self.set_camera_mode('video')
+            return True
+        elif keyval in (Gdk.KEY_p, Gdk.KEY_P):
+            self.set_camera_mode('photo')
+            return True
+        elif keyval == Gdk.KEY_Tab:
+            self.toggle_camera_mode()
             return True
         elif keyval in (Gdk.KEY_c, Gdk.KEY_C):
             self.on_switch_camera(None)
@@ -2583,6 +2904,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(toast)
 
     def do_close_request(self):
+        if self.is_recording:
+            self.stop_video_recording()
+        if hasattr(self, 'record_timer_id') and self.record_timer_id:
+            GLib.source_remove(self.record_timer_id)
+            self.record_timer_id = None
         if hasattr(self, 'orient_timer_id') and self.orient_timer_id:
             GLib.source_remove(self.orient_timer_id)
             self.orient_timer_id = None
@@ -2634,15 +2960,15 @@ class GalleryInspectorDialog(Adw.Window):
         header_bar.set_title_widget(self.lbl_title)
 
         # Open in Loupe / Image Viewer button
-        btn_open_external = Gtk.Button(icon_name="document-open-symbolic")
-        btn_open_external.set_tooltip_text("Open in System Image Viewer (Gwenview)")
-        btn_open_external.connect('clicked', self.on_open_external)
-        header_bar.pack_end(btn_open_external)
+        self.btn_open_external = Gtk.Button(icon_name="document-open-symbolic")
+        self.btn_open_external.set_tooltip_text("Open in System Viewer")
+        self.btn_open_external.connect('clicked', self.on_open_external)
+        header_bar.pack_end(self.btn_open_external)
 
         # Open Folder button
         btn_open_folder = Gtk.Button(icon_name="folder-symbolic")
-        btn_open_folder.set_tooltip_text("Open Pictures/Camera Folder")
-        btn_open_folder.connect('clicked', lambda _: subprocess.Popen(['xdg-open', self.parent_win.save_dir]))
+        btn_open_folder.set_tooltip_text("Open Camera Folder")
+        btn_open_folder.connect('clicked', self.on_open_folder)
         header_bar.pack_end(btn_open_folder)
 
         toolbar_view.add_top_bar(header_bar)
@@ -2678,7 +3004,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         self.btn_prev = Gtk.Button(icon_name="go-previous-symbolic")
         self.btn_prev.add_css_class("action-circle-btn")
-        self.btn_prev.set_tooltip_text("Previous Photo (Left Arrow)")
+        self.btn_prev.set_tooltip_text("Previous (Left Arrow)")
         self.btn_prev.connect('clicked', self.on_prev_photo)
         nav_box.append(self.btn_prev)
 
@@ -2688,7 +3014,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         self.btn_next = Gtk.Button(icon_name="go-next-symbolic")
         self.btn_next.add_css_class("action-circle-btn")
-        self.btn_next.set_tooltip_text("Next Photo (Right Arrow)")
+        self.btn_next.set_tooltip_text("Next (Right Arrow)")
         self.btn_next.connect('clicked', self.on_next_photo)
         nav_box.append(self.btn_next)
 
@@ -2701,11 +3027,11 @@ class GalleryInspectorDialog(Adw.Window):
         info_page = Adw.PreferencesPage()
 
         # Metadata Group
-        meta_group = Adw.PreferencesGroup(title="Photo Details")
+        meta_group = Adw.PreferencesGroup(title="Media Details")
         self.row_file = Adw.ActionRow(title="File Name")
-        self.row_res = Adw.ActionRow(title="Dimensions")
+        self.row_res = Adw.ActionRow(title="Format / Resolution")
         self.row_size = Adw.ActionRow(title="File Size")
-        self.row_date = Adw.ActionRow(title="Captured On")
+        self.row_date = Adw.ActionRow(title="Recorded On")
 
         meta_group.add(self.row_file)
         meta_group.add(self.row_res)
@@ -2715,23 +3041,23 @@ class GalleryInspectorDialog(Adw.Window):
 
         # Actions Group
         action_group = Adw.PreferencesGroup(title="Actions")
-        
+
         # Open in System Viewer action row
-        row_open = Adw.ActionRow(title="System Viewer", subtitle="Open full resolution in default image viewer")
-        btn_open = Gtk.Button(label="Open")
-        btn_open.add_css_class("suggested-action")
-        btn_open.connect('clicked', self.on_open_external)
-        row_open.add_suffix(btn_open)
-        row_open.set_activatable_widget(btn_open)
-        action_group.add(row_open)
+        self.row_open = Adw.ActionRow(title="System Viewer", subtitle="Open full resolution in default app")
+        self.btn_open = Gtk.Button(label="Open")
+        self.btn_open.add_css_class("suggested-action")
+        self.btn_open.connect('clicked', self.on_open_external)
+        self.row_open.add_suffix(self.btn_open)
+        self.row_open.set_activatable_widget(self.btn_open)
+        action_group.add(self.row_open)
 
         # Delete button
-        row_del = Adw.ActionRow(title="Remove Photo")
-        btn_del = Gtk.Button(label="Delete")
-        btn_del.add_css_class("destructive-action")
-        btn_del.connect('clicked', self.on_delete_photo)
-        row_del.add_suffix(btn_del)
-        action_group.add(row_del)
+        self.row_del = Adw.ActionRow(title="Remove Item")
+        self.btn_del = Gtk.Button(label="Delete")
+        self.btn_del.add_css_class("destructive-action")
+        self.btn_del.connect('clicked', self.on_delete_photo)
+        self.row_del.add_suffix(self.btn_del)
+        action_group.add(self.row_del)
         info_page.add(action_group)
 
         right_scroll.set_child(info_page)
@@ -2739,31 +3065,55 @@ class GalleryInspectorDialog(Adw.Window):
 
         toolbar_view.set_content(paned)
 
+    def on_open_folder(self, _btn=None):
+        if self.photo_list and self.cur_idx < len(self.photo_list):
+            folder = os.path.dirname(self.photo_list[self.cur_idx])
+        else:
+            folder = self.parent_win.save_dir
+        subprocess.Popen(['xdg-open', folder])
+
     def load_current_photo(self):
         if not self.photo_list:
             self.close()
             return
 
         path = self.photo_list[self.cur_idx]
-        self.lbl_title.set_label(f"Photo {self.cur_idx + 1} of {len(self.photo_list)}")
+        is_video = path.lower().endswith(('.mp4', '.mkv', '.webm'))
+        media_type = "Video" if is_video else "Photo"
+        self.lbl_title.set_label(f"{media_type} {self.cur_idx + 1} of {len(self.photo_list)}")
         self.btn_prev.set_sensitive(self.cur_idx > 0)
         self.btn_next.set_sensitive(self.cur_idx < len(self.photo_list) - 1)
 
         try:
-            self.pic_preview.set_filename(path)
-
-            pb = GdkPixbuf.Pixbuf.new_from_file(path)
-            w, h = pb.get_width(), pb.get_height()
-            mp = (w * h) / 1000000.0
             size_kb = os.path.getsize(path) / 1024.0
             mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S')
 
             self.row_file.set_subtitle(os.path.basename(path))
-            self.row_res.set_subtitle(f"{w} × {h} ({mp:.1f} MP)")
             self.row_size.set_subtitle(f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB")
             self.row_date.set_subtitle(mtime)
+
+            if is_video:
+                self.pic_preview.set_paintable(None)
+                self.pic_preview.set_filename(None)
+                self.row_res.set_subtitle("H.264 Video (MP4)")
+                self.row_open.set_title("Play Video")
+                self.row_open.set_subtitle("Open in default media player")
+                self.btn_open.set_label("Play")
+                self.row_del.set_title("Remove Video")
+                self.btn_open_external.set_tooltip_text("Play Video (Space / Enter)")
+            else:
+                self.pic_preview.set_filename(path)
+                pb = GdkPixbuf.Pixbuf.new_from_file(path)
+                w, h = pb.get_width(), pb.get_height()
+                mp = (w * h) / 1000000.0
+                self.row_res.set_subtitle(f"{w} × {h} ({mp:.1f} MP)")
+                self.row_open.set_title("System Viewer")
+                self.row_open.set_subtitle("Open full resolution in default image viewer")
+                self.btn_open.set_label("Open")
+                self.row_del.set_title("Remove Photo")
+                self.btn_open_external.set_tooltip_text("Open in System Image Viewer (Gwenview)")
         except Exception as e:
-            print("Failed to load photo:", e)
+            print("Failed to load media:", e)
 
     def on_preview_clicked(self, _gesture, n_press, _x, _y):
         if n_press >= 2:
