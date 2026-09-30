@@ -1,5 +1,5 @@
 2026-09-30 Kumar <kumar@nabu>
-	* 6.14.11-10.6:
+	* 6.14.11-10.1:
 	- KTZ8866: Add PM resume hook (ktz8866_resume) to restore backlight reliably after s2idle
 	- Suspend: Reduce s2idle sleep entry grace from 2000ms to 300ms
 	- FastRPC SLPI: Enable stable QRTR communication with sensor subsystems
