@@ -1,0 +1,14 @@
+post_install() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mnabu-autobrightness ($1) installed:\e[0m"
+    echo "   * Enable daemon: systemctl --user enable --now nabu-autobrightness"
+    echo "   * Check status: nabu-autobrightness status"
+    echo ""
+}
+
+post_upgrade() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mnabu-autobrightness ($1) changelog highlights:\e[0m"
+    echo "   * D-Bus: Auto-reconnects to SensorProxy when restarted or waking from sleep"
+    echo "   * CLI: Added positional subcommands (nabu-autobrightness status|toggle|enable|disable)"
+    echo "   * Stability: Zero log spam when sensor daemon is offline"
+    echo ""
+}

@@ -1,0 +1,7 @@
+2026-09-30 Kumar <kumar@nabu>
+	* 1.0.0-3:
+	- D-Bus: Monitor notify::g-name-owner to re-claim light sensor automatically on restart/wake
+	- Stability: Eliminate periodic error spam when SensorProxy is offline or restarting
+	- CLI: Support positional subcommands (status, toggle, enable, disable, test)
+	- Backlight: Smooth cosine slew transitions on KDE PowerDevil & sysfs
+	- Changelog: Add interactive in-terminal update notifications and package changelog
