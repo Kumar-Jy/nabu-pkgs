@@ -385,6 +385,7 @@ class AutoBrightnessDaemon:
                 None,
             )
             self.sensor_proxy.connect("g-properties-changed", self._on_sensor_properties_changed)
+            self.sensor_proxy.connect("notify::g-name-owner", self._on_sensor_name_owner_changed)
 
             # Subscribe to system sleep/resume
             self.system_bus.signal_subscribe(
@@ -430,12 +431,24 @@ class AutoBrightnessDaemon:
         except Exception as e:
             logging.debug(f"Session bus subscriptions failed: {e}")
 
+    def _on_sensor_name_owner_changed(self, proxy, pspec):
+        owner = proxy.get_name_owner()
+        if owner:
+            logging.info(f"SensorProxy appeared on D-Bus ({owner}), claiming light sensor...")
+            self.light_claimed = False
+            self._claim_sensor()
+        else:
+            logging.info("SensorProxy disappeared from D-Bus, resetting light claimed state.")
+            self.light_claimed = False
+
     def _claim_sensor(self):
         if not self.config.get("enabled", True):
             logging.info("Auto-brightness disabled in config, skipping ClaimLight.")
             return
 
         if self.sensor_proxy and not self.light_claimed:
+            if not self.sensor_proxy.get_name_owner():
+                return
             try:
                 self.sensor_proxy.call_sync("ClaimLight", None, Gio.DBusCallFlags.NONE, 2000, None)
                 self.light_claimed = True
@@ -468,10 +481,10 @@ class AutoBrightnessDaemon:
         if not self.config.get("enabled", True) or self.screen_locked or self.system_suspended:
             return True
 
-        if not self.light_claimed:
-            self._claim_sensor()
+        if self.sensor_proxy and self.sensor_proxy.get_name_owner():
+            if not self.light_claimed:
+                self._claim_sensor()
 
-        if self.sensor_proxy:
             prop = self.sensor_proxy.get_cached_property("LightLevel")
             if prop:
                 lux = float(prop.get_double())
@@ -981,6 +994,7 @@ Examples:
         """,
     )
 
+    parser.add_argument("command", nargs="?", choices=["status", "toggle", "enable", "disable", "test"], help="Optional command")
     parser.add_argument("-d", "--daemon", action="store_true", help="Run in background daemon mode")
     parser.add_argument("-s", "--status", action="store_true", help="Show current daemon & brightness status")
     parser.add_argument("-t", "--toggle", action="store_true", help="Toggle auto-brightness on/off")
@@ -1008,11 +1022,11 @@ Examples:
         except KeyboardInterrupt:
             daemon._on_signal_exit()
 
-    elif args.toggle:
+    elif args.toggle or args.command == "toggle":
         cli_toggle()
-    elif args.enable:
+    elif args.enable or args.command == "enable":
         cli_enable()
-    elif args.disable:
+    elif args.disable or args.command == "disable":
         cli_disable()
     elif args.profile:
         cli_set_profile(args.profile)
@@ -1020,10 +1034,10 @@ Examples:
         cli_set_bias(args.bias)
     elif args.reset_bias:
         cli_reset_bias()
-    elif args.test:
+    elif args.test or args.command == "test":
         cli_test_monitor()
     else:
-        # Default action is --status
+        # Default action is --status or 'status'
         cli_status()
 
 

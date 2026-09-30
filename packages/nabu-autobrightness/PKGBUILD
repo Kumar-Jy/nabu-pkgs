@@ -3,7 +3,7 @@
 
 pkgname=nabu-autobrightness
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Intelligent ambient light auto-brightness daemon and toggle for Xiaomi Pad 5 (nabu)"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
