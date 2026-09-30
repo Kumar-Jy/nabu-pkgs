@@ -1,0 +1,41 @@
+# Maintainer: Kumar <kumar@nabu>
+# Contributor: Filipe Laíns (FFY00) <lains@archlinux.org>
+
+pkgname=iio-sensor-proxy
+pkgver=3.9
+pkgrel=3
+pkgdesc='IIO accelerometer sensor to input device proxy (with Snapdragon SSC fix)'
+arch=('aarch64')
+url='https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/'
+license=('GPL-3.0-only')
+depends=(glib2
+         glibc
+         libgcc
+         libgudev
+         libssc
+         polkit)
+makedepends=(git
+             meson
+             ninja)
+source=("git+https://gitlab.freedesktop.org/hadess/iio-sensor-proxy#tag=$pkgver"
+        "0001-fix-ssc-race-condition.patch")
+sha256sums=('SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$pkgname"
+  patch -Np1 -i "$srcdir/0001-fix-ssc-race-condition.patch"
+}
+
+build() {
+  arch-meson build "$pkgname" \
+    -Dsystemdsystemunitdir=/usr/lib/systemd/system \
+    -Dudevrulesdir=/usr/lib/udev/rules.d \
+    -Dsysconfdir=/usr/share \
+    -Dssc-support=enabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir="$pkgdir"
+}

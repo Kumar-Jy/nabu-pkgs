@@ -95,6 +95,10 @@ on:
         type: boolean
         default: true
         description: Build nabu-boot-tools
+      build_iio_sensor_proxy:
+        type: boolean
+        default: true
+        description: Build iio-sensor-proxy (with SSC fix)
 
 jobs:
   resolve-packages:
@@ -131,6 +135,7 @@ jobs:
               --argjson nabu_torch "${{ inputs.build_nabu_torch }}" \
               --argjson sddm_nabu "${{ inputs.build_sddm_nabu }}" \
               --argjson nabu_boot_tools "${{ inputs.build_nabu_boot_tools }}" \
+              --argjson iio_sensor_proxy "${{ inputs.build_iio_sensor_proxy }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -153,9 +158,10 @@ jobs:
                  if $camera_studio then "camera-studio" else empty end,
                  if $nabu_torch then "nabu-torch" else empty end,
                  if $sddm_nabu then "sddm-nabu" else empty end,
-                 if $nabu_boot_tools then "nabu-boot-tools" else empty end ]' > matrix.json
+                 if $nabu_boot_tools then "nabu-boot-tools" else empty end,
+                 if $iio_sensor_proxy then "iio-sensor-proxy" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","iio-sensor-proxy"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -199,7 +205,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            oskb|nabu-autobrightness|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools)
+            oskb|nabu-autobrightness|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|iio-sensor-proxy)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;

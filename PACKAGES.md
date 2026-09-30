@@ -56,6 +56,7 @@ sudo pacman -Syu
 | Package | Install Command | What is this for? |
 | :--- | :--- | :--- |
 | **`hexagonrpcd`** | `sudo pacman -S hexagonrpcd` | FastRPC reverse-listener service connecting Linux userspace to the Snapdragon SLPI (Sensor Low Power Island) filesystem. Required for hardware accelerometer, ambient light, and gyroscope sensors. |
+| **`iio-sensor-proxy`** | `sudo pacman -S iio-sensor-proxy` | Accelerometer, ambient light, and orientation sensor proxy with SSC discovery retry and D-Bus broadcast signal fixes for Snapdragon SLPI. |
 | **`qrtr`** | `sudo pacman -S qrtr` | Qualcomm IPC Router userspace routing daemon managing `AF_QIPCRTR` communication with modem and DSP coprocessors. |
 | **`rmtfs`** | `sudo pacman -S rmtfs` | Qualcomm Remote Filesystem daemon managing modem and DSP access to storage partition sectors and EFS calibration files. |
 | **`tqftpserv`** | `sudo pacman -S tqftpserv` | Qualcomm TFTP server over QRTR/QMI for firmware and memory configuration transfers to DSP subsystems. |
