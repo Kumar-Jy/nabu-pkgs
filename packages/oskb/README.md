@@ -8,6 +8,26 @@ Built because default mobile/tablet keyboards (such as `plasma-keyboard`) lack e
 
 ## Features
 
+- **Enlarged Key Typography & Touch Readability**:
+  - Significantly enlarged letter, number, and symbol font sizes on key surfaces (`font-weight: 800`).
+  - High-DPI optimized scaling for tablets and touch displays (such as Xiaomi Pad 5 2560x1600 at 275 PPI).
+  - Clear, prominent symbols, math operators, and navigation arrows.
+- **Offline Voice Typing Dictation (`🎙️`)**:
+  - High-accuracy offline speech-to-text powered by Vosk speech recognition and PipeWire PCM capture.
+  - Dictate notes, terminal commands, and messages without internet connection or focus loss.
+  - Visual listening indicator (`🔴 Rec`) on the header bar and active red indicator on the `🎙️` key.
+  - Toggled with a single tap on the `🎙️` key or header bar button.
+- **Multilingual Layout Switcher (`🌐`)**:
+  - Instant layout cycling via the `🌐` key and header bar button (`🌐 EN`).
+  - Right-click / long-press popup menu to pick any supported language directly.
+  - Built-in layouts:
+    - **English (`EN`)**: US QWERTY layout.
+    - **Español (`ES`)**: Spanish layout with `ñ`, `Ñ`, `¿`, `¡`, accents.
+    - **Deutsch (`DE`)**: German QWERTZ layout with `ä`, `ö`, `ü`, `ß`.
+    - **Français (`FR`)**: French AZERTY layout with `é`, `è`, `ç`, `à`, `ù`.
+    - **Русский (`RU`)**: Russian ЙЦУКЕН Cyrillic layout.
+    - **हिन्दी (`HI`)**: Hindi Devanagari layout.
+  - Seamless Unicode typing injection across all applications.
 - **Full PC Keyboard Layout**:
   - **4 Navigation Arrows**: `←`, `↑`, `↓`, `→` with repeat support.
   - **Terminal & Desktop Essentials**: `Esc`, `Tab`, `Delete`, `Backspace`, `Enter`, `Space`, `Caps Lock`.
@@ -19,12 +39,15 @@ Built because default mobile/tablet keyboards (such as `plasma-keyboard`) lack e
   - Automatically renders lowercase letters (`q`, `w`, `e`...) when Caps Lock and Shift are OFF.
   - Switches to UPPERCASE (`Q`, `W`, `E`...) and shows shifted symbols when Shift is active or Caps Lock is ON.
   - One-shot Shift auto-releases back to lowercase after typing a character.
-- **5 High-Contrast Visual Themes**:
+- **8 High-Contrast Visual Themes**:
   - **`dark`** (Default): Deep midnight frame with slate key surfaces and high-contrast white text (>15:1 contrast).
   - **`light`**: Soft slate frame with crisp white key tiles and dark charcoal lettering.
   - **`oled`**: True pitch-black `#000000` with cyber-cyan `#00ffcc` accents.
   - **`breeze`**: Matches KDE Plasma Breeze dark styling.
   - **`amber`**: Retro phosphor amber terminal CRT aesthetic.
+  - **`glass`**: Frosted dark glass with translucent vibrancy.
+  - **`crystal`**: High-clarity transparent cyber styling.
+  - **`frost`**: Frosted light glass elegance.
 - **Dock & Float Modes**:
   - **Dock Mode**: Snaps neatly to the bottom screen edge above the taskbar.
   - **Float Mode**: Drag anywhere on screen via the top header bar handle.
@@ -87,9 +110,11 @@ Control the running keyboard instance from terminal, scripts, or KDE custom shor
 oskb --show          # Show on-screen keyboard (default)
 oskb --toggle        # Toggle visibility (show / hide)
 oskb --hide          # Minimize to floating pill
+oskb --lang [CODE]   # Cycle or set language (EN, ES, DE, FR, RU, HI)
+oskb --voice         # Toggle offline voice typing dictation
 oskb --auto [on|off] # Toggle or set auto-popup on text focus
 oskb --status        # Query status of running instance
-oskb --theme <NAME>  # Switch theme (dark, light, oled, breeze, amber)
+oskb --theme <NAME>  # Switch theme (dark, light, oled, breeze, amber, glass, crystal, frost)
 oskb --quit          # Terminate keyboard instance
 ```
 
@@ -98,7 +123,8 @@ oskb --quit          # Terminate keyboard instance
 ## Configuration
 
 Settings are saved automatically to `~/.config/oskb/config.json`:
-- Active theme (`dark`, `light`, `oled`, `breeze`, `amber`)
+- Active theme (`dark`, `light`, `oled`, `breeze`, `amber`, `glass`, `crystal`, `frost`)
+- Active language (`EN`, `ES`, `DE`, `FR`, `RU`, `HI`)
 - Dock mode (`dock` or `float`)
 - Window position and floating geometry (`float_x`, `float_y`, `float_w`, `float_h`)
 - Width preset (`full`, `medium`, `compact`) and scale factor

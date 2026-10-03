@@ -33,6 +33,12 @@ import time
 import json
 import socket
 import configparser
+import threading
+import subprocess
+
+for p in ("/usr/lib/python3.13/site-packages", "/usr/lib/python3.12/site-packages"):
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.append(p)
 
 SOCK_PATH = f"/run/user/{os.getuid()}/oskb.sock"
 
@@ -161,6 +167,20 @@ class Injector:
     def set_sticky(self, action, code, active):
         self.sticky[action] = code if active else None
 
+    def type_text(self, text):
+        if not text:
+            return
+        try:
+            clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            old_text = clip.wait_for_text()
+            clip.set_text(text, -1)
+            clip.store()
+            self.combo([_MOD_CTRL, E.KEY_V])
+            if old_text is not None:
+                GLib.timeout_add(180, lambda: (clip.set_text(old_text, -1), clip.store(), False)[-1])
+        except Exception as e:
+            print("Failed to type text:", e, file=sys.stderr)
+
 
 # ---------------------------------------------------------------------------
 # Configuration Manager
@@ -176,6 +196,7 @@ def load_config():
         "width_preset": "full",
         "theme": "dark",
         "scale": 1.0,
+        "language": "EN",
         "float_x": 0,
         "float_y": 700,
         "float_w": 1800,
@@ -206,11 +227,16 @@ def save_config(cfg):
 # Layout Definitions (68 Columns per Row)
 # ---------------------------------------------------------------------------
 
-def KEY(label, code, shift_label=None, force=False, span=4):
-    return dict(
+def KEY(label, code=None, shift_label=None, force=False, span=4, char_text=None, shift_text=None):
+    d = dict(
         t="char", label=label, code=code,
-        shift_label=shift_label, force=force, span=span, repeat=True
+        shift_label=shift_label, force=force, span=span, repeat=True,
     )
+    if char_text is not None:
+        d["char_text"] = char_text
+    if shift_text is not None:
+        d["shift_text"] = shift_text
+    return d
 
 
 def SPECIAL(label, action, code=None, span=4, repeat=False, style_class="kmod"):
@@ -227,8 +253,9 @@ def COMBO(label, codes, span=4, style_class="kmod"):
     )
 
 
-def L(char):
-    return KEY(char, getattr(E, "KEY_" + char), span=4)
+def L(char, char_text=None, shift_text=None, span=4):
+    code = getattr(E, "KEY_" + char.upper()) if hasattr(E, "KEY_" + char.upper()) else None
+    return KEY(char, code=code, span=span, char_text=char_text, shift_text=shift_text)
 
 
 # Total columns per row: 68
@@ -285,13 +312,15 @@ MAIN_ROWS = [
         SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
         SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
     ],
-    # Row 4 (Sum = 6 + 5 + 5 + 5 + 27 + 5 + 5 + 5 + 5 = 68)
+    # Row 4 (Sum = 6 + 5 + 4 + 4 + 4 + 4 + 21 + 5 + 5 + 5 + 5 = 68)
     [
         SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
         SPECIAL("Fn", "layer-fn", None, span=5, style_class="kaccent"),
-        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=5, style_class="kmod"),
-        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
-        SPECIAL("Space", "space", E.KEY_SPACE, span=27, repeat=True, style_class="kspace"),
+        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=4, style_class="kmod"),
+        SPECIAL("Alt", "sticky-alt", None, span=4, style_class="kmod"),
+        SPECIAL("\U0001f310", "switch-lang", None, span=4, style_class="klang"),
+        SPECIAL("\U0001f399", "voice", None, span=4, style_class="kvoice"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=21, repeat=True, style_class="kspace"),
         SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
         SPECIAL("\u2190", "left", E.KEY_LEFT, span=5, repeat=True, style_class="karrow"),
         SPECIAL("\u2193", "down", E.KEY_DOWN, span=5, repeat=True, style_class="karrow"),
@@ -370,12 +399,14 @@ SYM_ROWS = [
         SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
         SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
     ],
-    # Row 4 (Sum = 6 + 5 + 5 + 17 + 5 + 5 + 5 + 5 + 5 + 5 + 5 = 68)
+    # Row 4 (Sum = 6 + 5 + 4 + 4 + 4 + 10 + 5 + 5 + 5 + 5 + 5 + 5 + 5 = 68)
     [
         SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
         SPECIAL("Fn", "layer-fn", None, span=5, style_class="kaccent"),
-        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
-        SPECIAL("Space", "space", E.KEY_SPACE, span=17, repeat=True, style_class="kspace"),
+        SPECIAL("Alt", "sticky-alt", None, span=4, style_class="kmod"),
+        SPECIAL("\U0001f310", "switch-lang", None, span=4, style_class="klang"),
+        SPECIAL("\U0001f399", "voice", None, span=4, style_class="kvoice"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=10, repeat=True, style_class="kspace"),
         KEY("0", E.KEY_0, span=5),
         KEY(".", E.KEY_DOT, span=5),
         KEY("=", E.KEY_EQUAL, span=5),
@@ -448,19 +479,249 @@ FN_ROWS = [
         SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
         SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=9, style_class="knav"),
     ],
-    # Row 4 (Sum = 6 + 5 + 5 + 5 + 27 + 5 + 5 + 5 + 5 = 68)
+    # Row 4 (Sum = 6 + 5 + 4 + 4 + 4 + 4 + 21 + 5 + 5 + 5 + 5 = 68)
     [
         SPECIAL("Ctrl", "sticky-ctrl", None, span=6, style_class="kmod"),
         SPECIAL("ABC", "layer-main", None, span=5, style_class="kaccent"),
-        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=5, style_class="kmod"),
-        SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
-        SPECIAL("Space", "space", E.KEY_SPACE, span=27, repeat=True, style_class="kspace"),
+        SPECIAL("\u2756", "super", E.KEY_LEFTMETA, span=4, style_class="kmod"),
+        SPECIAL("Alt", "sticky-alt", None, span=4, style_class="kmod"),
+        SPECIAL("\U0001f310", "switch-lang", None, span=4, style_class="klang"),
+        SPECIAL("\U0001f399", "voice", None, span=4, style_class="kvoice"),
+        SPECIAL("Space", "space", E.KEY_SPACE, span=21, repeat=True, style_class="kspace"),
         SPECIAL("Alt", "sticky-alt", None, span=5, style_class="kmod"),
         SPECIAL("\u2190", "left", E.KEY_LEFT, span=5, repeat=True, style_class="karrow"),
         SPECIAL("\u2193", "down", E.KEY_DOWN, span=5, repeat=True, style_class="karrow"),
         SPECIAL("\u2192", "right", E.KEY_RIGHT, span=5, repeat=True, style_class="karrow"),
     ],
 ]
+
+# Multilingual Layouts (68 Columns per Row)
+ES_ROWS = [
+    MAIN_ROWS[0],
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        L("Q"), L("W"), L("E"), L("R"), L("T"), L("Y"), L("U"), L("I"),
+        L("O"), L("P"),
+        KEY("[", E.KEY_LEFTBRACE, "{", span=4),
+        KEY("]", E.KEY_RIGHTBRACE, "}", span=4),
+        KEY("\\", E.KEY_BACKSLASH, "|", span=4),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        L("A"), L("S"), L("D"), L("F"), L("G"), L("H"), L("J"), L("K"),
+        L("L"),
+        KEY("\u00f1", None, "\u00d1", span=4, char_text="\u00f1", shift_text="\u00d1"),
+        KEY("\u00b4", None, "\u00a8", span=4, char_text="\u00b4", shift_text="\u00a8"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        L("Z"), L("X"), L("C"), L("V"), L("B"), L("N"), L("M"),
+        KEY("\u00bf", None, "?", span=4, char_text="\u00bf", shift_text="?"),
+        KEY("\u00a1", None, "!", span=4, char_text="\u00a1", shift_text="!"),
+        KEY(".", E.KEY_DOT, ":", span=4),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    MAIN_ROWS[4],
+]
+
+DE_ROWS = [
+    MAIN_ROWS[0],
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        L("Q"), L("W"), L("E"), L("R"), L("T"), L("Z"), L("U"), L("I"),
+        L("O"), L("P"),
+        KEY("\u00fc", None, "\u00dc", span=4, char_text="\u00fc", shift_text="\u00dc"),
+        KEY("+", E.KEY_EQUAL, "*", span=4),
+        KEY("#", None, "'", span=4, char_text="#", shift_text="'"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        L("A"), L("S"), L("D"), L("F"), L("G"), L("H"), L("J"), L("K"),
+        L("L"),
+        KEY("\u00f6", None, "\u00d6", span=4, char_text="\u00f6", shift_text="\u00d6"),
+        KEY("\u00e4", None, "\u00c4", span=4, char_text="\u00e4", shift_text="\u00c4"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        L("Y"), L("X"), L("C"), L("V"), L("B"), L("N"), L("M"),
+        KEY("\u00df", None, "?", span=4, char_text="\u00df", shift_text="?"),
+        KEY(",", E.KEY_COMMA, ";", span=4),
+        KEY(".", E.KEY_DOT, ":", span=4),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    MAIN_ROWS[4],
+]
+
+FR_ROWS = [
+    MAIN_ROWS[0],
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        L("A"), L("Z"), L("E"), L("R"), L("T"), L("Y"), L("U"), L("I"),
+        L("O"), L("P"),
+        KEY("\u00e9", None, "\u00c9", span=4, char_text="\u00e9", shift_text="\u00c9"),
+        KEY("\u00e8", None, "\u00c8", span=4, char_text="\u00e8", shift_text="\u00c8"),
+        KEY("\u00e0", None, "\u00c0", span=4, char_text="\u00e0", shift_text="\u00c0"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        L("Q"), L("S"), L("D"), L("F"), L("G"), L("H"), L("J"), L("K"),
+        L("L"),
+        KEY("\u00e7", None, "\u00c7", span=4, char_text="\u00e7", shift_text="\u00c7"),
+        KEY("\u00f9", None, "%", span=4, char_text="\u00f9", shift_text="%"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        L("W"), L("X"), L("C"), L("V"), L("B"), L("N"), L("M"),
+        KEY("'", E.KEY_APOSTROPHE, '"', span=4),
+        KEY(",", E.KEY_COMMA, "?", span=4),
+        KEY(".", E.KEY_DOT, ":", span=4),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    MAIN_ROWS[4],
+]
+
+RU_ROWS = [
+    MAIN_ROWS[0],
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        KEY("\u0439", None, "\u0419", span=4, char_text="\u0439", shift_text="\u0419"),
+        KEY("\u0446", None, "\u0426", span=4, char_text="\u0446", shift_text="\u0426"),
+        KEY("\u0443", None, "\u0423", span=4, char_text="\u0443", shift_text="\u0423"),
+        KEY("\u043a", None, "\u041a", span=4, char_text="\u043a", shift_text="\u041a"),
+        KEY("\u0435", None, "\u0415", span=4, char_text="\u0435", shift_text="\u0415"),
+        KEY("\u043d", None, "\u041d", span=4, char_text="\u043d", shift_text="\u041d"),
+        KEY("\u0433", None, "\u0413", span=4, char_text="\u0433", shift_text="\u0413"),
+        KEY("\u0448", None, "\u0428", span=4, char_text="\u0448", shift_text="\u0428"),
+        KEY("\u0449", None, "\u0429", span=4, char_text="\u0449", shift_text="\u0429"),
+        KEY("\u0437", None, "\u0417", span=4, char_text="\u0437", shift_text="\u0417"),
+        KEY("\u0445", None, "\u0425", span=4, char_text="\u0445", shift_text="\u0425"),
+        KEY("\u044a", None, "\u042a", span=4, char_text="\u044a", shift_text="\u042a"),
+        KEY("\u0451", None, "\u0401", span=4, char_text="\u0451", shift_text="\u0401"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        KEY("\u0444", None, "\u0424", span=4, char_text="\u0444", shift_text="\u0424"),
+        KEY("\u044b", None, "\u042b", span=4, char_text="\u044b", shift_text="\u042b"),
+        KEY("\u0432", None, "\u0412", span=4, char_text="\u0432", shift_text="\u0412"),
+        KEY("\u0430", None, "\u0410", span=4, char_text="\u0430", shift_text="\u0410"),
+        KEY("\u043f", None, "\u041f", span=4, char_text="\u043f", shift_text="\u041f"),
+        KEY("\u0440", None, "\u0420", span=4, char_text="\u0440", shift_text="\u0420"),
+        KEY("\u043e", None, "\u041e", span=4, char_text="\u043e", shift_text="\u041e"),
+        KEY("\u043b", None, "\u041b", span=4, char_text="\u043b", shift_text="\u041b"),
+        KEY("\u0434", None, "\u0414", span=4, char_text="\u0434", shift_text="\u0414"),
+        KEY("\u0436", None, "\u0416", span=4, char_text="\u0436", shift_text="\u0416"),
+        KEY("\u044d", None, "\u042d", span=4, char_text="\u044d", shift_text="\u042d"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        KEY("\u044f", None, "\u042f", span=4, char_text="\u044f", shift_text="\u042f"),
+        KEY("\u0447", None, "\u0427", span=4, char_text="\u0447", shift_text="\u0427"),
+        KEY("\u0441", None, "\u0421", span=4, char_text="\u0441", shift_text="\u0421"),
+        KEY("\u043c", None, "\u041c", span=4, char_text="\u043c", shift_text="\u041c"),
+        KEY("\u0438", None, "\u0418", span=4, char_text="\u0438", shift_text="\u0418"),
+        KEY("\u0442", None, "\u0422", span=4, char_text="\u0442", shift_text="\u0422"),
+        KEY("\u044c", None, "\u042c", span=4, char_text="\u044c", shift_text="\u042c"),
+        KEY("\u0431", None, "\u0411", span=4, char_text="\u0431", shift_text="\u0411"),
+        KEY("\u044e", None, "\u042e", span=4, char_text="\u044e", shift_text="\u042e"),
+        KEY(".", None, ",", span=4, char_text=".", shift_text=","),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    MAIN_ROWS[4],
+]
+
+HI_ROWS = [
+    MAIN_ROWS[0],
+    [
+        SPECIAL("Tab \u21e5", "tab", E.KEY_TAB, span=6, style_class="kmod"),
+        KEY("\u094c", None, "\u0914", span=4, char_text="\u094c", shift_text="\u0914"),
+        KEY("\u0948", None, "\u0910", span=4, char_text="\u0948", shift_text="\u0910"),
+        KEY("\u093e", None, "\u0906", span=4, char_text="\u093e", shift_text="\u0906"),
+        KEY("\u0940", None, "\u0908", span=4, char_text="\u0940", shift_text="\u0908"),
+        KEY("\u0942", None, "\u090a", span=4, char_text="\u0942", shift_text="\u090a"),
+        KEY("\u092c", None, "\u092d", span=4, char_text="\u092c", shift_text="\u092d"),
+        KEY("\u0939", None, "\u0919", span=4, char_text="\u0939", shift_text="\u0919"),
+        KEY("\u0917", None, "\u0918", span=4, char_text="\u0917", shift_text="\u0918"),
+        KEY("\u0926", None, "\u0927", span=4, char_text="\u0926", shift_text="\u0927"),
+        KEY("\u091c", None, "\u091d", span=4, char_text="\u091c", shift_text="\u091d"),
+        KEY("\u0921", None, "\u0922", span=4, char_text="\u0921", shift_text="\u0922"),
+        KEY("\u093c", None, "\u091e", span=4, char_text="\u093c", shift_text="\u091e"),
+        KEY("\u0949", None, "\u0911", span=4, char_text="\u0949", shift_text="\u0911"),
+        SPECIAL("Home", "home", E.KEY_HOME, span=5, style_class="knav"),
+        SPECIAL("PgUp", "pgup", E.KEY_PAGEUP, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("Caps", "caps", None, span=7, style_class="kmod"),
+        KEY("\u094b", None, "\u0913", span=4, char_text="\u094b", shift_text="\u0913"),
+        KEY("\u0947", None, "\u090f", span=4, char_text="\u0947", shift_text="\u090f"),
+        KEY("\u094d", None, "\u0905", span=4, char_text="\u094d", shift_text="\u0905"),
+        KEY("\u093f", None, "\u0907", span=4, char_text="\u093f", shift_text="\u0907"),
+        KEY("\u0941", None, "\u0909", span=4, char_text="\u0941", shift_text="\u0909"),
+        KEY("\u092a", None, "\u092b", span=4, char_text="\u092a", shift_text="\u092b"),
+        KEY("\u0930", None, "\u090b", span=4, char_text="\u0930", shift_text="\u090b"),
+        KEY("\u0915", None, "\u0916", span=4, char_text="\u0915", shift_text="\u0916"),
+        KEY("\u0924", None, "\u0925", span=4, char_text="\u0924", shift_text="\u0925"),
+        KEY("\u091a", None, "\u091b", span=4, char_text="\u091a", shift_text="\u091b"),
+        KEY("\u091f", None, "\u0920", span=4, char_text="\u091f", shift_text="\u0920"),
+        SPECIAL("Enter \u21b5", "enter", E.KEY_ENTER, span=7, style_class="kenter"),
+        SPECIAL("End", "end", E.KEY_END, span=5, style_class="knav"),
+        SPECIAL("PgDn", "pgdn", E.KEY_PAGEDOWN, span=5, style_class="knav"),
+    ],
+    [
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        KEY("\u0902", None, "\u0901", span=4, char_text="\u0902", shift_text="\u0901"),
+        KEY("\u092e", None, "\u0923", span=4, char_text="\u092e", shift_text="\u0923"),
+        KEY("\u0928", None, "\u0929", span=4, char_text="\u0928", shift_text="\u0929"),
+        KEY("\u0935", None, "\u0936", span=4, char_text="\u0935", shift_text="\u0936"),
+        KEY("\u0932", None, "\u0937", span=4, char_text="\u0932", shift_text="\u0937"),
+        KEY("\u0938", None, "\u0936", span=4, char_text="\u0938", shift_text="\u0936"),
+        KEY("\u092f", None, "\u091c\u094d\u091e", span=4, char_text="\u092f", shift_text="\u091c\u094d\u091e"),
+        KEY("\u0964", None, "\u0965", span=4, char_text="\u0964", shift_text="\u0965"),
+        KEY(",", None, "\u0924\u094d\u0930", span=4, char_text=",", shift_text="\u0924\u094d\u0930"),
+        KEY(".", None, "\u0915\u094d\u0937", span=4, char_text=".", shift_text="\u0915\u094d\u0937"),
+        SPECIAL("\u21e7", "shift", None, span=9, style_class="kmod"),
+        SPECIAL("\u2191", "up", E.KEY_UP, span=5, repeat=True, style_class="karrow"),
+        SPECIAL("Ins", "ins", E.KEY_INSERT, span=5, style_class="knav"),
+    ],
+    MAIN_ROWS[4],
+]
+
+LANGUAGES = {
+    "EN": {"name": "English", "rows": MAIN_ROWS},
+    "ES": {"name": "Espa\u00f1ol", "rows": ES_ROWS},
+    "DE": {"name": "Deutsch", "rows": DE_ROWS},
+    "FR": {"name": "Fran\u00e7ais", "rows": FR_ROWS},
+    "RU": {"name": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "rows": RU_ROWS},
+    "HI": {"name": "\u0939\u093f\u0928\u094d\u0926\u0940", "rows": HI_ROWS},
+}
+LANG_KEYS = list(LANGUAGES.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -879,12 +1140,27 @@ button.kbtn:active {
     color: %(key_active_text)s;
 }
 button.kchar, button.kchar label {
-    font-weight: 700;
+    font-weight: 800;
 }
 button.kmod, button.kmod label {
     background-color: %(kmod_bg)s;
     color: %(kmod_fg)s;
     border-color: %(key_border)s;
+}
+button.klang, button.klang label {
+    background-color: %(kmod_bg)s;
+    color: %(kmod_fg)s;
+    border-color: %(key_border)s;
+}
+button.kvoice, button.kvoice label {
+    background-color: %(kmod_bg)s;
+    color: %(kmod_fg)s;
+    border-color: %(key_border)s;
+}
+button.kvoice-active, button.kvoice-active label {
+    background-color: #dc2626;
+    color: #ffffff;
+    border-color: #ef4444;
 }
 button.karrow, button.karrow label {
     background-color: %(karrow_bg)s;
@@ -1007,6 +1283,119 @@ BASE_CSS = get_theme_css("dark")
 
 
 # ---------------------------------------------------------------------------
+# Voice Typing Dictation Engine (Vosk Offline STT + PipeWire PCM Capture)
+# ---------------------------------------------------------------------------
+
+class VoiceTypingManager:
+    def __init__(self, on_text_callback, on_status_change=None):
+        self.on_text_callback = on_text_callback
+        self.on_status_change = on_status_change
+        self.is_listening = False
+        self.thread = None
+        self.proc = None
+        self._model = None
+        self._recognizer = None
+        self._lock = threading.Lock()
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        try:
+            import vosk
+            vosk.SetLogLevel(-1)
+            model_paths = [
+                "/usr/share/vosk/models/default",
+                "/usr/share/vosk/models/vosk-model-small-en-us-0.15",
+                os.path.expanduser("~/.local/share/vosk/models/default"),
+            ]
+            for p in model_paths:
+                if os.path.exists(p):
+                    self._model = vosk.Model(p)
+                    return self._model
+        except Exception as e:
+            print("Failed to load Vosk model:", e, file=sys.stderr)
+        return None
+
+    def toggle(self):
+        if self.is_listening:
+            self.stop()
+        else:
+            self.start()
+
+    def start(self):
+        with self._lock:
+            if self.is_listening:
+                return True
+            model = self._load_model()
+            if not model:
+                print("Voice Typing: No Vosk model found in /usr/share/vosk/models/default", file=sys.stderr)
+                return False
+            import vosk
+            self._recognizer = vosk.KaldiRecognizer(model, 16000.0)
+            self.is_listening = True
+            if self.on_status_change:
+                GLib.idle_add(self.on_status_change, True)
+
+            self.thread = threading.Thread(target=self._run_capture, daemon=True)
+            self.thread.start()
+            return True
+
+    def stop(self):
+        with self._lock:
+            if not self.is_listening:
+                return
+            self.is_listening = False
+            if self.proc:
+                try:
+                    self.proc.terminate()
+                except Exception:
+                    pass
+            if self.on_status_change:
+                GLib.idle_add(self.on_status_change, False)
+
+    def _run_capture(self):
+        try:
+            cmd = ["pw-record", "--rate=16000", "--channels=1", "--format=s16", "-"]
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=4096
+            )
+            while self.is_listening and self.proc and self.proc.poll() is None:
+                data = self.proc.stdout.read(4096)
+                if not data:
+                    break
+                if self._recognizer.AcceptWaveform(data):
+                    res = json.loads(self._recognizer.Result())
+                    text = res.get("text", "").strip()
+                    if text:
+                        GLib.idle_add(self.on_text_callback, text + " ")
+            if self._recognizer:
+                try:
+                    final_res = json.loads(self._recognizer.FinalResult())
+                    text = final_res.get("text", "").strip()
+                    if text:
+                        GLib.idle_add(self.on_text_callback, text + " ")
+                except Exception:
+                    pass
+        except Exception as e:
+            print("Voice typing audio capture error:", e, file=sys.stderr)
+        finally:
+            with self._lock:
+                self.is_listening = False
+                if self.proc:
+                    try:
+                        self.proc.terminate()
+                        self.proc.wait(timeout=0.5)
+                    except Exception:
+                        pass
+                    self.proc = None
+                if self.on_status_change:
+                    GLib.idle_add(self.on_status_change, False)
+
+
+# ---------------------------------------------------------------------------
 # Main Keyboard Application
 # ---------------------------------------------------------------------------
 
@@ -1014,6 +1403,11 @@ class KeyboardApp:
     def __init__(self):
         self.config = load_config()
         self.inj = Injector()
+
+        self.lang = self.config.get("language", "EN")
+        if self.lang not in LANGUAGES:
+            self.lang = "EN"
+        self.voice_mgr = VoiceTypingManager(self._on_voice_text, self._on_voice_status_change)
 
         self.layer = "main"
         self.buttons = []
@@ -1195,6 +1589,17 @@ class KeyboardApp:
         bar.pack_start(self.tab_123, False, False, 1)
         bar.pack_start(self.tab_fn, False, False, 1)
 
+        # Language Switcher Button (🌐 EN)
+        self.btn_lang = self._make_bar_btn(f"\U0001f310 {self.lang}", self.cycle_language)
+        self.btn_lang.set_tooltip_text("Switch Keyboard Language (Click to cycle, right-click for menu)")
+        self.btn_lang.connect("button-press-event", self._on_lang_btn_press)
+        bar.pack_start(self.btn_lang, False, False, 1)
+
+        # Voice Typing Button (🎙️ Voice)
+        self.btn_voice = self._make_bar_btn("\U0001f399 Voice", self.voice_mgr.toggle)
+        self.btn_voice.set_tooltip_text("Voice Typing Dictation (Offline Speech-to-Text)")
+        bar.pack_start(self.btn_voice, False, False, 1)
+
         # Mode Toggles shifted to left side: Auto-Popup & Dock/Float
         self.btn_auto = self._make_bar_btn(
             "\u26a1 Auto: ON" if self.auto_popup else "\u26a1 Auto: OFF",
@@ -1326,7 +1731,7 @@ class KeyboardApp:
     def build_layer(self, name):
         self.layer = name
         if name == "main":
-            self.rows = MAIN_ROWS
+            self.rows = LANGUAGES.get(getattr(self, "lang", "EN"), LANGUAGES["EN"])["rows"]
         elif name == "sym":
             self.rows = SYM_ROWS
         else:
@@ -1389,7 +1794,11 @@ class KeyboardApp:
         self.buttons.append(b)
         return b
 
-    def _press(self, btn, _ev):
+    def _press(self, btn, ev):
+        button_num = getattr(ev, "button", 1)
+        if button_num == 3 and btn._okey.get("action") == "switch-lang":
+            self._popup_language_menu(btn, ev)
+            return True
         btn._pressed = True
         self.activate(btn._okey)
         if btn._okey.get("repeat"):
@@ -1503,6 +1912,13 @@ class KeyboardApp:
             if hasattr(self, "btn_theme"):
                 self.btn_theme.set_label(f"\U0001f3a8 {self.theme.capitalize()}")
                 self.btn_theme.set_tooltip_text(f"Theme: {self.theme.capitalize()} (tap to switch)")
+            if hasattr(self, "btn_lang"):
+                self.btn_lang.set_label(f"\U0001f310 {self.lang}")
+            if hasattr(self, "btn_voice"):
+                if getattr(getattr(self, "voice_mgr", None), "is_listening", False):
+                    self.btn_voice.set_label("\U0001f534")
+                else:
+                    self.btn_voice.set_label("\U0001f399")
         else:
             if hasattr(self, "bar_title"):
                 self.bar_title.set_text("\u2328 Keyboard")
@@ -1515,6 +1931,13 @@ class KeyboardApp:
             if hasattr(self, "btn_theme"):
                 self.btn_theme.set_label(f"\U0001f3a8 {self.theme.capitalize()}")
                 self.btn_theme.set_tooltip_text("Switch Theme (Click to cycle, right-click for menu)")
+            if hasattr(self, "btn_lang"):
+                self.btn_lang.set_label(f"\U0001f310 {self.lang}")
+            if hasattr(self, "btn_voice"):
+                if getattr(getattr(self, "voice_mgr", None), "is_listening", False):
+                    self.btn_voice.set_label("\U0001f534 Rec")
+                else:
+                    self.btn_voice.set_label("\U0001f399 Voice")
 
         self._update_dock_btn_label()
         self._update_width_preset_buttons()
@@ -1529,14 +1952,14 @@ class KeyboardApp:
         # 1. Update Header Bar for Orientation
         self._update_bar_for_orientation(is_portrait)
 
-        # 2. Key height and font size
+        # 2. Key height and font size (Enlarged for touch clarity and accessibility)
         if is_portrait:
             target_h = int(screen_h * 0.28 * self.scale)
             topbar_h = 30
-            key_h = max(36, min(58, int((target_h - topbar_h) / rows)))
-            font_px = max(11, min(15, int(key_h * 0.26 * self.scale)))
-            char_font_px = max(17, min(24, int(key_h * 0.40 * self.scale)))
-            arrow_font = max(18, min(25, int(key_h * 0.42 * self.scale)))
+            key_h = max(38, min(62, int((target_h - topbar_h) / rows)))
+            font_px = max(13, min(20, int(key_h * 0.32 * self.scale)))
+            char_font_px = max(24, min(36, int(key_h * 0.56 * self.scale)))
+            arrow_font = max(20, min(32, int(key_h * 0.50 * self.scale)))
 
             if self.width_preset == "full":
                 target_w = screen_w
@@ -1548,10 +1971,10 @@ class KeyboardApp:
             base_h = int(screen_h * 0.32)
             total_h = int(base_h * self.scale)
             topbar_h = 36
-            key_h = max(38, int((total_h - topbar_h) / rows))
-            font_px = max(13, min(17, int(key_h * 0.28 * self.scale)))
-            char_font_px = max(18, min(26, int(key_h * 0.42 * self.scale)))
-            arrow_font = max(20, min(28, int(key_h * 0.45 * self.scale)))
+            key_h = max(42, int((total_h - topbar_h) / rows))
+            font_px = max(15, min(22, int(key_h * 0.35 * self.scale)))
+            char_font_px = max(26, min(42, int(key_h * 0.60 * self.scale)))
+            arrow_font = max(24, min(38, int(key_h * 0.54 * self.scale)))
 
             if self.width_preset == "full":
                 target_w = screen_w
@@ -1635,7 +2058,7 @@ class KeyboardApp:
             f".bar-btn, .bar-btn label {{ font-size: {bar_btn_font}; padding: {bar_btn_padding}; min-height: {bar_btn_min_h}; }}\n"
             f".drag-handle {{ font-size: {bar_btn_font}; padding: 1px 6px; }}\n"
             f"button.kbtn, button.kbtn label {{ min-height: {min_h}px; font-size: {font_px}px; min-width: {min_w}; padding: {btn_padding}; margin: {btn_margin}; font-weight: 700; }}\n"
-            f"button.kchar, button.kchar label {{ font-size: {char_font_px}px; font-weight: 700; }}\n"
+            f"button.kchar, button.kchar label {{ font-size: {char_font_px}px; font-weight: 800; }}\n"
             f"button.karrow, button.karrow label {{ font-size: {arrow_font}px; font-weight: 900; }}\n"
         )
         self.key_style_provider.load_from_data(css_text.encode())
@@ -2423,6 +2846,11 @@ class KeyboardApp:
             self.build_layer("sym")
         elif action == "layer-fn":
             self.build_layer("fn")
+        # Language & Voice
+        elif action == "switch-lang":
+            self.cycle_language()
+        elif action == "voice":
+            self.voice_mgr.toggle()
 
     def _toggle_sticky(self, name, code):
         active = self.inj.sticky[name] is None
@@ -2433,6 +2861,17 @@ class KeyboardApp:
         return self.shift in (1, 2)
 
     def _type_char(self, k):
+        if k.get("char_text") or k.get("shift_text") or (k.get("code") is None and k.get("label")):
+            if self._shift_active() or self.caps:
+                txt = k.get("shift_text") or (k.get("shift_label") if k.get("shift_label") else (k.get("char_text") or k["label"]).upper())
+            else:
+                txt = k.get("char_text") or k.get("label", "").lower()
+            self.inj.type_text(txt)
+            if self.shift == 1:
+                self.shift = 0
+                self.refresh_mods()
+            return
+
         shift = False
         if k.get("force"):
             shift = True
@@ -2451,6 +2890,72 @@ class KeyboardApp:
             self.shift = 0
             self.refresh_mods()
 
+    # -- Multilingual & Voice Handlers --------------------------------------
+
+    def cycle_language(self):
+        idx = LANG_KEYS.index(self.lang) if self.lang in LANG_KEYS else 0
+        next_idx = (idx + 1) % len(LANG_KEYS)
+        self.set_language(LANG_KEYS[next_idx])
+
+    def set_language(self, code):
+        if code in LANGUAGES:
+            self.lang = code
+            self.config["language"] = code
+            save_config(self.config)
+            if hasattr(self, "btn_lang"):
+                self.btn_lang.set_label(f"\U0001f310 {self.lang}")
+            if self.layer == "main":
+                self.build_layer("main")
+            else:
+                self.refresh_mods()
+
+    def _on_lang_btn_press(self, widget, event):
+        if getattr(event, "button", 1) == 3:
+            self._popup_language_menu(widget, event)
+            return True
+        return False
+
+    def _popup_language_menu(self, widget, event=None):
+        menu = Gtk.Menu()
+        for code in LANG_KEYS:
+            info = LANGUAGES[code]
+            lbl = f"{info['name']} ({code})"
+            if code == self.lang:
+                lbl = f"\u2713 {lbl}"
+            item = Gtk.MenuItem(label=lbl)
+            item.connect("activate", lambda _i, c=code: self.set_language(c))
+            menu.append(item)
+        menu.show_all()
+        try:
+            menu.popup_at_widget(widget, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, event)
+        except Exception:
+            btn_num = getattr(event, "button", 0) if event else 0
+            ev_time = getattr(event, "time", 0) if event else 0
+            menu.popup(None, None, None, None, btn_num, ev_time)
+
+    def _on_voice_text(self, text):
+        if text:
+            self.inj.type_text(text)
+
+    def _on_voice_status_change(self, is_listening):
+        if hasattr(self, "btn_voice"):
+            if is_listening:
+                self.btn_voice.set_label("\U0001f534 Rec" if not self.is_portrait else "\U0001f534")
+                self.btn_voice.get_style_context().add_class("auto-on")
+            else:
+                self.btn_voice.set_label("\U0001f399 Voice" if not self.is_portrait else "\U0001f399")
+                self.btn_voice.get_style_context().remove_class("auto-on")
+
+        for b in self.buttons:
+            if b._okey.get("action") == "voice":
+                sc = b.get_style_context()
+                if is_listening:
+                    b.set_label("\U0001f534")
+                    sc.add_class("kvoice-active")
+                else:
+                    b.set_label("\U0001f399")
+                    sc.remove_class("kvoice-active")
+
     # -- Label & State Rendering --------------------------------------------
 
     def refresh_mods(self):
@@ -2460,18 +2965,33 @@ class KeyboardApp:
             sc.remove_class("active")
 
             if k["t"] == "char":
-                if self._shift_active() and k.get("shift_label") is not None:
+                if self._shift_active() and k.get("shift_label"):
                     label = k["shift_label"]
-                elif len(k["label"]) == 1 and k["label"].isalpha():
+                elif (self._shift_active() or self.caps) and k.get("shift_text"):
+                    label = k["shift_text"]
+                elif k.get("label") and len(k["label"]) == 1 and k["label"].isalpha():
                     if self._shift_active() or self.caps:
                         label = k["label"].upper()
                     else:
                         label = k["label"].lower()
+                elif (self._shift_active() or self.caps) and k.get("char_text") and k["char_text"].isalpha():
+                    label = k["char_text"].upper()
                 else:
-                    label = k["label"]
-                b.set_label(label)
+                    label = k.get("char_text") or k.get("label") or ""
+                b.set_label(str(label or ""))
             else:
-                label = k["label"]
+                label = k.get("label") or ""
+                action = k.get("action")
+                if action == "voice":
+                    if getattr(getattr(self, "voice_mgr", None), "is_listening", False):
+                        label = "\U0001f534"
+                        sc.add_class("kvoice-active")
+                    else:
+                        label = "\U0001f399"
+                        sc.remove_class("kvoice-active")
+                elif action == "switch-lang":
+                    label = "\U0001f310"
+
                 if getattr(self, "is_portrait", False):
                     if label == "Enter \u21b5":
                         label = "Enter"
@@ -2493,7 +3013,6 @@ class KeyboardApp:
                         label = "C-Bksp"
                     elif label == "Alt+F4":
                         label = "A-F4"
-                action = k.get("action")
                 if action == "shift":
                     if self.shift == 1:
                         label = "\u21e7 \u00b7"
@@ -2525,7 +3044,7 @@ class KeyboardApp:
             conn, _ = self.server_sock.accept()
             data = conn.recv(1024).decode().strip()
             if data == "status":
-                resp = f"keyboard_visible={self.win.get_visible()} pill_visible={self.pill.get_visible()} auto_popup={self.auto_popup} closed_manually={self._closed_manually} kde_vk_active={self._is_kde_virtual_keyboard_active()} theme={self.theme}\n"
+                resp = f"keyboard_visible={self.win.get_visible()} pill_visible={self.pill.get_visible()} auto_popup={self.auto_popup} closed_manually={self._closed_manually} kde_vk_active={self._is_kde_virtual_keyboard_active()} theme={self.theme} language={self.lang}\n"
                 conn.sendall(resp.encode())
                 conn.close()
                 return True
@@ -2545,6 +3064,12 @@ class KeyboardApp:
                 self.set_theme(data.split(":", 1)[1])
             elif data == "theme":
                 self._cycle_theme()
+            elif data.startswith("lang:"):
+                self.set_language(data.split(":", 1)[1].upper())
+            elif data == "lang":
+                self.cycle_language()
+            elif data == "voice":
+                self.voice_mgr.toggle()
             elif data == "auto":
                 self._toggle_auto_popup()
             elif data == "auto:on":
@@ -2559,6 +3084,11 @@ class KeyboardApp:
 
     def _destroy(self, _w=None):
         self._cancel_auto_hide()
+        try:
+            if hasattr(self, "voice_mgr"):
+                self.voice_mgr.stop()
+        except Exception:
+            pass
         try:
             self.inj.ui.close()
         except Exception:
@@ -2588,6 +3118,13 @@ def main():
                 cmd = f"theme:{sys.argv[2]}"
             else:
                 cmd = "theme"
+        elif arg in ("--lang", "-l"):
+            if len(sys.argv) > 2:
+                cmd = f"lang:{sys.argv[2]}"
+            else:
+                cmd = "lang"
+        elif arg in ("--voice", "-v"):
+            cmd = "voice"
         elif arg in ("--auto", "-a"):
             if len(sys.argv) > 2:
                 cmd = f"auto:{sys.argv[2]}"
@@ -2605,6 +3142,8 @@ def main():
             print("  --hide              Minimize keyboard to floating pill")
             print("  --close, -c         Hide keyboard and pill completely")
             print("  --auto, -a [on|off] Toggle or set auto-popup on text focus")
+            print("  --lang, -l [CODE]   Cycle or set language layout (EN, ES, DE, FR, RU, HI)")
+            print("  --voice, -v         Toggle voice typing dictation")
             print("  --status            Query status of running instance")
             print("  --theme, -m [NAME]  Switch theme (dark, light, oled, breeze, amber, glass, crystal, frost)")
             print("  --quit, -q          Quit keyboard instance")
