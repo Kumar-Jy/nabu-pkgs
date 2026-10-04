@@ -23,10 +23,26 @@ regenerate_uki() {
     # Standalone fallback: ensure module dependencies exist so mkinitcpio autodetect succeeds
     depmod -a "${kernver}" 2>/dev/null || true
 
-    # Ensure a kernel command line exists for the UKI.
+    # Ensure a kernel command line exists for the UKI. iris/venus video decode
+    # is enabled by default, fw_devlink is permissive for the fastrpc/SLPI
+    # probe ordering. The official image ships a root.conf that blacklists
+    # iris/venus; strip that stale blacklist so fresh installs get decode too.
     if [ ! -f /etc/cmdline.d/root.conf ]; then
         mkdir -p /etc/cmdline.d
-        printf 'root=PARTLABEL=linux rw\n' > /etc/cmdline.d/root.conf
+        printf 'root=PARTLABEL=linux rw systemd.gpt_auto=no fbcon=rotate:1 fw_devlink=permissive acpi=off earlycon\n' > /etc/cmdline.d/root.conf
+    else
+        sed -i -e 's/ modprobe.blacklist=venus_core,qcom_iris//' \
+               -e 's/ module_blacklist=venus_core,qcom_iris//' \
+               /etc/cmdline.d/root.conf
+        if ! grep -q 'fw_devlink=permissive' /etc/cmdline.d/root.conf; then
+            sed -i 's/$/ fw_devlink=permissive/' /etc/cmdline.d/root.conf
+        fi
+        if ! grep -q 'acpi=off' /etc/cmdline.d/root.conf; then
+            sed -i 's/$/ acpi=off/' /etc/cmdline.d/root.conf
+        fi
+        if ! grep -q 'earlycon' /etc/cmdline.d/root.conf; then
+            sed -i 's/$/ earlycon/' /etc/cmdline.d/root.conf
+        fi
     fi
 
     # Point the UKI DeviceTree at the stable dtb symlink (always current).
@@ -49,14 +65,45 @@ regenerate_uki() {
     mkinitcpio -P
 }
 
+pre_upgrade() {
+    # 1. Preserve currently running/working UKI as arch-linux-nabu-old.efi
+    if [ -f /boot/efi/EFI/arch/arch-linux-nabu.efi ]; then
+        cp -f /boot/efi/EFI/arch/arch-linux-nabu.efi /boot/efi/EFI/arch/arch-linux-nabu-old.efi
+    fi
+
+    # 2. Preserve previous kernel modules so WiFi/BT/audio/touch work if booting arch-linux-nabu-old.efi
+    for moddir in /usr/lib/modules/*; do
+        [ -d "$moddir" ] && [ ! -L "$moddir" ] || continue
+        base=$(basename "$moddir")
+        case "$base" in
+            *.old) continue ;;
+            *)
+                rm -rf "/usr/lib/modules/${base}.old" 2>/dev/null || true
+                cp -an "$moddir" "/usr/lib/modules/${base}.old" 2>/dev/null || true
+                ;;
+        esac
+    done
+}
+
+show_changelog() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mlinux-nabu ($1) changelog highlights:\e[0m"
+    echo "   * Kernel: Linux 6.16 sm8150 baseline"
+    echo "   * Sleep/Wake: s2idle 300ms grace, PSCI cluster suspend, BT RTS wake fix"
+    echo "   * Display: Deferred blank workqueue, KTZ8866 backlight resume, 120Hz"
+    echo "   * Audio: CS35L41 DAPM route cycle fix, 24-bit capture shift, slimbus"
+    echo "   * Camera & Video: OV13B10/OV8856/CN3927, Iris VPU hardware video decode"
+    echo "   * Power: SMB5 USB-PD charger, Renesas IDTP9418 stylus wireless charging"
+    echo "   * Input: Novatek NT36523 touchscreen, Xiaomi keyboard & cover lid notifier"
+    echo "   * Cleanup: Run 'sudo nabu-kclean' to remove previous kernel backups"
+    echo ""
+}
+
 post_install() {
     regenerate_uki
+    show_changelog "$1"
 }
 
 post_upgrade() {
     regenerate_uki
-}
-
-post_remove() {
-    :
+    show_changelog "$1"
 }

@@ -1,51 +1,50 @@
 # Maintainer: Kumar-Jy
-# Kernel built from TwinbornPlate75/linux-nabu (branch sm8150/6.18)
+# Unified kernel repository for Xiaomi Pad 5 (nabu):
+#   https://github.com/Kumar-Jy/linux-nabu (branch 6.18-test)
+# Full hardware support built-in:
+#   - Camera (OV13B10 rear + OV8856 front + CN3927 AF)
+#   - Iris hardware video decoder
+#   - SLPI FastRPC sensors / accelerometer
+#   - Audio I2S amplifier DAI routing & 24-bit mic capture
+#   - PM8150B SMB5 charger driver & 15W USB-PD
+#   - Renesas IDTP9418 wireless stylus charger
+#   - Novatek NT36523 touchscreen
+#   - Sleep/wake grace, PSCI cpuidle suspend, BT pull-up fix
+#   - Official Xiaomi keyboard & cover lid notifier
+#   - Device Tree: sm8150-xiaomi-nabu.dtb
+#   - Default config: arch/arm64/configs/nabu_defconfig
 
 pkgbase=linux-nabu
-pkgver=6.18.42
-pkgrel=3
+pkgver=6.18.55
+pkgrel=2
 arch=('aarch64')
-url="https://github.com/TwinbornPlate75/linux-nabu"
+url="https://github.com/Kumar-Jy/linux-nabu"
 license=('GPL2')
-makedepends=('bc' 'git' 'kmod' 'inetutils' 'dtc' 'python3' 'libelf')
+changelog=ChangeLog
+makedepends=('bc' 'git' 'kmod' 'inetutils' 'dtc' 'python3' 'libelf' 'xmlto' 'docbook-xsl')
 options=('!strip')
-_srcname=linux-nabu
 _dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
+
 source=(
-  "$_srcname::git+https://github.com/TwinbornPlate75/linux-nabu.git#branch=sm8150/6.18"
-  "0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch"
-  "0002-NABU-dts-fix-ufs-reset-and-freq-table.patch"
+  "linux-nabu::git+https://github.com/Kumar-Jy/linux-nabu.git#branch=6.18-test"
+  "ChangeLog"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP'
+            'SKIP')
 
 prepare() {
-  cd "${srcdir}/${_srcname}"
+  cd "${srcdir}/linux-nabu"
 
   echo "-${pkgrel}" > localversion.10-pkgrel
   echo "${pkgbase#linux}" > localversion.20-pkgname
 
-  echo "Applying deferred unblank notify patch (fixes KMS atomic commit deadlock)..."
-  patch -Np1 -i "${srcdir}/0001-drm-msm-dsi-defer-unblank-notify-to-workqueue.patch" || true
-
-  echo "Applying UFS reset and clock frequency fix..."
-  patch -Np1 -i "${srcdir}/0002-NABU-dts-fix-ufs-reset-and-freq-table.patch" || true
-
-  make ARCH=arm64 defconfig
-  cat arch/arm64/configs/sm8150.config >> .config
-
-  # Build display panel and backlight built-in (=y) so early KMS boots immediately
-  echo 'CONFIG_DRM_PANEL_NOVATEK_NT36523=y' >> .config
-  echo 'CONFIG_BACKLIGHT_KTZ8866=y' >> .config
-
-  # LZ4 crypto modules required by mkinitcpio's 'systemd' hook
-  echo 'CONFIG_CRYPTO_LZ4=m' >> .config
-  echo 'CONFIG_CRYPTO_LZ4HC=m' >> .config
-  make ARCH=arm64 olddefconfig
+  make ARCH=arm64 nabu_defconfig
 }
 
 build() {
-  cd "${srcdir}/${_srcname}"
+  cd "${srcdir}/linux-nabu"
 
+  export GIT_DIR=/dev/null
   make ARCH=arm64 prepare
   make -s ARCH=arm64 kernelrelease > version
 
@@ -68,23 +67,26 @@ _package_common() {
   make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesntexist modules_install
 
   rm "$pkgdir/usr/lib/modules/$kernver/build"
+
+  install -Dm644 /dev/stdin "${pkgdir}/etc/modprobe.d/99-iris-vaapi.conf" << EOF
+options qcom_iris allow_fw_boot=1 cached_capture=1
+EOF
 }
 
 _package() {
-  pkgdesc="The Linux Kernel and modules for the Xiaomi Pad 5 (nabu) - TwinbornPlate75 6.18"
-  depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7' 'ukify')
-  optdepends=('wireless-regdb: to set the correct wireless channels of your country')
+  pkgdesc="The Linux Kernel and modules for the Xiaomi Pad 5 (nabu)"
+  depends=('coreutils' 'linux-firmware-whence' 'linux-firmware-atheros' 'kmod' 'mkinitcpio>=0.7' 'ukify')
+  optdepends=('wireless-regdb: to set the correct wireless channels of your country'
+              'linux-firmware-xiaomi-nabu: camera/iris/SLPI firmware (venus.mbn, slpi_nb.mbn) - not in standard repos')
   provides=("linux=${pkgver}")
   conflicts=('linux')
   install="linux-nabu.install"
 
-  cd "${srcdir}/${_srcname}"
+  cd "${srcdir}/linux-nabu"
   local kernver="$(<version)"
 
   _package_common
 
-  # mkinitcpio preset so the UKI is rebuilt automatically on install/upgrade,
-  # even when pacman is used directly (non-atomic installs).
   install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/linux-nabu.preset" << PRESET
 # mkinitcpio preset file for the 'linux-nabu' package
 ALL_config="/etc/mkinitcpio.conf"
@@ -96,11 +98,11 @@ PRESET
 }
 
 _package-headers() {
-  pkgdesc="Header files and scripts for building modules for the TwinbornPlate75 linux-nabu kernel"
+  pkgdesc="Header files and scripts for building modules for the linux-nabu kernel"
   provides=("linux-headers=${pkgver}")
   conflicts=('linux-headers')
 
-  cd "${srcdir}/${_srcname}"
+  cd "${srcdir}/linux-nabu"
   local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
 
   echo "Installing build files..."

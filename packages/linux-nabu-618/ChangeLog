@@ -1,0 +1,16 @@
+2026-10-05 Kumar <kumar@nabu>
+	* 6.18.55-2:
+	- Display: Fix DSI PLL lock failure on boot by removing CLK_OPS_PARENT_ENABLE from disp_cc_mdss_pclk0_clk_src and pclk1
+	- DSI PHY: Restore PM runtime resume in dsi_phy_driver_probe to keep iface clock running during early PLL registration
+	- DSI PLL 7nm: Prevent premature PLL bias disable in vco_set_rate during mode set and live UEFI handover
+	- Package: Update package release and include changelog
+
+2026-10-04 Kumar <kumar@nabu>
+	* 6.18.55-1:
+	- Baseline: Initial release of Linux 6.18.55 for Xiaomi Pad 5 (nabu)
+	- UFS: Add DT frequency table and reset quirk for Samsung UFS compatibility
+	- FastRPC SLPI: Enable high-IOVA alias mapping and sensor PDR domain registration
+	- Camera: Support OV13B10 rear, OV8856 front, and CN3927 autofocus
+	- Audio: SM8150 machine driver with 24-bit microphone capture and speaker routing
+	- Power: PM8150B SMB5 charger driver and USB-PD sink support
+	- Touch & Stylus: Novatek NT36523 touchscreen and IDTP9418 wireless pen charging
