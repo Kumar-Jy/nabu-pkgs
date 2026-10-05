@@ -1,182 +1,46 @@
 # Maintainer: Kumar-Jy
-# Kernel 6.16.0-7 = rodriguezst recipe + PM8150B SMB5 charger + deferred wakeup fix.
-# SMB5 backport (0014b, 0051-0057) replaces the LN8000 charger with the
-# PM8150B qcom_smbx charger block so USB-A and USB-C charging works.
-# 6.16.0-4 carried 0050 (Twinborn dsi_mgr_bridge_enable wakeup backport) that
-# deadlocked switch-root; 6.16.0-6 re-adds the wakeup timing fix but defers
-# the blocking notifier to a workqueue so it cannot hold the commit locks.
-# 0014b pins qcom_fg registration against CI GCC link-time pruning.
-# 0051: add qcom_smbx SMB5 charger driver. 0052/0053: pm8150b SMB5 node,
-# switch nabu to it, drop LN8000. 0054: enable the build. 0055: integrate
-# USB-PD via the type-c port. 0056: clear USBIN suspend for any attached
-# source. 0057: advertise only a 5V/3A sink PDO (SMB5 charges only from 5V).
+# Kernel built directly from Kumar-Jy/linux-nabu (branch 6.16)
+#   https://github.com/Kumar-Jy/linux-nabu/tree/6.16
+# The kernel tree carries all nabu support in-tree (camera, Iris decoder,
+# SLPI FastRPC sensors, I2S/mic routing, PM8150B SMB5 charger + USB-PD,
+# IDTP9418 stylus charger, NT36523 touchscreen), so no external patch
+# series is applied here anymore.
+# Default config: arch/arm64/configs/nabu_defconfig (in-tree)
 
 pkgbase=linux-nabu
 pkgver=6.16.0
-_kernelname=${pkgbase#linux}
-_desc="AArch64 Xiaomi Pad 5"
-_srcname="linux-${pkgver/%.0/}"
-_dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
-pkgrel=7
+pkgrel=1
 arch=('aarch64')
-url="http://www.kernel.org/"
+url="https://github.com/Kumar-Jy/linux-nabu"
 license=('GPL2')
-makedepends=('xmlto' 'docbook-xsl' 'kmod' 'inetutils' 'bc' 'git' 'dtc' 'python3' 'systemd-ukify')
+makedepends=('bc' 'git' 'kmod' 'inetutils' 'dtc' 'python3' 'libelf' 'xmlto' 'docbook-xsl')
 options=('!strip')
-source=("http://www.kernel.org/pub/linux/kernel/v6.x/${_srcname}.tar.xz"
-        'config'
-        '0001-SM8150-Add-uart13-node.patch'
-        '0002-SM8150-Add-device-tree-for-Xiaomi-Pad-5.patch'
-        '0003-drm-Add-drm-notifier-support.patch'
-        '0004-drm-dsi-emit-panel-turn-on-off-signal-to-touchscreen.patch'
-        '0005-Input-Add-nt36523-touchscreen-driver.patch'
-        '0006-nt36xxx-Fix-module-autoload.patch'
-        '0007-NABU-Added-novatek-touchscreen-node.patch'
-        '0008-drm-panel-nt36523-Add-Xiaomi-Pad-5-CSOT-panel.patch'
-        '0009-NABU-Enable-gpu-dsi0-and-dsi1.-Added-panel-and-backl.patch'
-        '0010-SM8150-Add-apr-nodes.patch'
-        '0011-ASoC-qcom-SM8150-Add-machine-driver.patch'
-        '0012-NABU-Add-sound-nodes.patch'
-        '0013-power-supply-Add-driver-for-Qualcomm-PMIC-fuel-gauge.patch'
-        '0014-power-qcom_fg-Add-initial-pm8150b-support.patch'
-        '0014b-power-supply-qcom_fg-pin-registration-against-gcc-pruning.patch'
-        '0015-arm64-dts-qcom-pm8150b-Add-fuel-gauge.patch'
-        '0016-NABU-Add-pmic-fg-and-battery-nodes.patch'
-        '0017-SM8150-Add-slimbus-nodes.patch'
-        '0018-arm64-dts-add-wcd9340-device-tree-binding-for-sm8150.patch'
-        '0019-ASoC-qcom-SM8150-Add-slimbus-audio-support-Also-adde.patch'
-        '0020-ASoC-qcom-sm8150-Fix-compilation-in-v6.7.0.patch'
-        '0021-NABU-Add-wcd9340-and-microphone-dais.patch'
-        '0022-drm-msm-dsi-change-sync-mode-to-sync-on-DSI0-rather-.patch'
-        '0023-drm-panel-nt36523-enable-prepare_prev_first.patch'
-        '0024-input-nt36xxx-Enable-pen-support.patch'
-        '0025-drm-panel-nt36523-Enable-120fps-for-nabu-csot.patch'
-        '0026-NABU-Add-pm8150b-type-c-node-and-enable-otg.patch'
-        '0027-NABU-Add-fsa4480-node.patch'
-        '0028-NABU-Enable-secondary-usb-and-keyboard-MCU.patch'
-        '0029-input-nt36523-Remove-fw-boot-delay.-Should-be-fine-b.patch'
-        '0030-NABU-Add-flash-led-node.patch'
-        '0031-NABU-Add-ln8000-fast-charge-IC-for-testing.-If-it-sa.patch'
-        '0032-NABU-Add-hall-sensor-for-magnetic-cover-detection.-H.patch'
-        '0033-NABU-DISABLED-Set-panel-rotation.-https-gitlab.com-s.patch'
-        '0034-NABU-Remove-framebuffer-initialized-by-XBL-https-git.patch'
-        '0035-NABU-Remove-deprecated-usb_1_role_switch_out-node.patch'
-        '0036-of-property-fix-remote-endpoint-parse.patch'
-        '0037-drivers-gpu-drm-drm_notifier.c-add-include-drm-drm_n.patch'
-        '0038-arch-arm64-boot-dts-qcom-sm8150-xiaomi-nabu.dts-add-.patch'
-        '0039-arch-arm64-boot-dts-qcom-sm8150-xiaomi-nabu.dts-add-.patch'
-        '0040-arch-arm64-boot-dts-qcom-sm8150.dtsi-change-reset-na.patch'
-        '0041-NABU-enable-rtc.patch'
-        '0042-NABU-disable-Sensor-Low-Power-Island.patch'
-        '0043-NABU-enable-ln8000-charger-driver.patch'
-        '0044-clk-qcom-gcc-change-halt_check-for-gcc_ufs_phy_tx-rx.patch'
-        '0045-clk-qcom-clk-regmap-Add-udelay-in-clk_enable_regmap-.patch'
-        '0046-nt36xxx-add-pen-input-resolution.patch'
-        '0047-arch-arm64-boot-dts-qcom-sm8150-add-ufs-dependecy-on.patch'
-        '0048-arch-arm64-boot-dts-qcom-sm8150-disable-broken-crypt.patch'
-        '0049-nt36xxx-Change-pen-resolution-This-is-done-to-be-abl.patch'
-        '0050-drm-msm-dsi-move-blank-notification-to-enable-safe.patch'
-        '0051-power-supply-Add-qcom-smbx-SMB5-charger-driver.patch'
-        '0052-arm64-dts-qcom-pm8150b-Add-SMB5-charger-node.patch'
-        '0053-arm64-dts-qcom-nabu-Switch-to-pm8150b-charger-and-drop-ln8000.patch'
-        '0054-drivers-power-supply-Enable-qcom-smbx-build.patch'
-        '0055-power-supply-qcom_smbx-integrate-USB-PD-via-the-type-c-port.patch'
-        '0056-power-supply-qcom_smbx-clear-USBIN-suspend-for-any-attached-source.patch'
-        '0057-arm64-dts-qcom-sm8150-xiaomi-nabu-only-advertise-5V-sink-PDO.patch'
-        'linux.preset')
-sha256sums=('SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP'
-             'SKIP')
+_srcname=linux-nabu
+_dtbfile='qcom/sm8150-xiaomi-nabu.dtb'
+source=(
+  "$_srcname::git+https://github.com/Kumar-Jy/linux-nabu.git#branch=6.16"
+)
+sha256sums=('SKIP')
 
 prepare() {
-  cd $_srcname
+  cd "${srcdir}/${_srcname}"
 
-  echo "Setting version..."
-  echo "-$pkgrel" > localversion.10-pkgrel
+  echo "-${pkgrel}" > localversion.10-pkgrel
   echo "${pkgbase#linux}" > localversion.20-pkgname
 
-  local src
-  for src in "${source[@]}"; do
-    src="${src%%::*}"
-    src="${src##*/}"
-    [[ $src = *.patch ]] || continue
-    msg2 "Applying patch: $src..."
-    patch -Np1 < "../$src"
-  done
-
-  cat "${srcdir}/config" > ./.config
-  make olddefconfig
+  make ARCH=arm64 nabu_defconfig
 }
 
 build() {
-  cd ${_srcname}
+  cd "${srcdir}/${_srcname}"
 
-  # get kernel version
-  make prepare
-  make -s kernelrelease > version
+  export GIT_DIR=/dev/null
+  make ARCH=arm64 prepare
+  make -s ARCH=arm64 kernelrelease > version
 
-  # build!
   unset LDFLAGS
-  make ${MAKEFLAGS} Image Image.gz modules
-  # Generate device tree blobs with symbols to support applying device tree overlays in U-Boot
-  make ${MAKEFLAGS} DTC_FLAGS="-@" dtbs
+  make ${MAKEFLAGS} ARCH=arm64 Image Image.gz modules
+  make ${MAKEFLAGS} ARCH=arm64 DTC_FLAGS="-@" dtbs
 }
 
 _package_common() {
@@ -184,49 +48,53 @@ _package_common() {
   install -Dm644 arch/arm64/boot/Image "${pkgdir}/boot/vmlinux-${kernver}"
   install -Dm644 arch/arm64/boot/Image.gz "${pkgdir}/boot/vmlinuz-${kernver}"
   install -Dm644 arch/arm64/boot/dts/${_dtbfile} "${pkgdir}/boot/dtb-${kernver}"
+  # stable symlinks so the mkinitcpio preset never goes stale on kernel updates
+  ln -s "vmlinuz-${kernver}" "${pkgdir}/boot/vmlinuz-linux-nabu"
+  ln -s "vmlinux-${kernver}" "${pkgdir}/boot/vmlinux-linux-nabu"
+  ln -s "dtb-${kernver}" "${pkgdir}/boot/dtb-linux-nabu"
 
   echo "Installing modules..."
-  make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
+  make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesntexist modules_install
 
-  # remove build link
   rm "$pkgdir/usr/lib/modules/$kernver/build"
+
+  install -Dm644 /dev/stdin "${pkgdir}/etc/modprobe.d/99-iris-vaapi.conf" << EOF
+options qcom_iris allow_fw_boot=1 cached_capture=1
+EOF
 }
 
 _package() {
-  pkgdesc="The Linux Kernel and modules - ${_desc} (6.16 + SMB5 charger)"
-  depends=('coreutils' 'linux-firmware' 'kmod' 'mkinitcpio>=0.7')
-  optdepends=('wireless-regdb: to set the correct wireless channels of your country')
-  provides=("linux=${pkgver}" "KSMBD-MODULE" "WIREGUARD-MODULE")
+  pkgdesc="The Linux Kernel and modules for the Xiaomi Pad 5 (nabu) - 6.16"
+  depends=('coreutils' 'linux-firmware-whence' 'linux-firmware-atheros' 'kmod' 'mkinitcpio>=0.7' 'ukify')
+  optdepends=('wireless-regdb: to set the correct wireless channels of your country'
+              'linux-firmware-xiaomi-nabu: camera/iris/SLPI firmware (venus.mbn, slpi_nb.mbn) - not in standard repos')
+  provides=("linux=${pkgver}")
   conflicts=('linux')
-  install=${pkgname}.install
+  install="linux-nabu.install"
 
-  cd $_srcname
+  cd "${srcdir}/${_srcname}"
   local kernver="$(<version)"
 
   _package_common
 
-  # sed expression for following substitutions
-  local _subst="
-    s|%PKGBASE%|${pkgbase}|g
-    s|%KERNVER%|${kernver}|g
-  "
-
-  # install mkinitcpio preset file
-  sed "${_subst}" ../linux.preset |
-    install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset"
-
-  # rather than use another hook (90-linux.hook) rely on mkinitcpio's 90-mkinitcpio-install.hook
-  # which avoids a double run of mkinitcpio that can occur
-  install -d "${pkgdir}/usr/lib/initcpio/"
-  echo "dummy file to trigger mkinitcpio to run" > "${pkgdir}/usr/lib/initcpio/$(<version)"
+  # mkinitcpio preset so the UKI is rebuilt automatically on install/upgrade,
+  # even when pacman is used directly (non-atomic installs).
+  install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/linux-nabu.preset" << PRESET
+# mkinitcpio preset file for the 'linux-nabu' package
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux-nabu"
+PRESETS=('default')
+default_uki="/boot/efi/EFI/arch/arch-linux-nabu.efi"
+default_cmdline="/etc/cmdline.d/root.conf"
+PRESET
 }
 
 _package-headers() {
-  pkgdesc="Header files and scripts for building modules for linux kernel - ${_desc}"
+  pkgdesc="Header files and scripts for building modules for the linux-nabu 6.16 kernel"
   provides=("linux-headers=${pkgver}")
   conflicts=('linux-headers')
 
-  cd $_srcname
+  cd "${srcdir}/${_srcname}"
   local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
 
   echo "Installing build files..."
@@ -249,18 +117,13 @@ _package-headers() {
   install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
   install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
 
-  # https://bugs.archlinux.org/task/13146
   install -Dt "$builddir/drivers/media/i2c" -m644 drivers/media/i2c/msp3400-driver.h
-
-  # https://bugs.archlinux.org/task/20402
   install -Dt "$builddir/drivers/media/usb/dvb-usb" -m644 drivers/media/usb/dvb-usb/*.h
   install -Dt "$builddir/drivers/media/dvb-frontends" -m644 drivers/media/dvb-frontends/*.h
   install -Dt "$builddir/drivers/media/tuners" -m644 drivers/media/tuners/*.h
-
-  # https://bugs.archlinux.org/task/71392
   install -Dt "$builddir/drivers/iio/common/hid-sensors" -m644 drivers/iio/common/hid-sensors/*.h
 
-  echo "Installing KConfig files..."
+  echo "Adding KConfig files..."
   find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
 
   echo "Removing unneeded architectures..."
@@ -290,7 +153,7 @@ _package-headers() {
         strip -v $STRIP_STATIC "$file" ;;
       application/x-executable\;*)     # Binaries
         strip -v $STRIP_BINARIES "$file" ;;
-      application/x-pie-executable\;*) # Relocatable binaries
+      application/x-pie-executable\;*) # Relocatables
         strip -v $STRIP_SHARED "$file" ;;
     esac
   done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
