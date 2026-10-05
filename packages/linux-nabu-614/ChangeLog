@@ -1,3 +1,9 @@
+2026-10-05 Kumar <kumar@nabu>
+	* 6.14.11-10.2:
+	- Power: Add idtp9418 wireless stylus charger driver for the Xiaomi Pad 5
+	- Power: idtp9418 event interface at /dev/idtp9418, BLE MAC support, and boost GPIO47
+	- Package: Bump pkgrel to publish the merged 6.14 changes
+
 2026-09-30 Kumar <kumar@nabu>
 	* 6.14.11-10.1:
 	- KTZ8866: Add PM resume hook (ktz8866_resume) to restore backlight reliably after s2idle
