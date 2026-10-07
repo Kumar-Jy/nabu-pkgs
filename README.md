@@ -18,6 +18,7 @@ published as a pacman repository.
 | `nabu-autobrightness` | Ambient light auto-brightness daemon & desktop toggle |
 | `camera-studio`| Hardware camera with auto-rotate, VCM focus & color grading |
 | `system-monitor`| Universal hardware & telemetry system monitor      |
+| `stylus-popup`  | Pen status popup & button mapping (TwinbornPlate75) |
 
 > For the complete package catalog, install commands, and detailed descriptions, see [**`PACKAGES.md`**](PACKAGES.md).
 

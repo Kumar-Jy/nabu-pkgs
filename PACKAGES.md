@@ -80,7 +80,7 @@ sudo pacman -Syu
 | :--- | :--- | :--- |
 | **`linux-nabu-614`** | `sudo pacman -S linux-nabu-614 linux-nabu-614-headers` | Mainline Linux 6.14 kernel for Xiaomi Pad 5 (SM8150). Features DTS, Novatek NT36523 touchscreen + stylus pen, quad CS35L41 speaker routing, PM8150B charging, and Iris VPU suspend fixes. |
 | **`linux-nabu-616`** | `sudo pacman -S linux-nabu-616 linux-nabu-616-headers` | Mainline Linux 6.16 series development kernel for Xiaomi Pad 5. |
-| **`linux-nabu-618`** | `sudo pacman -S linux-nabu-618 linux-nabu-618-headers` | Mainline Linux 6.18 series testing kernel for Xiaomi Pad 5. |
+| **`linux-nabu-618`** | `sudo pacman -S linux-nabu-618 linux-nabu-618-headers` | Mainline Linux 6.18.55 LTS kernel for Xiaomi Pad 5, from the `6.18` branch: full hardware support and up-to-date security patches. |
 
 ---
 
@@ -90,6 +90,7 @@ sudo pacman -Syu
 | :--- | :--- | :--- |
 | **`oskb`** | `sudo pacman -S oskb` | Responsive on-screen touch keyboard designed for touch Linux devices and KDE Plasma / GNOME. Features auto-adapt portrait/landscape layouts, navigation/arrow keys, function keys, key size scaling (S, M, L), font scaling, and floating/docked positioning. |
 | **`nabu-autobrightness`** | `sudo pacman -S nabu-autobrightness` | Ambient light sensor auto-brightness daemon for Xiaomi Pad 5. Uses a calibrated logarithmic curve with hysteresis to prevent screen flicker; includes a desktop toggle and launcher. |
+| **`stylus-popup`** | `sudo pacman -S stylus-popup` | Dynamic Island style pen status popup for the IDTP9418 dock: shows battery/charging and the detected pen generation, and maps the pen's side buttons to shell commands. |
 | **`camera-studio`** | `sudo pacman -S camera-studio` | GTK4/Libadwaita camera application featuring real-time tablet orientation tracking, VCM autofocus control (tap-to-focus, slider, presets), manual exposure and gain adjustment, color presets, and built-in photo gallery. |
 | **`system-monitor`** | `sudo pacman -S system-monitor` | Universal hardware telemetry and system monitor for Linux displaying real-time CPU, Adreno 640 GPU usage, RAM, Running Applications / Processes (with search, filter, and task termination), battery charging power (W), and sensor statuses. Features an adaptive responsive UI with edge resizing. |
 | **`nabu-torch`** | `sudo pacman -S nabu-torch` | Rear dual-LED flashlight controller for Xiaomi Pad 5 with interactive slider GUI, desktop toggle launcher, and CLI command (`torch on`, `torch off`, `torch set <val>`). |

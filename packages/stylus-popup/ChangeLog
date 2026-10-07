@@ -1,0 +1,6 @@
+2026-10-07 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 0.1-1:
+	- Initial package of the Dynamic Island style pen status popup for the IDTP9418 dock
+	- Monitor: poll()+eventfd wake so stop() never hangs; retries open while /dev/idtp9418 is absent; drains buffered events
+	- Generation: classifies the docked pen (Gen 1 / Gen 2 / Unknown) from its MAC, shown as a popup tag; generation= override in config
+	- Buttons: per-generation button key layout; explicit warning when the generation is unknown

@@ -1,0 +1,187 @@
+diff --git a/src/stylusmonitor.cpp b/src/stylusmonitor.cpp
+index 7c65e74..92efcf8 100644
+--- a/src/stylusmonitor.cpp
++++ b/src/stylusmonitor.cpp
+@@ -1,9 +1,17 @@
+ #include "stylusmonitor.h"
+ 
++#include <QDebug>
+ #include <fcntl.h>
++#include <poll.h>
++#include <sys/eventfd.h>
+ #include <unistd.h>
+ #include <cerrno>
+ #include <cstdint>
++#include <cstring>
++
++namespace {
++
++constexpr char kDevicePath[] = "/dev/idtp9418";
+ 
+ struct Idtp9418Event {
+     uint8_t soc;
+@@ -37,6 +45,20 @@ static bool isMacNonZero(const uint8_t mac[6])
+     return false;
+ }
+ 
++/* The chip cannot tell the generations apart; only a pen's MAC can. */
++static StylusPenGen penGeneration(const uint8_t mac[6])
++{
++    static const char *const kKnownGen2Macs[] = {
++        "E6:FB:D0:E1:5A:04",
++    };
++    const QString macStr = formatMac(mac);
++    for (const char *known : kKnownGen2Macs) {
++        if (macStr.compare(QLatin1String(known), Qt::CaseInsensitive) == 0)
++            return StylusPenGen::Gen2;
++    }
++    return StylusPenGen::Unknown;
++}
++
+ static bool readState(int fd, StylusState *out)
+ {
+     Idtp9418Event evt;
+@@ -57,43 +79,88 @@ static bool readState(int fd, StylusState *out)
+         isMacNonZero(evt.pen_mac),
+         evt.state == static_cast<uint8_t>(StylusPhase::Attaching)
+             ? StylusPhase::Attaching
+-            : StylusPhase::Complete
++            : StylusPhase::Complete,
++        penGeneration(evt.pen_mac)
+     };
+     return true;
+ }
+ 
+-StylusMonitor::StylusMonitor(QObject *parent) : QThread(parent) {}
++}  // namespace
++
++StylusMonitor::StylusMonitor(QObject *parent)
++    : QThread(parent)
++    , m_wakeFd(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC))
++{
++    if (m_wakeFd < 0)
++        qWarning("StylusMonitor: eventfd failed: %s", std::strerror(errno));
++}
+ 
+ StylusMonitor::~StylusMonitor()
+ {
+     stop();
+     wait();
++    if (m_wakeFd >= 0)
++        ::close(m_wakeFd);
+ }
+ 
+ void StylusMonitor::stop()
+ {
+     m_running.store(false, std::memory_order_release);
+-    int fd = m_fd.exchange(-1, std::memory_order_acq_rel);
+-    if (fd >= 0)
+-        close(fd);
++    if (m_wakeFd >= 0) {
++        const uint64_t one = 1;
++        const ssize_t written = ::write(m_wakeFd, &one, sizeof one);
++        Q_UNUSED(written);
++    }
+ }
+ 
+ void StylusMonitor::run()
+ {
+-    int fd = open("/dev/idtp9418", O_RDONLY);
+-    if (fd < 0)
+-        return;
+-
+-    m_fd.store(fd, std::memory_order_release);
+-
++    /* Closing the device fd from another thread does not wake a read() that is
++     * blocked in the driver's kfifo wait, so a blocking read makes stop() hang.
++     * poll() plus an eventfd wake avoids blocked I/O; while the device node is
++     * missing it retries instead of dying, and every read drains all buffered
++     * events so a pen docked before we started is picked up. */
+     while (m_running.load(std::memory_order_acquire)) {
+-        StylusState cur;
+-        if (!readState(fd, &cur))
+-            break;
+-        emit stateChanged(cur);
+-    }
++        int fd = ::open(kDevicePath, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++        if (fd < 0) {
++            qDebug("StylusMonitor: %s not available: %s",
++                   kDevicePath, std::strerror(errno));
++            if (m_wakeFd >= 0) {
++                struct pollfd wf = { m_wakeFd, POLLIN, 0 };
++                if (::poll(&wf, 1, 1000) > 0) {
++                    uint64_t v = 0;
++                    while (::read(m_wakeFd, &v, sizeof v) > 0) {}
++                    break;  // stop() while waiting for the device
++                }
++            }
++            continue;
++        }
+ 
+-    fd = m_fd.exchange(-1, std::memory_order_acq_rel);
+-    if (fd >= 0)
+-        close(fd);
+-}
++        for (;;) {
++            struct pollfd pfds[2] = {
++                { m_wakeFd, POLLIN, 0 },
++                { fd,       POLLIN, 0 },
++            };
++            const int rc = ::poll(pfds, 2, 2000);
++            if (rc < 0) {
++                if (errno == EINTR)
++                    continue;
++                qWarning("StylusMonitor: poll failed: %s", std::strerror(errno));
++                break;
++            }
++            if (pfds[0].revents & POLLIN) {
++                uint64_t drained = 0;
++                while (::read(m_wakeFd, &drained, sizeof drained) > 0) {}
++                break;  // stop() requested
++            }
++            if (pfds[1].revents & (POLLERR | POLLHUP | POLLNVAL))
++                break;  // device vanished; reconnect
++            if (pfds[1].revents & POLLIN) {
++                StylusState cur;
++                while (readState(fd, &cur))
++                    emit stateChanged(cur);
++            }
++        }
++        ::close(fd);
++    }
++}
+\ No newline at end of file
+diff --git a/src/stylusmonitor.h b/src/stylusmonitor.h
+index d6061c8..272f65e 100644
+--- a/src/stylusmonitor.h
++++ b/src/stylusmonitor.h
+@@ -9,6 +9,14 @@ enum class StylusPhase {
+     Complete  = 2
+ };
+ 
++/* Stylus generation; the chip reports only the pen MAC, so this is a MAC
++ * lookup that yields Unknown until a unit of a kind has actually been seen. */
++enum class StylusPenGen {
++    Gen1,
++    Gen2,
++    Unknown
++};
++
+ struct StylusState {
+     bool        attached  = false;
+     bool        charging  = false;
+@@ -17,6 +25,7 @@ struct StylusState {
+     QString     macAddress;
+     bool        macValid  = false;
+     StylusPhase phase     = StylusPhase::Complete;
++    StylusPenGen penGen   = StylusPenGen::Unknown;
+ };
+ 
+ class StylusMonitor : public QThread
+@@ -37,5 +46,5 @@ protected:
+ 
+ private:
+     std::atomic<bool> m_running{true};
+-    std::atomic<int>  m_fd{-1};
++    int               m_wakeFd{-1};
+ };

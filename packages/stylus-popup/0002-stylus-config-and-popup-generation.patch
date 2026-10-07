@@ -1,0 +1,151 @@
+diff --git a/src/appconfig.cpp b/src/appconfig.cpp
+index 7283e89..41179cd 100644
+--- a/src/appconfig.cpp
++++ b/src/appconfig.cpp
+@@ -120,7 +120,12 @@ bool writeDefaultConfig(const AppConfig &config)
+            "# How long the pen has to connect after it attaches. When the wait\n"
+            "# runs out the popup slides away and the pending attempt is dropped\n"
+            "# until the pen is attached again. 0 waits forever.\n"
+-           "connect-timeout-ms=" << PopupConfig::kDefaultConnectTimeoutMs << "\n";
++           "connect-timeout-ms=" << PopupConfig::kDefaultConnectTimeoutMs << "\n"
++           "\n"
++           "[stylus]\n"
++           "# Stylus generation: auto picks it from the docked pen's MAC;\n"
++           "# gen1 / gen2 pin the button roles and the popup tag directly.\n"
++           "generation=auto\n";
+     file.close();
+ 
+     qInfo("AppConfig: wrote the default configuration to %s",
+@@ -162,6 +167,15 @@ AppConfig AppConfig::load(const QString &path)
+                             0, PopupConfig::kMaxConnectTimeoutMs);
+         settings.endGroup();
+ 
++        settings.beginGroup("stylus");
++        const QString genText = iniText(settings, "generation",
++                                        QStringLiteral("auto")).toLower();
++        if (genText == QLatin1String("gen1"))
++            config.stylus.generation = StylusGenMode::Gen1;
++        else if (genText == QLatin1String("gen2"))
++            config.stylus.generation = StylusGenMode::Gen2;
++        settings.endGroup();
++
+         qInfo("AppConfig: loaded %s", qPrintable(config.sourcePath));
+     } else if (!writeDefaultConfig(config)) {
+         qWarning("AppConfig: falling back to the built-in defaults");
+diff --git a/src/appconfig.h b/src/appconfig.h
+index 3171fbd..b328929 100644
+--- a/src/appconfig.h
++++ b/src/appconfig.h
+@@ -4,6 +4,19 @@
+ 
+ #include "popupconfig.h"
+ #include "stylusbuttons.h"
++#include "stylusmonitor.h"
++
++/* Generation source: the dock MAC (Auto) or a user pin that wins over it. */
++enum class StylusGenMode {
++    Auto,
++    Gen1,
++    Gen2
++};
++
++/** The `[stylus]` section: generation handling. */
++struct StylusConfig {
++    StylusGenMode generation = StylusGenMode::Auto;
++};
+ 
+ /**
+  * Everything stylus-popup reads from its INI config, in one place.
+@@ -21,6 +34,7 @@
+ struct AppConfig {
+     ButtonMapConfig buttons;
+     PopupConfig     popup;
++    StylusConfig    stylus;
+ 
+     /** The file the values above came from; never empty after `load()`. */
+     QString sourcePath;
+diff --git a/src/islandstrings.cpp b/src/islandstrings.cpp
+index 8dbc45a..f698fd0 100644
+--- a/src/islandstrings.cpp
++++ b/src/islandstrings.cpp
+@@ -31,4 +31,14 @@ QString chargeLimit(int percent)
+     return pick("上限 %1%", "Limit %1%").arg(percent);
+ }
+ 
++QString generation(StylusPenGen gen)
++{
++    switch (gen) {
++    case StylusPenGen::Gen1:    return pick("第1代", "Gen 1");
++    case StylusPenGen::Gen2:    return pick("第2代", "Gen 2");
++    case StylusPenGen::Unknown: return pick("未知", "Gen ?");
++    }
++    return pick("未知", "Gen ?");
++}
++
+ }  // namespace IslandStrings
+diff --git a/src/islandstrings.h b/src/islandstrings.h
+index 792770b..df87fc8 100644
+--- a/src/islandstrings.h
++++ b/src/islandstrings.h
+@@ -2,6 +2,8 @@
+ 
+ #include <QString>
+ 
++#include "stylusmonitor.h"
++
+ /**
+  * The few words the island shows. Chinese when the system locale is Chinese,
+  * English otherwise; resolved once, at the first call.
+@@ -16,4 +18,7 @@ QString chargeLimit(int percent);
+ QString connectFailed();
+ QString connectTimedOut();
+ 
++/* Believed stylus generation; "Gen ?" when the MAC lookup found nothing. */
++QString generation(StylusPenGen gen);
++
+ }  // namespace IslandStrings
+diff --git a/src/main.cpp b/src/main.cpp
+index 6936893..868ca31 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -13,6 +13,16 @@ int main(int argc, char *argv[])
+      * extend when a setting is added. */
+     const AppConfig config = AppConfig::load();
+ 
++    /* A generation= pin wins; otherwise Unknown stays Unknown, never Gen-1. */
++    const auto effectiveGen = [&config](StylusPenGen detected) {
++        switch (config.stylus.generation) {
++        case StylusGenMode::Gen1: return StylusPenGen::Gen1;
++        case StylusGenMode::Gen2: return StylusPenGen::Gen2;
++        case StylusGenMode::Auto: return detected;
++        }
++        return detected;
++    };
++
+     /* Diagnostic that needs neither a Wayland session nor the popup: report
+      * which input nodes the pen button mapping would grab. */
+     for (int i = 1; i < argc; ++i) {
+@@ -34,7 +44,10 @@ int main(int argc, char *argv[])
+     bool pairingRequested = false;
+ 
+     auto onStateChanged = [&](const StylusState &state) {
+-        popup.showState(state);
++        StylusState shown = state;
++        shown.penGen = effectiveGen(state.penGen);
++        popup.showState(shown);
++        buttons.setPenGeneration(shown.penGen);
+ 
+         if (!state.attached || state.phase == StylusPhase::Attaching)
+             pairingRequested = false;
+diff --git a/src/popupwidget.cpp b/src/popupwidget.cpp
+index 4fe8322..0c5340b 100644
+--- a/src/popupwidget.cpp
++++ b/src/popupwidget.cpp
+@@ -781,6 +781,7 @@ void PopupWidget::paintBattery(QPainter &p, const QRectF &r)
+                    : (m_btPaired ? IslandStrings::paired() : IslandStrings::notPaired());
+     if (m_state.limit > 0 && m_state.limit <= 100)
+         status += QStringLiteral(" · ") + IslandStrings::chargeLimit(m_state.limit);
++    status += QStringLiteral(" · ") + IslandStrings::generation(m_state.penGen);
+ 
+     const QFontMetricsF fmTitle(m_titleFont);
+     const QFontMetricsF fmSub(m_subFont);

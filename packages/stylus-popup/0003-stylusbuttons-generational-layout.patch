@@ -1,0 +1,186 @@
+diff --git a/src/stylusbuttons.cpp b/src/stylusbuttons.cpp
+index 03b693a..b9cd5c1 100644
+--- a/src/stylusbuttons.cpp
++++ b/src/stylusbuttons.cpp
+@@ -28,12 +28,20 @@ namespace {
+ 
+ constexpr char kInputDir[] = "/dev/input";
+ 
+-/* Which key code each side button reports. The main button sends PAGE_DOWN
+- * and the secondary one PAGE_UP - the opposite of what those key names suggest,
+- * which is why the buttons are named after their role and the key codes are
+- * mentioned only here. */
+-constexpr int kPrimaryKey   = KEY_PAGEDOWN;
+-constexpr int kSecondaryKey = KEY_PAGEUP;
++/* Both generations send the same keys; only the button->role binding can
++ * differ per generation. Gen-2's row is unconfirmed and inherits Gen-1. */
++PenKeyMap penKeyMap(StylusPenGen gen)
++{
++    const PenKeyMap gen1 = { KEY_PAGEDOWN, KEY_PAGEUP };
++    switch (gen) {
++    case StylusPenGen::Gen2:
++        return gen1;  // unconfirmed on hardware; keep the Gen-1 roles
++    case StylusPenGen::Gen1:
++    case StylusPenGen::Unknown:
++        return gen1;
++    }
++    return gen1;
++}
+ 
+ /* Bluetooth name of the supported pens. Both generations of the Xiaomi
+  * Stylus Pen advertise the same one, and the kernel derives both evdev node
+@@ -148,7 +156,7 @@ QString ButtonMapConfig::commandFor(StylusButton button, StylusGesture gesture)
+ 
+ /* ── StylusButtonMonitor ─────────────────────────────────────────────────── */
+ 
+-bool StylusButtonMonitor::inspect(const QString &path, Node *node)
++bool StylusButtonMonitor::inspect(const QString &path, const PenKeyMap &keys, Node *node)
+ {
+     node->path = path;
+     node->fd   = ::open(QFile::encodeName(path).constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+@@ -163,8 +171,8 @@ bool StylusButtonMonitor::inspect(const QString &path, Node *node)
+     node->nameMatch = isStylusNodeName(node->name);
+ 
+     if (node->nameMatch) {
+-        node->hasPrimary   = evdevSupportsKey(node->fd, kPrimaryKey);
+-        node->hasSecondary = evdevSupportsKey(node->fd, kSecondaryKey);
++        node->hasPrimary   = evdevSupportsKey(node->fd, keys.primary);
++        node->hasSecondary = evdevSupportsKey(node->fd, keys.secondary);
+     }
+     return true;
+ }
+@@ -215,6 +223,11 @@ void StylusButtonMonitor::stop()
+     }
+ }
+ 
++void StylusButtonMonitor::setPenGeneration(StylusPenGen gen)
++{
++    m_penGen.store(gen, std::memory_order_release);
++}
++
+ void StylusButtonMonitor::run()
+ {
+     /* `enabled=false` never reaches this thread: StylusButtonMapper::start()
+@@ -318,7 +331,7 @@ void StylusButtonMonitor::scan(std::vector<Node> &nodes)
+             continue;
+ 
+         Node node;
+-        if (!inspect(path, &node)) {
++        if (!inspect(path, penKeyMap(m_penGen.load(std::memory_order_acquire)), &node)) {
+             if (failures++ == 0) {
+                 firstFailure = path;
+                 firstError   = node.openError;
+@@ -375,14 +388,15 @@ void StylusButtonMonitor::attach(std::vector<Node> &nodes, const Node &node)
+ bool StylusButtonMonitor::drain(Node &node, bool dispatch)
+ {
+     const int64_t now = monotonicMs();
++    const PenKeyMap keys = penKeyMap(m_penGen.load(std::memory_order_acquire));
+     struct input_event ev;
+     for (;;) {
+         const ssize_t n = ::read(node.fd, &ev, sizeof ev);
+         if (n == static_cast<ssize_t>(sizeof ev)) {
+             if (dispatch && ev.type == EV_KEY) {
+-                if (ev.code == kPrimaryKey)
++                if (ev.code == keys.primary)
+                     feed(node, StylusButton::Primary, ev.value, now);
+-                else if (ev.code == kSecondaryKey)
++                else if (ev.code == keys.secondary)
+                     feed(node, StylusButton::Secondary, ev.value, now);
+             }
+             continue;
+@@ -483,6 +497,18 @@ void StylusButtonMapper::start()
+     m_monitor->start();
+ }
+ 
++void StylusButtonMapper::setPenGeneration(StylusPenGen gen)
++{
++    /* Unknown is not silently treated as Gen-1: say it once, so a misdetected
++     * or unseedable pen cannot silently ship the wrong button roles. */
++    if (gen == StylusPenGen::Unknown && !m_unknownLogged) {
++        m_unknownLogged = true;
++        qWarning("StylusButtonMapper: pen generation unknown - button roles default to "
++                 "Gen-1 until the MAC is seeded or generation=gen1/gen2 is set");
++    }
++    m_monitor->setPenGeneration(gen);
++}
++
+ void StylusButtonMapper::onGestureTriggered(StylusButton button, StylusGesture gesture,
+                                             const QString &deviceName)
+ {
+@@ -540,7 +566,7 @@ void StylusButtonMonitor::printMatchingDevices(const ButtonMapConfig &config,
+ 
+     for (const QString &path : paths) {
+         Node node;
+-        if (!inspect(path, &node)) {
++        if (!inspect(path, penKeyMap(StylusPenGen::Unknown), &node)) {
+             out << "  [skip] " << path << "  cannot open: "
+                 << QString::fromLocal8Bit(std::strerror(node.openError))
+                 << " (member of the \"input\" group?)\n";
+diff --git a/src/stylusbuttons.h b/src/stylusbuttons.h
+index 432bdf1..c053f3f 100644
+--- a/src/stylusbuttons.h
++++ b/src/stylusbuttons.h
+@@ -8,6 +8,7 @@
+ #include <vector>
+ 
+ #include "stylusgestures.h"
++#include "stylusmonitor.h"
+ 
+ /**
+  * The pen's two side buttons. They are named after their role on the pen and
+@@ -23,6 +24,12 @@ enum class StylusButton {
+ /** Stable identifier of a button, also exported to the command as STYLUS_BUTTON. */
+ QString stylusButtonName(StylusButton button);
+ 
++/** Which key each side button sends, per stylus generation. */
++struct PenKeyMap {
++    int primary;
++    int secondary;
++};
++
+ /**
+  * Pen-button -> shell command mapping: the `[buttons]` section of stylus-popup's
+  * config. Each button carries one command per gesture; an empty command
+@@ -77,6 +84,9 @@ public:
+ 
+     void stop();
+ 
++    /** Sets the docked generation; updates which keys the side buttons map to. */
++    void setPenGeneration(StylusPenGen gen);
++
+     /** Prints the input nodes this monitor would grab - `--list-input`. */
+     static void printMatchingDevices(const ButtonMapConfig &config,
+                                      const QString &configPath);
+@@ -110,7 +120,7 @@ private:
+ 
+     /** Opens `path` and fills `node`; false only when it cannot be opened.
+      *  On success the descriptor stays open for the caller to grab/close. */
+-    static bool inspect(const QString &path, Node *node);
++    static bool inspect(const QString &path, const PenKeyMap &keys, Node *node);
+ 
+     static ButtonGestureDetector       &detectorFor(Node &node, StylusButton button);
+     static const ButtonGestureDetector &detectorFor(const Node &node, StylusButton button);
+@@ -136,7 +146,8 @@ private:
+ 
+     ButtonMapConfig m_config;
+ 
+-    std::atomic<bool> m_running{true};
++    std::atomic<bool>    m_running{true};
++    std::atomic<StylusPenGen> m_penGen{StylusPenGen::Unknown};
+     int               m_wakeFd{-1};
+     bool              m_openWarningLogged{false};
+ };
+@@ -156,6 +167,7 @@ public:
+     ~StylusButtonMapper() override;
+ 
+     void start();
++    void setPenGeneration(StylusPenGen gen);
+ 
+ private slots:
+     void onGestureTriggered(StylusButton button, StylusGesture gesture,
+@@ -164,4 +176,5 @@ private slots:
+ private:
+     ButtonMapConfig      m_config;
+     StylusButtonMonitor *m_monitor;
++    bool                 m_unknownLogged{false};
+ };

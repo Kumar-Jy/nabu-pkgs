@@ -99,6 +99,10 @@ on:
         type: boolean
         default: true
         description: Build iio-sensor-proxy (with SSC fix)
+      build_stylus_popup:
+        type: boolean
+        default: true
+        description: Build stylus-popup (pen status popup with generation detection)
 
 jobs:
   resolve-packages:
@@ -136,6 +140,7 @@ jobs:
               --argjson sddm_nabu "${{ inputs.build_sddm_nabu }}" \
               --argjson nabu_boot_tools "${{ inputs.build_nabu_boot_tools }}" \
               --argjson iio_sensor_proxy "${{ inputs.build_iio_sensor_proxy }}" \
+              --argjson stylus_popup "${{ inputs.build_stylus_popup }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -159,9 +164,10 @@ jobs:
                  if $nabu_torch then "nabu-torch" else empty end,
                  if $sddm_nabu then "sddm-nabu" else empty end,
                  if $nabu_boot_tools then "nabu-boot-tools", "nabu-kclean" else empty end,
-                 if $iio_sensor_proxy then "iio-sensor-proxy" else empty end ]' > matrix.json
+                 if $iio_sensor_proxy then "iio-sensor-proxy" else empty end,
+                 if $stylus_popup then "stylus-popup" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy"]' > matrix.json
+            echo '["upower-nncc","bootc","code","python2","widevine","linux-nabu-614","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"

@@ -1,3 +1,10 @@
+2026-10-07 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 3.9-5:
+	- SSC Proximity: Tag FastRPC devices as 'ssc-proximity' so the driver is probed at all
+	- SSC Proximity: nabu has no standard 'proximity' datatype; fall back to the Xiaomi
+	  'sar_algo_1' sensor and decode its near/far state (first float, 1.0 = near)
+	- HasProximity now reports true; ProximityNear tracks the ADUX1050 SAR algorithm output
+
 2026-09-30 Kumar <kumar@nabu>
 	* 3.9-4:
 	- SSC: Implement discovery retry timer so daemon stays alive instead of hitting systemd start limit

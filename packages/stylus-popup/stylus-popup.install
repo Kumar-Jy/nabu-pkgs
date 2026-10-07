@@ -1,0 +1,17 @@
+post_install() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mstylus-popup ($1) installed:\e[0m"
+    echo "   * Dynamic Island pen status popup (IDTP9418 dock)"
+    echo "   * Shows pen battery/charging plus the detected generation tag"
+    echo "   * Maps the pen's side buttons to shell commands"
+    echo ""
+    echo "   Enable it for your user session (a user unit, so no sudo):"
+    echo "     systemctl --user enable --now stylus-popup.service"
+    echo ""
+}
+
+post_upgrade() {
+    echo -e "\n\e[1;34m::\e[0m \e[1mstylus-popup updated to $1:\e[0m"
+    echo "   Restart your session instance to pick it up:"
+    echo "     systemctl --user restart stylus-popup.service"
+    echo ""
+}

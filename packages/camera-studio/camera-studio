@@ -568,7 +568,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # --- Live Pro Controls & Looks HUD (Viewfinder Stays Visible) ---
         self.hud_revealer = Gtk.Revealer()
         self.hud_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        self.hud_revealer.set_reveal_child(True)
+        # Start collapsed (don't auto-open the tuning HUD over the viewfinder)
+        self.hud_revealer.set_reveal_child(False)
         self.hud_revealer.set_valign(Gtk.Align.CENTER)
         self.hud_revealer.set_halign(Gtk.Align.CENTER)
         self.hud_revealer.set_margin_bottom(10)
@@ -646,7 +647,6 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_adjust_color = Gtk.Button(icon_name="color-select-symbolic")
         self.btn_adjust_color.set_tooltip_text("Toggle Live Pro Image Tuning & Color Looks HUD (Pro Mode)")
         self.btn_adjust_color.add_css_class("action-circle-btn")
-        self.btn_adjust_color.add_css_class("hud-active-btn")
         self.btn_adjust_color.set_valign(Gtk.Align.CENTER)
         self.btn_adjust_color.set_halign(Gtk.Align.CENTER)
         self.btn_adjust_color.connect('clicked', self.on_toggle_hud)
@@ -1463,16 +1463,17 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         .mode-switcher-container {
             background-color: rgba(18, 21, 28, 0.82);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 20px;
-            padding: 3px 6px;
+            border-radius: 22px;
+            padding: 5px 9px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
         }
         .mode-btn {
-            font-size: 11px;
+            font-size: 13px;
             font-weight: 700;
             letter-spacing: 0.5px;
-            padding: 5px 14px;
-            border-radius: 16px;
+            padding: 8px 22px;
+            min-width: 72px;
+            border-radius: 18px;
             color: rgba(255, 255, 255, 0.60);
             background: transparent;
             border: none;
@@ -2007,8 +2008,13 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.focus_reticle.set_visible(True)
 
         if self.focus_subdev:
+            # Tap y -> focus_absolute (bottom=near/macro, top=infinity)
+            h = max(1, self.pic_viewfinder.get_height())
+            ratio = max(0.0, min(1.0, y / h))
+            focus_val = int(round(ratio * 1023))
+            self.set_focus(focus_val)
             GLib.timeout_add(150, lambda: self.focus_reticle.add_css_class("focus-reticle-locked"))
-            self.show_toast(f"Focus target locked (Focal: {self.current_focus})")
+            self.show_toast(f"Focus target locked (Focal: {focus_val})")
         else:
             self.show_toast("Point targeted")
 
@@ -2390,12 +2396,15 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             src_str = 'videotestsrc pattern=ball ! video/x-raw,width=2048,height=1536'
 
         pipe_str = (
-            f'{src_str} ! videoconvert ! '
-            f'videobalance name=bal brightness={self.brightness} contrast={self.contrast} saturation={self.saturation} hue={self.hue} ! '
-            f'gamma name=gam gamma={self.gamma} ! '
+            # Raw NV12 tap before videoflip/tee: record branch skips color
+            # processing; viewfinder branch applies it after the split.
+            f'{src_str} ! '
             f'videoflip name=flip ! '
             f'tee name=t '
             f't. ! queue name=q_view leaky=downstream max-size-buffers=3 ! '
+            f'videoconvert ! '
+            f'videobalance name=bal brightness={self.brightness} contrast={self.contrast} saturation={self.saturation} hue={self.hue} ! '
+            f'gamma name=gam gamma={self.gamma} ! '
             f'video/x-raw,format=RGB ! '
             f'gtk4paintablesink name=sink'
         )
@@ -2480,10 +2489,12 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         # 1. Trigger Flash (Hardware LED for Rear or Screen Flash for Front)
         fired_hardware_flash = False
+        flash_light_shown = False
         if self.flash_mode in ('auto', 'torch'):
             if is_front or not os.path.exists('/sys/class/leds/white:flash/brightness'):
                 self.flash_box.set_visible(True)
-                GLib.timeout_add(150, lambda: self.flash_box.set_visible(False))
+                flash_light_shown = True
+                GLib.timeout_add(280, lambda: self.flash_box.set_visible(False))
             else:
                 ok, _ = self.set_hardware_led(True, self.flash_brightness)
                 if ok:
@@ -2492,7 +2503,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
                         GLib.timeout_add(250, lambda: self.set_hardware_led(False))
                 else:
                     self.flash_box.set_visible(True)
-                    GLib.timeout_add(150, lambda: self.flash_box.set_visible(False))
+                    flash_light_shown = True
+                    GLib.timeout_add(280, lambda: self.flash_box.set_visible(False))
         else:
             # Subtle visual screen shutter flash feedback
             self.flash_box.set_visible(True)
@@ -2501,7 +2513,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # 2. Play shutter sound asynchronously
         self.play_shutter_sound()
 
-        # 3. Pull frame from paintable sink
+        # 3. Grab & save; wait 150 ms after a flash fires so the frame is lit.
+        if fired_hardware_flash or flash_light_shown:
+            GLib.timeout_add(150, self._grab_and_save_capture)
+        else:
+            self._grab_and_save_capture()
+
+    def _grab_and_save_capture(self):
+        # 1. Pull frame from paintable sink
         if not self.paintable_sink:
             self.show_toast("Error: Viewfinder sink not active")
             return
@@ -2690,17 +2709,67 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         filepath = os.path.join(self.video_save_dir, filename)
         self.current_video_path = filepath
 
-        # Pipeline branch for MP4 recording using ultrafast zerolatency x264enc
-        rec_bin_str = (
-            f'queue name=q_rec max-size-buffers=30 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! '
-            f'x264enc tune=zerolatency speed-preset=ultrafast bitrate=6000 key-int-max=30 ! '
-            f'h264parse ! mp4mux ! filesink location="{filepath}" name=fsink'
-        )
+        # Manual bin (parse_bin can't join mic + tee video into one mp4mux).
+        # Ghost video 'sink' pad keeps the existing tee/EOS logic; audio branch
+        # is internal. No AAC encoder on device -> Opus 48k stereo.
+        def _make(factory_name, name=None):
+            el = Gst.ElementFactory.make(factory_name, name)
+            if el is None:
+                raise RuntimeError(f"Missing GStreamer element: {factory_name}")
+            return el
 
         try:
-            self.record_bin = Gst.parse_bin_from_description(rec_bin_str, True)
-            self.pipeline.add(self.record_bin)
-            self.record_bin.sync_state_with_parent()
+            q_rec = _make('queue', 'q_rec')
+            q_rec.set_property('max-size-buffers', 30)
+            q_rec.set_property('leaky', 1)  # leaky=downstream
+            vconv = _make('videoconvert')
+            vcap = Gst.Caps.from_string('video/x-raw,format=I420')
+            x264 = _make('x264enc')
+            x264.set_property('tune', 4)            # zerolatency
+            x264.set_property('speed-preset', 1)    # ultrafast
+            x264.set_property('bitrate', 6000)
+            x264.set_property('key-int-max', 30)
+            h264 = _make('h264parse')
+
+            mux = _make('mp4mux', 'mux')
+
+            asrc = _make('pulsesrc', 'record_asrc')
+            aqu = _make('queue', 'q_aud')
+            aconv = _make('audioconvert')
+            ares = _make('audioresample')
+            acap = Gst.Caps.from_string('audio/x-raw,rate=48000,channels=2')
+            opus = _make('opusenc')
+            opus.set_property('bitrate', 96000)
+            fout = _make('filesink', 'fsink')
+            fout.set_property('location', filepath)
+
+            rec = Gst.Bin()
+            for el in (q_rec, vconv, x264, h264, mux, asrc, aqu, aconv, ares, opus, fout):
+                rec.add(el)
+
+            # Video: tee -> q_rec -> videoconvert -> I420 -> x264 -> h264parse -> mux.video_0
+            q_rec.link(vconv)
+            vconv.link_filtered(x264, vcap)
+            x264.link(h264)
+            h264.get_static_pad('src').link(mux.request_pad_simple('video_%u'))
+
+            # Audio: pulsesrc -> q_aud -> audioconvert -> audioresample(48k/2ch) -> opus -> mux.audio_0
+            asrc.link(aqu)
+            aqu.link(aconv)
+            aconv.link(ares)
+            ares.link_filtered(opus, acap)
+            opus.get_static_pad('src').link(mux.request_pad_simple('audio_%u'))
+
+            # Container -> file
+            mux.link(fout)
+
+            # Ghost the video sink pad under the same 'sink' name as before so
+            # the existing tee request/link and EOS-block stop path apply.
+            rec.add_pad(Gst.GhostPad.new('sink', q_rec.get_static_pad('sink')))
+
+            self.record_bin = rec
+            self.pipeline.add(rec)
+            rec.sync_state_with_parent()
 
             self.record_tee_pad = self.tee.request_pad_simple('src_%u')
             self.record_sink_pad = self.record_bin.get_static_pad('sink')
@@ -2755,12 +2824,22 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         duration = max(0, time.time() - self.record_start_time)
         filename = os.path.basename(filepath) if filepath else "video"
 
-        # Block pad and unlink cleanly with downstream EOS event
+        # Drain audio: pause pulsesrc, EOS its queue sink (src-pad EOS goes
+        # upstream) so mp4mux gets EOS on both pads and writes moov.
+        if self.record_bin:
+            audio_src = self.record_bin.get_by_name('record_asrc')
+            try:
+                if audio_src:
+                    audio_src.set_state(Gst.State.PAUSED)
+                a_head = self.record_bin.get_by_name('q_aud')
+                if a_head:
+                    a_head.get_static_pad('sink').send_event(Gst.Event.new_eos())
+            except Exception as e:
+                print("Recording audio EOS error:", e)
+
+        # Block, then EOS while still linked (unlink-first corrupted the last
+        # PTS -> bogus track duration). Tee pad released in finalize_stop.
         def stop_probe(pad, info):
-            if self.record_sink_pad and pad:
-                pad.unlink(self.record_sink_pad)
-            if self.tee and pad:
-                self.tee.release_request_pad(pad)
             if self.record_sink_pad:
                 self.record_sink_pad.send_event(Gst.Event.new_eos())
             return Gst.PadProbeReturn.REMOVE
@@ -2768,8 +2847,16 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         if self.record_tee_pad:
             self.record_tee_pad.add_probe(Gst.PadProbeType.BLOCK_DOWNSTREAM, stop_probe)
 
-        # Allow EOS to flush through mp4mux and filesink before freeing bin
+        # Finalize only after file-sink EOS (full flush -> complete moov).
         def finalize_stop():
+            if not self.is_recording:
+                return False
+            if self.record_tee_pad and self.record_sink_pad and self.tee:
+                try:
+                    self.record_tee_pad.unlink(self.record_sink_pad)
+                    self.tee.release_request_pad(self.record_tee_pad)
+                except Exception as e:
+                    print("Recording pad release error:", e)
             if self.record_bin:
                 self.record_bin.set_state(Gst.State.NULL)
                 self.pipeline.remove(self.record_bin)
@@ -2797,7 +2884,23 @@ class CameraStudioWindow(Adw.ApplicationWindow):
                 self.show_toast("Recording stopped")
             return False
 
-        GLib.timeout_add(400, finalize_stop)
+        # Finalize on filesink EOS (+grace); safety net if encoder stalls.
+        def finalize_on_eos(_pad, info):
+            ev = info.get_event()
+            if info.type & Gst.PadProbeType.EVENT_BOTH and ev and ev.type == Gst.EventType.EOS:
+                GLib.timeout_add(250, finalize_stop)
+                return Gst.PadProbeReturn.REMOVE
+            return Gst.PadProbeReturn.OK
+
+        eos_probe_added = False
+        if self.record_bin:
+            fsink = self.record_bin.get_by_name('fsink')
+            if fsink:
+                fsink.get_static_pad('sink').add_probe(Gst.PadProbeType.EVENT_BOTH, finalize_on_eos)
+                eos_probe_added = True
+        if not eos_probe_added:
+            GLib.timeout_add(400, finalize_stop)
+        GLib.timeout_add(4000, finalize_stop)  # safety net
 
     def play_shutter_sound(self):
         try:

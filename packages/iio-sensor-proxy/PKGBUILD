@@ -3,7 +3,7 @@
 
 pkgname=iio-sensor-proxy
 pkgver=3.9
-pkgrel=4
+pkgrel=5
 pkgdesc='IIO accelerometer sensor to input device proxy (with Snapdragon SSC fix)'
 arch=('aarch64')
 url='https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/'
@@ -21,9 +21,11 @@ makedepends=(git
              ninja)
 source=("git+https://gitlab.freedesktop.org/hadess/iio-sensor-proxy#tag=$pkgver"
         "0001-fix-ssc-race-condition.patch"
+        "0002-ssc-proximity-nabu-sar-fallback.patch"
         "ChangeLog"
         "iio-sensor-proxy.install")
 sha256sums=('SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP')
@@ -31,6 +33,7 @@ sha256sums=('SKIP'
 prepare() {
   cd "$pkgname"
   patch -Np1 -i "$srcdir/0001-fix-ssc-race-condition.patch"
+  patch -Np1 -i "$srcdir/0002-ssc-proximity-nabu-sar-fallback.patch"
 }
 
 build() {

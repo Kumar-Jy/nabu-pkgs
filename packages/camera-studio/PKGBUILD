@@ -3,7 +3,7 @@
 
 pkgname=camera-studio
 pkgver=1.0.6
-pkgrel=1
+pkgrel=2
 pkgdesc="Full-fledged camera and video studio with instant exposure priming, photo & video recording, and post-processing"
 arch=('any')
 url="https://github.com/Kumar-Jy/nabu-pkgs"

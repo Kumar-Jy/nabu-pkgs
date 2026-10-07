@@ -1,0 +1,44 @@
+# Maintainer: Kumar-Jy
+# Author: TwinbornPlate75 <3342733415@qq.com> (stylus-popup upstream)
+
+pkgname=stylus-popup
+pkgver=0.1
+pkgrel=1
+pkgdesc='Dynamic Island style stylus status popup for Wayland (Xiaomi Pad 5)'
+arch=('aarch64')
+url='https://github.com/TwinbornPlate75/stylus-popup'
+license=('MIT')
+depends=('qt6-base' 'wayland' 'glibc')
+makedepends=('cmake' 'gcc' 'make' 'git' 'pkgconf' 'qt6-base' 'wayland')
+changelog=ChangeLog
+install=stylus-popup.install
+source=("git+https://github.com/TwinbornPlate75/stylus-popup.git#commit=17a42eec965d153b119d9230550d6721523129f7"
+        '0001-stylusmonitor-robust-io-and-pen-generation.patch'
+        '0002-stylus-config-and-popup-generation.patch'
+        '0003-stylusbuttons-generational-layout.patch'
+        'ChangeLog'
+        'stylus-popup.install')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$pkgname"
+  patch -Np1 -i "$srcdir/0001-stylusmonitor-robust-io-and-pen-generation.patch"
+  patch -Np1 -i "$srcdir/0002-stylus-config-and-popup-generation.patch"
+  patch -Np1 -i "$srcdir/0003-stylusbuttons-generational-layout.patch"
+}
+
+build() {
+  cd "$pkgname"
+  cmake -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+}
+
+package() {
+  cd "$pkgname"
+  DESTDIR="$pkgdir" cmake --install build
+}

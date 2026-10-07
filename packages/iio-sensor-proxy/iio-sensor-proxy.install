@@ -4,6 +4,7 @@ post_install() {
     echo -e "\n\e[1;34m::\e[0m \e[1miio-sensor-proxy ($1) installed:\e[0m"
     echo "   * Snapdragon SSC: Added discovery retry so daemon never crashes on slow boot/wake"
     echo "   * Broadcast Signals: Fixed D-Bus PropertiesChanged delivery to KWin & desktop shells"
+    echo "   * SSC Proximity: Enables HasProximity via Xiaomi sar_algo_1 fallback (nabu)"
     echo ""
 }
 
@@ -14,5 +15,6 @@ post_upgrade() {
     echo "   * Snapdragon SSC: Added discovery retry so daemon never crashes on slow boot/wake"
     echo "   * Broadcast Signals: Fixed D-Bus PropertiesChanged delivery to KWin & desktop shells"
     echo "   * Startup Queue: Fixed race condition when sensors claimed before discovery completed"
+    echo "   * SSC Proximity: Enables HasProximity via Xiaomi sar_algo_1 fallback (nabu)"
     echo ""
 }
