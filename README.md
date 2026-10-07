@@ -3,24 +3,7 @@
 Custom Arch Linux ARM packages for the Xiaomi Pad 5 (nabu), built and
 published as a pacman repository.
 
-## Packages
-
-| Package        | Description                                        |
-| -------------- | -------------------------------------------------- |
-| `linux-nabu`   | Linux kernel + headers for nabu (TwinbornPlate75) |
-| `upower-nncc`  | upower patched for nabu battery                   |
-| `bootc`        | bootc (bootable containers) binary                |
-| `code`         | Visual Studio Code                                |
-| `python2`      | Python 2                                          |
-| `widevine`     | Widevine DRM                                      |
-| `nabu-pmac`    | Deterministic WLAN MAC from board serial          |
-| `oskb`         | Full on-screen touch keyboard with nav keys & themes |
-| `nabu-autobrightness` | Ambient light auto-brightness daemon & desktop toggle |
-| `camera-studio`| Hardware camera with auto-rotate, VCM focus & color grading |
-| `system-monitor`| Universal hardware & telemetry system monitor      |
-| `stylus-popup`  | Pen status popup & button mapping (TwinbornPlate75) |
-
-> For the complete package catalog, install commands, and detailed descriptions, see [**`PACKAGES.md`**](PACKAGES.md).
+> For the full package catalog and install commands, see [**`PACKAGES.md`**](PACKAGES.md).
 
 ## Repository
 
@@ -40,18 +23,8 @@ SigLevel = Never
 Server = https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo
 ```
 
-## Building
-
-Run the `Arch repo` workflow (`build_linux_nabu`, `build_bootc`, etc. inputs
-control which packages are rebuilt). The workflow caches builds by source
-signature and only rebuilds when the upstream source or version changes.
-
-## Adding a package
-
-1. Create `packages/<name>/PKGBUILD`.
-2. Add the name to the package list in `arch-repo.yml`.
-
 ## License
 
 This repository and its packages are released under the [MIT License](LICENSE).
-Individual packages contain their respective licenses and copyright notices under `packages/<name>/LICENSE`.
+Individual packages contain their respective licenses and copyright notices
+under `packages/<name>/LICENSE`.
