@@ -1,0 +1,32 @@
+# Maintainer: Kumar <kumar@nabu>
+# Based on ALARM/libssc
+
+pkgname=libssc
+pkgver=0.4.4
+pkgrel=2
+pkgdesc='Library for exposing Qualcomm Sensor Core sensors to Linux'
+arch=('aarch64')
+url='https://libssc.dylanvanassche.be/'
+license=('GPL-3.0-or-later')
+depends=('glib2' 'libqmi' 'protobuf-c')
+makedepends=('git' 'meson' 'ninja' 'gobject-introspection')
+source=("git+https://codeberg.org/DylanVanAssche/libssc.git#tag=v${pkgver}"
+        "0001-report-handler-lifecycle-fixes.patch")
+sha256sums=('SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$srcdir/libssc"
+  patch -p1 -i "$srcdir/0001-report-handler-lifecycle-fixes.patch"
+}
+
+build() {
+  cd "$srcdir/libssc"
+  meson setup --prefix=/usr --libdir=/usr/lib build
+  ninja -C build
+}
+
+package() {
+  cd "$srcdir/libssc"
+  DESTDIR="$pkgdir" ninja -C build install
+}
