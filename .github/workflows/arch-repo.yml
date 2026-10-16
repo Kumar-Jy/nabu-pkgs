@@ -191,7 +191,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman git curl unzip libarchive-tools
+          sudo apt-get install -y podman git curl unzip libarchive-tools xz-utils zstd
 
       - name: Compute source signature
         id: sig
@@ -259,14 +259,97 @@ jobs:
         run: |
           mkdir -p pkg-cache
           if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
-            echo "::group::Importing prebuilt linux-nabu-72 from Linux CI via nightly.link..."
+            echo "::group::Importing prebuilt linux-nabu-72 from Linux CI..."
             pkgver=$(grep -m1 '^pkgver=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
             pkgrel=$(grep -m1 '^pkgrel=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
-            url="https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/nabu%2F7.2.y/pkg-${{ matrix.pkg }}-${pkgver}-${pkgrel}-arch.zip"
-            echo "Downloading from: $url"
-            curl -sSL "$url" -o /tmp/kernel.zip
-            bsdtar -xf /tmp/kernel.zip -C pkg-cache/
+
+            # Download kernel artifact (try GitHub Release first, fallback to nightly.link)
+            rel_url="https://github.com/Kumar-Jy/linux/releases/download/v${pkgver}-0-nabu-7.2.y/linux-nabu-${pkgver}-0-arch.zip"
+            nightly_url="https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/nabu%2F7.2.y/pkg-${{ matrix.pkg }}-${pkgver}-${pkgrel}-arch.zip"
+            echo "Downloading kernel package archive..."
+            if curl -f -sSL "$rel_url" -o /tmp/kernel.zip; then
+              echo "Downloaded kernel package from GitHub Release: $rel_url"
+            elif curl -f -sSL "$nightly_url" -o /tmp/kernel.zip; then
+              echo "Downloaded kernel package from nightly.link: $nightly_url"
+            else
+              echo "ERROR: Failed to download prebuilt kernel archive" >&2
+              exit 1
+            fi
+
+            mkdir -p /tmp/downloaded-kernel
+            bsdtar -xf /tmp/kernel.zip -C /tmp/downloaded-kernel/
             rm -f /tmp/kernel.zip
+
+            # Fetch current database from the repo release to check existing version and signature
+            db_url="https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/nabu.db.tar.gz"
+            mkdir -p /tmp/existing-db
+            echo "Fetching existing repo database to compare signatures..."
+            curl -sSL "$db_url" | bsdtar -xf - -C /tmp/existing-db/ 2>/dev/null || true
+
+            # Find the highest existing pkgrel and sha256 for this pkgver
+            existing_desc=$(ls -1d /tmp/existing-db/linux-nabu-${pkgver}-*/desc 2>/dev/null | sort -V | tail -n 1)
+            existing_pkgrel=""
+            existing_sha256=""
+            if [ -n "$existing_desc" ] && [ -f "$existing_desc" ]; then
+              existing_ver=$(awk '/%VERSION%/ {getline; print; exit}' "$existing_desc")
+              existing_sha256=$(awk '/%SHA256SUM%/ {getline; print; exit}' "$existing_desc")
+              existing_pkgrel="${existing_ver##*-}"
+              echo "Existing repo package: version=$existing_ver (pkgrel=$existing_pkgrel), sha256=$existing_sha256"
+            fi
+
+            # Check newly downloaded kernel hash
+            new_pkg=$(ls -1 /tmp/downloaded-kernel/linux-nabu-[0-9]*.pkg.tar.* 2>/dev/null | head -n 1)
+            new_sha256=$(sha256sum "$new_pkg" | awk '{print $1}')
+            echo "New downloaded build: sha256=$new_sha256"
+
+            if [ -n "$existing_sha256" ] && [ "$new_sha256" = "$existing_sha256" ]; then
+              echo "Build signature matches existing database. Keeping pkgrel=$existing_pkgrel."
+              target_pkgrel="$existing_pkgrel"
+            else
+              if [ -n "$existing_pkgrel" ]; then
+                target_pkgrel=$(( existing_pkgrel + 1 ))
+                echo "Signature/hash changed! Auto-bumping pkgrel: $existing_pkgrel -> $target_pkgrel"
+              else
+                target_pkgrel=0
+                echo "No existing package in database for $pkgver. Setting pkgrel=0"
+              fi
+            fi
+
+            # Package handling: if target_pkgrel matches downloaded pkgrel, copy as-is; otherwise repackage
+            cache_dir="$(pwd)/pkg-cache"
+            for pkg_path in /tmp/downloaded-kernel/*.pkg.tar.*; do
+              [ -f "$pkg_path" ] || continue
+              ext="${pkg_path#*.pkg.tar.}"
+              pkgname=$(bsdtar -xOf "$pkg_path" .PKGINFO 2>/dev/null | sed -n 's/^pkgname = //p' | tr -d '\r' | head -n 1)
+
+              if [ "$target_pkgrel" -eq "$pkgrel" ]; then
+                echo "Copying $pkgname as-is (${pkgver}-${pkgrel})..."
+                cp "$pkg_path" "$cache_dir/"
+              else
+                echo "Repackaging $pkgname: ${pkgver}-${pkgrel} -> ${pkgver}-${target_pkgrel}..."
+                repack_dir="/tmp/repack-$pkgname"
+                rm -rf "$repack_dir"
+                mkdir -p "$repack_dir"
+                bsdtar -xf "$pkg_path" -C "$repack_dir"
+
+                sed -i "s/^pkgver = .*/pkgver = ${pkgver}-${target_pkgrel}/" "$repack_dir/.PKGINFO"
+                [ -f "$repack_dir/.BUILDINFO" ] && sed -i "s/^pkgver = .*/pkgver = ${pkgver}-${target_pkgrel}/" "$repack_dir/.BUILDINFO"
+
+                cd "$repack_dir"
+                rm -f .MTREE
+                bsdtar -czf .MTREE --format=mtree --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' $(ls -A | grep -v '^\.MTREE$')
+
+                new_pkg_file="${pkgname}-${pkgver}-${target_pkgrel}-aarch64.pkg.tar.${ext}"
+                if [ "$ext" = "zst" ]; then
+                  tar -cf - .PKGINFO .BUILDINFO .MTREE $(ls -A | grep -v -E '^\.(PKGINFO|BUILDINFO|MTREE)$') | zstd -T0 -19 -c > "${cache_dir}/${new_pkg_file}"
+                else
+                  tar -cf - .PKGINFO .BUILDINFO .MTREE $(ls -A | grep -v -E '^\.(PKGINFO|BUILDINFO|MTREE)$') | xz -T0 -c > "${cache_dir}/${new_pkg_file}"
+                fi
+                cd - >/dev/null
+                rm -rf "$repack_dir"
+              fi
+            done
+            rm -rf /tmp/downloaded-kernel /tmp/existing-db
             echo "::endgroup::"
             ls -la pkg-cache/
           else
