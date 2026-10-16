@@ -367,6 +367,9 @@ jobs:
                 pacman-key --populate archlinuxarm
                 pacman -Syu --noconfirm
                 pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc systemd-ukify libelf
+                sed -i 's/^COMPRESSXZ=.*/COMPRESSXZ=(xz -c -z -T0 -)/' /etc/makepkg.conf
+                sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -z -q -T0 -)/' /etc/makepkg.conf
+                sed -i 's/^#*MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' /etc/makepkg.conf
                 useradd -m builder
                 echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
                 chown -R builder:builder /work

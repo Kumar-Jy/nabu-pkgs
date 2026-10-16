@@ -17,6 +17,7 @@ depends=(
 )
 provides=('visual-studio-code')
 conflicts=('visual-studio-code-bin')
+options=(!strip !zipman)
 source=("https://update.code.visualstudio.com/latest/linux-arm64/stable")
 sha256sums=('SKIP')
 
