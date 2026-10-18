@@ -22,7 +22,7 @@ on:
       build_linux_nabu_72:
         type: boolean
         default: true
-        description: Import linux-nabu 7.2 (from Linux CI)
+        description: Import linux-nabu 7.2 (from Linux Release or CI artifact)
 #      build_linux_nabu_614:
 #        type: boolean
 #        default: true
@@ -248,7 +248,10 @@ jobs:
       - name: Decide whether to build
         id: decide
         run: |
-          if [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]] && ls pkg-cache/*.pkg.tar.* >/dev/null 2>&1; then
+          if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
+            # Prebuilt kernel: always run import step to verify candidate vs repo db (hash & build date)
+            echo "need-build=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]] && ls pkg-cache/*.pkg.tar.* >/dev/null 2>&1; then
             echo "need-build=false" >> "$GITHUB_OUTPUT"
           else
             echo "need-build=true" >> "$GITHUB_OUTPUT"
@@ -256,100 +259,18 @@ jobs:
 
       - name: Build package
         if: steps.decide.outputs.need-build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p pkg-cache
           if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
-            echo "::group::Importing prebuilt linux-nabu-72 from Linux CI..."
+            echo "::group::Importing linux-nabu-72 from Linux Release or CI Artifact..."
             pkgver=$(grep -m1 '^pkgver=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
             pkgrel=$(grep -m1 '^pkgrel=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
-
-            # Download kernel artifact (try GitHub Release first, fallback to nightly.link)
-            rel_url="https://github.com/Kumar-Jy/linux/releases/download/v${pkgver}-0-nabu-7.2.y/linux-nabu-${pkgver}-0-arch.zip"
-            nightly_url="https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/nabu%2F7.2.y/pkg-${{ matrix.pkg }}-${pkgver}-${pkgrel}-arch.zip"
-            echo "Downloading kernel package archive..."
-            if curl -f -sSL "$rel_url" -o /tmp/kernel.zip; then
-              echo "Downloaded kernel package from GitHub Release: $rel_url"
-            elif curl -f -sSL "$nightly_url" -o /tmp/kernel.zip; then
-              echo "Downloaded kernel package from nightly.link: $nightly_url"
-            else
-              echo "ERROR: Failed to download prebuilt kernel archive" >&2
-              exit 1
-            fi
-
-            mkdir -p /tmp/downloaded-kernel
-            bsdtar -xf /tmp/kernel.zip -C /tmp/downloaded-kernel/
-            rm -f /tmp/kernel.zip
-
-            # Fetch current database from the repo release to check existing version and signature
-            db_url="https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/nabu.db.tar.gz"
-            mkdir -p /tmp/existing-db
-            echo "Fetching existing repo database to compare signatures..."
-            curl -sSL "$db_url" | bsdtar -xf - -C /tmp/existing-db/ 2>/dev/null || true
-
-            # Find the highest existing pkgrel and sha256 for this pkgver
-            existing_desc=$(ls -1d /tmp/existing-db/linux-nabu-${pkgver}-*/desc 2>/dev/null | sort -V | tail -n 1)
-            existing_pkgrel=""
-            existing_sha256=""
-            if [ -n "$existing_desc" ] && [ -f "$existing_desc" ]; then
-              existing_ver=$(awk '/%VERSION%/ {getline; print; exit}' "$existing_desc")
-              existing_sha256=$(awk '/%SHA256SUM%/ {getline; print; exit}' "$existing_desc")
-              existing_pkgrel="${existing_ver##*-}"
-              echo "Existing repo package: version=$existing_ver (pkgrel=$existing_pkgrel), sha256=$existing_sha256"
-            fi
-
-            # Check newly downloaded kernel hash
-            new_pkg=$(ls -1 /tmp/downloaded-kernel/linux-nabu-[0-9]*.pkg.tar.* 2>/dev/null | head -n 1)
-            new_sha256=$(sha256sum "$new_pkg" | awk '{print $1}')
-            echo "New downloaded build: sha256=$new_sha256"
-
-            if [ -n "$existing_sha256" ] && [ "$new_sha256" = "$existing_sha256" ]; then
-              echo "Build signature matches existing database. Keeping pkgrel=$existing_pkgrel."
-              target_pkgrel="$existing_pkgrel"
-            else
-              if [ -n "$existing_pkgrel" ]; then
-                target_pkgrel=$(( existing_pkgrel + 1 ))
-                echo "Signature/hash changed! Auto-bumping pkgrel: $existing_pkgrel -> $target_pkgrel"
-              else
-                target_pkgrel=0
-                echo "No existing package in database for $pkgver. Setting pkgrel=0"
-              fi
-            fi
-
-            # Package handling: if target_pkgrel matches downloaded pkgrel, copy as-is; otherwise repackage
-            cache_dir="$(pwd)/pkg-cache"
-            for pkg_path in /tmp/downloaded-kernel/*.pkg.tar.*; do
-              [ -f "$pkg_path" ] || continue
-              ext="${pkg_path#*.pkg.tar.}"
-              pkgname=$(bsdtar -xOf "$pkg_path" .PKGINFO 2>/dev/null | sed -n 's/^pkgname = //p' | tr -d '\r' | head -n 1)
-
-              if [ "$target_pkgrel" -eq "$pkgrel" ]; then
-                echo "Copying $pkgname as-is (${pkgver}-${pkgrel})..."
-                cp "$pkg_path" "$cache_dir/"
-              else
-                echo "Repackaging $pkgname: ${pkgver}-${pkgrel} -> ${pkgver}-${target_pkgrel}..."
-                repack_dir="/tmp/repack-$pkgname"
-                rm -rf "$repack_dir"
-                mkdir -p "$repack_dir"
-                bsdtar -xf "$pkg_path" -C "$repack_dir"
-
-                sed -i "s/^pkgver = .*/pkgver = ${pkgver}-${target_pkgrel}/" "$repack_dir/.PKGINFO"
-                [ -f "$repack_dir/.BUILDINFO" ] && sed -i "s/^pkgver = .*/pkgver = ${pkgver}-${target_pkgrel}/" "$repack_dir/.BUILDINFO"
-
-                cd "$repack_dir"
-                rm -f .MTREE
-                bsdtar -czf .MTREE --format=mtree --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' $(ls -A | grep -v '^\.MTREE$')
-
-                new_pkg_file="${pkgname}-${pkgver}-${target_pkgrel}-aarch64.pkg.tar.${ext}"
-                if [ "$ext" = "zst" ]; then
-                  tar -cf - .PKGINFO .BUILDINFO .MTREE $(ls -A | grep -v -E '^\.(PKGINFO|BUILDINFO|MTREE)$') | zstd -T0 -19 -c > "${cache_dir}/${new_pkg_file}"
-                else
-                  tar -cf - .PKGINFO .BUILDINFO .MTREE $(ls -A | grep -v -E '^\.(PKGINFO|BUILDINFO|MTREE)$') | xz -T0 -c > "${cache_dir}/${new_pkg_file}"
-                fi
-                cd - >/dev/null
-                rm -rf "$repack_dir"
-              fi
-            done
-            rm -rf /tmp/downloaded-kernel /tmp/existing-db
+            python3 .github/scripts/import-kernel.py \
+              --pkgver "$pkgver" \
+              --pkgrel "$pkgrel" \
+              --output-dir "pkg-cache"
             echo "::endgroup::"
             ls -la pkg-cache/
           else
@@ -381,7 +302,7 @@ jobs:
           fi
 
       - name: Save cache
-        if: steps.decide.outputs.need-build == 'true'
+        if: steps.decide.outputs.need-build == 'true' && matrix.pkg != 'linux-nabu-72'
         uses: actions/cache/save@v6
         with:
           path: pkg-cache
@@ -392,7 +313,7 @@ jobs:
         with:
           name: pkg-${{ matrix.pkg }}
           path: pkg-cache/*
-          if-no-files-found: error
+          if-no-files-found: ignore
 
   assemble-repo:
     name: Assemble pacman repository
@@ -459,12 +380,28 @@ jobs:
 
       - name: Download local package artifacts
         uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           path: repo/new-pkgs
           pattern: pkg-*
           merge-multiple: true
 
+      - name: Check for rebuilt or imported packages
+        id: check-pkgs
+        run: |
+          mkdir -p repo/new-pkgs
+          shopt -s nullglob
+          pkgs=(repo/new-pkgs/*.pkg.tar.*)
+          if [ ${#pkgs[@]} -eq 0 ]; then
+            echo "No new packages rebuilt or imported. Repository database is already up to date."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found ${#pkgs[@]} newly built/imported package(s)."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Drop superseded versions of rebuilt packages
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: |
           cd repo/aarch64
           # Blacklist: versions that must never be served (problematic
@@ -506,9 +443,11 @@ jobs:
           done
 
       - name: Fix permissions
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: sudo chown -R "$USER:$USER" repo/aarch64/
 
       - name: Re-sign packages
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: |
           cd repo/aarch64
           GPG_KEY_ID="${{ secrets.REPO_GPG_KEY_ID }}"
@@ -520,6 +459,7 @@ jobs:
           done
 
       - name: Create pacman database
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: |
           podman run --rm \
             -v "$(pwd)/repo/aarch64:/repo" \
@@ -543,9 +483,11 @@ jobs:
           # db must not replace the working release below.
 
       - name: Fix permissions
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: sudo chown -R "$USER:$USER" repo/aarch64/
 
       - name: Sign database files
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         run: |
           GPG_KEY_ID="${{ secrets.REPO_GPG_KEY_ID }}"
           cd repo/aarch64
@@ -555,6 +497,7 @@ jobs:
           done
 
       - name: Upload to Release
+        if: steps.check-pkgs.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

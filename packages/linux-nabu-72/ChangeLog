@@ -1,3 +1,8 @@
+2026-10-18 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 7.2.11-0:
+	- Bump to Linux 7.2.11 upstream stable
+	- Novatek NT36523: remove duplicate gpio_request_one in touch probe
+
 2026-10-14 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 7.2.10-0:
 	- Bump to Linux 7.2.10 upstream stable
