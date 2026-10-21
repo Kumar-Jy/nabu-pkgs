@@ -19,6 +19,10 @@ on:
         type: boolean
         default: true
         description: Build widevine
+      build_linux_nabu_73:
+        type: boolean
+        default: true
+        description: Import linux-nabu 7.3 (from Linux Release or CI artifact)
       build_linux_nabu_72:
         type: boolean
         default: true
@@ -124,6 +128,7 @@ jobs:
               --argjson bootc "${{ inputs.build_bootc }}" \
               --argjson code "${{ inputs.build_code }}" \
               --argjson widevine "${{ inputs.build_widevine }}" \
+              --argjson linux_nabu_73 "${{ inputs.build_linux_nabu_73 }}" \
               --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
               --argjson linux_nabu_72 "${{ inputs.build_linux_nabu_72 }}" \
               --argjson linux_nabu_618 "${{ inputs.build_linux_nabu_618 }}" \
@@ -149,6 +154,7 @@ jobs:
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
                  if $widevine then "widevine" else empty end,
+                 if $linux_nabu_73 then "linux-nabu-73" else empty end,
                  if $linux_nabu_72 then "linux-nabu-72" else empty end,
                  if $nabu_pmac then "nabu-pmac" else empty end,
                  if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
@@ -171,7 +177,7 @@ jobs:
                  if $iio_sensor_proxy then "iio-sensor-proxy" else empty end,
                  if $stylus_popup then "stylus-popup" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","widevine","linux-nabu-72","linux-nabu-616","linux-nabu-618","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup"]' > matrix.json
+            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","linux-nabu-72","linux-nabu-616","linux-nabu-618","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -200,6 +206,10 @@ jobs:
           pkgver=$(grep -m1 '^pkgver=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
           pkgrel=$(grep -m1 '^pkgrel=' "packages/$pkg/PKGBUILD" | sed 's/.*=//' | tr -d '"')
           case "$pkg" in
+            linux-nabu-73)
+              rev=$(git ls-remote https://github.com/Kumar-Jy/linux refs/heads/nabu/7.3.y 2>/dev/null | awk '{print $1}' | cut -c1-12)
+              sig="$pkg-$rev-$pkgver-$pkgrel"
+              ;;
             linux-nabu-72)
               rev=$(git ls-remote https://github.com/Kumar-Jy/linux refs/heads/nabu/7.2.y 2>/dev/null | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$rev-$pkgver-$pkgrel"
@@ -248,7 +258,7 @@ jobs:
       - name: Decide whether to build
         id: decide
         run: |
-          if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
+          if [[ "${{ matrix.pkg }}" == "linux-nabu-73" || "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
             # Prebuilt kernel: always run import step to verify candidate vs repo db (hash & build date)
             echo "need-build=true" >> "$GITHUB_OUTPUT"
           elif [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]] && ls pkg-cache/*.pkg.tar.* >/dev/null 2>&1; then
@@ -263,13 +273,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p pkg-cache
-          if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
-            echo "::group::Importing linux-nabu-72 from Linux Release or CI Artifact..."
+          if [[ "${{ matrix.pkg }}" == "linux-nabu-73" || "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
+            echo "::group::Importing ${{ matrix.pkg }} from Linux Release or CI Artifact..."
             pkgver=$(grep -m1 '^pkgver=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
             pkgrel=$(grep -m1 '^pkgrel=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
+            branch="nabu/7.3.y"
+            if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
+              branch="nabu/7.2.y"
+            fi
             python3 .github/scripts/import-kernel.py \
               --pkgver "$pkgver" \
               --pkgrel "$pkgrel" \
+              --branch "$branch" \
               --output-dir "pkg-cache"
             echo "::endgroup::"
             ls -la pkg-cache/
@@ -302,7 +317,7 @@ jobs:
           fi
 
       - name: Save cache
-        if: steps.decide.outputs.need-build == 'true' && matrix.pkg != 'linux-nabu-72'
+        if: steps.decide.outputs.need-build == 'true' && matrix.pkg != 'linux-nabu-72' && matrix.pkg != 'linux-nabu-73'
         uses: actions/cache/save@v6
         with:
           path: pkg-cache

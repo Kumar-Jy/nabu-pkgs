@@ -78,7 +78,8 @@ sudo pacman -Syu
 
 | Package | Install Command | What is this for? |
 | :--- | :--- | :--- |
-| **`linux-nabu-72`** | `sudo pacman -S linux-nabu linux-nabu-headers` | Mainline Linux 7.2.11 kernel for Xiaomi Pad 5 (SM8150). Features DTS, Novatek NT36523 touchscreen + stylus pen, quad CS35L41 speaker routing, PM8150B charging, Renesas IDTP9418 wireless stylus charging, Iris VPU, and SLPI FastRPC. Prebuilt and imported from Linux CI. |
+| **`linux-nabu-73`** | `sudo pacman -S linux-nabu linux-nabu-headers` | Mainline Linux 7.3.0 kernel for Xiaomi Pad 5 (SM8150). Features native dual-core Iris VPU video decode/encode, early Adreno 640 zap shader bundling (eliminates boot DRM errors), PM8150B SMB5 charging (50 mA steps & Type-C Rp advertising), FSA4480 BQ25970 fallback, quad CS35L41 speaker routing, Novatek NT36523 touchscreen + pen, and SLPI FastRPC. Prebuilt and imported from Linux CI. |
+| **`linux-nabu-72`** | `sudo pacman -S linux-nabu-72 linux-nabu-72-headers` | Mainline Linux 7.2.11 kernel for Xiaomi Pad 5 (SM8150). Features DTS, Novatek NT36523 touchscreen + stylus pen, quad CS35L41 speaker routing, PM8150B charging, Renesas IDTP9418 wireless stylus charging, Iris VPU, and SLPI FastRPC. Prebuilt and imported from Linux CI. |
 <!-- | **`linux-nabu-614`** | `sudo pacman -S linux-nabu-614 linux-nabu-614-headers` | Mainline Linux 6.14 kernel for Xiaomi Pad 5 (SM8150). Features DTS, Novatek NT36523 touchscreen + stylus pen, quad CS35L41 speaker routing, PM8150B charging, and Iris VPU suspend fixes. | -->
 | **`linux-nabu-616`** | `sudo pacman -S linux-nabu-616 linux-nabu-616-headers` | Mainline Linux 6.16 series development kernel for Xiaomi Pad 5. |
 | **`linux-nabu-618`** | `sudo pacman -S linux-nabu-618 linux-nabu-618-headers` | Mainline Linux 6.18.55 LTS kernel for Xiaomi Pad 5, from the `6.18` branch: full hardware support and up-to-date security patches. |
