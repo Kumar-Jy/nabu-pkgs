@@ -31,10 +31,10 @@ on:
 #        type: boolean
 #        default: true
 #        description: Build linux-nabu 6.14
-      build_linux_nabu_616:
-        type: boolean
-        default: true
-        description: Build linux-nabu 6.16
+#      build_linux_nabu_616:
+#        type: boolean
+#        default: true
+#        description: Build linux-nabu 6.16
       build_linux_nabu_618:
         type: boolean
         default: true
@@ -129,7 +129,6 @@ jobs:
               --argjson code "${{ inputs.build_code }}" \
               --argjson widevine "${{ inputs.build_widevine }}" \
               --argjson linux_nabu_73 "${{ inputs.build_linux_nabu_73 }}" \
-              --argjson linux_nabu_616 "${{ inputs.build_linux_nabu_616 }}" \
               --argjson linux_nabu_72 "${{ inputs.build_linux_nabu_72 }}" \
               --argjson linux_nabu_618 "${{ inputs.build_linux_nabu_618 }}" \
               --argjson nabu_pmac "${{ inputs.build_nabu_pmac }}" \
@@ -159,7 +158,6 @@ jobs:
                  if $nabu_pmac then "nabu-pmac" else empty end,
                  if $nabu_tablet_mode then "nabu-tablet-mode" else empty end,
                  if $browsers then "google-chrome", "brave-bin" else empty end,
-                 if $linux_nabu_616 then "linux-nabu-616" else empty end,
                  if $linux_nabu_618 then "linux-nabu-618" else empty end,
                  if $hexagonrpcd then "hexagonrpcd" else empty end,
                  if $iris_media then "iris-vaapi", "ffmpeg-iris", "mpv-iris", "vlc-nabu" else empty end,
