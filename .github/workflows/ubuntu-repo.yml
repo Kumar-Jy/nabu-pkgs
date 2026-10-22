@@ -75,11 +75,12 @@ jobs:
 
       - name: Build Device Debian Packages
         run: |
-          ./.github/scripts/build-deb-packages.sh "$PWD/apt-repo"
+          chmod +x .github/scripts/*.sh .github/scripts/*.py packages/*/build.sh 2>/dev/null || true
+          bash ./.github/scripts/build-deb-packages.sh "$PWD/apt-repo"
 
       - name: Generate APT Metadata
         run: |
-          ./.github/scripts/generate-apt-repo.sh "$PWD/apt-repo"
+          bash ./.github/scripts/generate-apt-repo.sh "$PWD/apt-repo"
 
       - name: Publish to GitHub Release
         env:

@@ -13,8 +13,8 @@ build_pkg() {
     pkg_name=$(basename "$pkg")
     echo "--- Building: $pkg_name ---"
     if [ -f "$pkg/build.sh" ]; then
-        chmod +x "$pkg/build.sh"
-        "$pkg/build.sh" "$OUTPUT_DIR"
+        chmod +x "$pkg/build.sh" 2>/dev/null || true
+        bash "$pkg/build.sh" "$OUTPUT_DIR"
     elif [ -f "$pkg/DEBIAN/control" ]; then
         dpkg-deb --build --root-owner-group "$pkg" "$OUTPUT_DIR/"
     fi
