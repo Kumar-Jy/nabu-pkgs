@@ -23,7 +23,9 @@ meson setup build \
     -Dsystemdsystemunitdir=/usr/lib/systemd/system \
     -Dudevrulesdir=/usr/lib/udev/rules.d \
     -Dssc-support=enabled \
-    -Dgtk_doc=false
+    -Dgtk_doc=false \
+    -Dgtk-tests=false \
+    -Dtests=false
 
 ninja -C build
 
