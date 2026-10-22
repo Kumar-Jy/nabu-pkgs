@@ -15,6 +15,7 @@ git clone --depth 1 --branch v0.4.4 https://codeberg.org/DylanVanAssche/libssc.g
 
 cd "$SRC_DIR"
 sed -i "/subdir('mocking')/d; /subdir('tests')/d" meson.build
+sed -i "s/>= 1.4.0/>= 1.3.0/" meson.build
 patch -p1 -i "$SCRIPT_DIR/0001-report-handler-lifecycle-fixes.patch"
 sed -i 's/guint report_id;/gulong report_id;/' src/libssc-sensor.c
 

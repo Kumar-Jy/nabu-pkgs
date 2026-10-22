@@ -33,11 +33,12 @@ jobs:
       - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev apt-utils curl python3 jq xz-utils \
+          sudo apt-get install -y dpkg-dev apt-utils curl python3 python3-pip jq xz-utils \
             build-essential gcc meson ninja-build pkgconf \
             libglib2.0-dev libqmi-glib-dev libprotobuf-c-dev \
             protobuf-compiler protobuf-c-compiler \
             libgudev-1.0-dev libpolkit-gobject-1-dev
+          sudo pip3 install --break-system-packages --upgrade meson || true
 
       - name: Create Repo Staging Directory
         run: |
