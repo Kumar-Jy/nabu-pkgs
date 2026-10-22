@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Toggle Tablet Mode
+Comment=Toggle between Auto Keyboard Detection and Forced Tablet Mode
+Exec=/usr/bin/nabu-tablet-toggle
+Icon=preferences-desktop-display
+Terminal=false
+Type=Application
+Categories=Utility;Settings;
+Keywords=tablet;rotation;orientation;keyboard;

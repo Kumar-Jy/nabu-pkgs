@@ -1,0 +1,15 @@
+[Unit]
+Description=Ambient Light Auto-Brightness Daemon for Xiaomi Pad 5 (nabu)
+Documentation=https://github.com/Kumar-Jy/nabu-pkgs
+PartOf=graphical-session.target
+After=graphical-session.target plasma-powerdevil.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nabu-autobrightness --daemon
+Restart=on-failure
+RestartSec=3s
+Slice=background.slice
+
+[Install]
+WantedBy=graphical-session.target

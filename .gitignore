@@ -1,0 +1,7 @@
+apt-repo/
+*.deb
+*.tar.xz
+*.tar.gz
+*.pkg.tar.*
+__pycache__/
+*.pyc

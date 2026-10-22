@@ -1,0 +1,3 @@
+# Grant users in video group and active desktop sessions access to ktz8866 backlight
+ACTION=="add", SUBSYSTEM=="backlight", KERNEL=="ktz8866-backlight", RUN+="/usr/bin/chmod 0666 /sys/class/backlight/%k/brightness"
+SUBSYSTEM=="backlight", KERNEL=="ktz8866-backlight", GROUP="video", MODE="0664", TAG+="uaccess"

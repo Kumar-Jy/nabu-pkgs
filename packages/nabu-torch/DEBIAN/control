@@ -1,0 +1,11 @@
+Package: nabu-torch
+Version: 1.0.0-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: utils
+Priority: optional
+Provides: flashlight
+Depends: python3, python3-gi, gir1.2-adw-1, gir1.2-gtk-4.0
+Description: Hardware camera flashlight controller with intensity control for Xiaomi Pad 5
+ Provides GUI and CLI access to the Xiaomi Pad 5 dual rear flash LEDs with adjustable
+ brightness sliders and quick toggle shortcuts.

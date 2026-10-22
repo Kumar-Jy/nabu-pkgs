@@ -1,0 +1,10 @@
+Package: nabu-tablet-mode
+Version: 1.0.0-1
+Architecture: arm64
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: utils
+Priority: optional
+Depends: libc6, iio-sensor-proxy, psmisc
+Description: Tablet mode switch helper and sensor resume hook for GNOME/Plasma on Xiaomi Pad 5 (nabu)
+ Enables automatic screen orientation and tablet-mode detection for GNOME Mutter
+ and KDE Plasma, while handling fast sensor wake/resume over SLPI/FastRPC.

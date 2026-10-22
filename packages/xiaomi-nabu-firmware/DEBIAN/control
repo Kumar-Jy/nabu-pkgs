@@ -1,0 +1,10 @@
+Package: xiaomi-nabu-firmware
+Version: 1.2-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: non-free/kernel
+Priority: optional
+Depends: linux-firmware
+Description: Qualcomm and peripheral firmware for Xiaomi Pad 5 (nabu)
+ Proprietary firmware blobs (DSP, Hexagon, Ath10k WCN3990, Cirrus CS35L41,
+ and sensors) for sm8150 Xiaomi Pad 5.

@@ -1,0 +1,10 @@
+Package: nabu-autobrightness
+Version: 1.0.0-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: utils
+Priority: optional
+Depends: python3, python3-gi, iio-sensor-proxy, libnotify-bin
+Description: Intelligent ambient light auto-brightness daemon and toggle for Xiaomi Pad 5 (nabu)
+ Monitors the Xiaomi Pad 5 ambient light sensor over IIO / SLPI and smoothly adjusts screen
+ backlight brightness according to configurable lux curves.

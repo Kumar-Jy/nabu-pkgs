@@ -1,0 +1,10 @@
+Package: nabu-pmac
+Version: 1.0-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: net
+Priority: optional
+Depends: bash, iproute2
+Description: Persistent Wi-Fi MAC address setter for Xiaomi Pad 5
+ Derives a stable, permanent Wi-Fi MAC address from the hardware SoC serial number,
+ preventing the random MAC address generation bug on Qualcomm WCN3990 on Linux.

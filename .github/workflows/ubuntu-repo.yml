@@ -1,0 +1,133 @@
+name: Ubuntu APT Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      import_kernel_73:
+        type: boolean
+        default: true
+        description: "Import linux-nabu 7.3 .deb from Kumar-Jy/linux"
+      import_kernel_72:
+        type: boolean
+        default: false
+        description: "Import linux-nabu 7.2 .deb from Kumar-Jy/linux"
+      import_kernel_618:
+        type: boolean
+        default: false
+        description: "Import linux-nabu 6.18 .deb from Kumar-Jy/linux"
+  push:
+    branches:
+      - ubuntu
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Ubuntu Repository
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils curl python3 jq xz-utils build-essential gcc
+
+      - name: Create Repo Staging Directory
+        run: |
+          mkdir -p apt-repo
+
+      - name: Import Kernel 7.3 debs
+        if: github.event_name == 'push' || inputs.import_kernel_73
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/import-kernel-deb.py \
+            --repo "Kumar-Jy/linux" \
+            --pkgver "7.3" \
+            --output-dir apt-repo || echo "Kernel 7.3 not found, skipping."
+
+      - name: Import Kernel 7.2 debs
+        if: inputs.import_kernel_72
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/import-kernel-deb.py \
+            --repo "Kumar-Jy/linux" \
+            --pkgver "7.2" \
+            --output-dir apt-repo || echo "Kernel 7.2 not found, skipping."
+
+      - name: Import Kernel 6.18 debs
+        if: inputs.import_kernel_618
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/import-kernel-deb.py \
+            --repo "Kumar-Jy/linux" \
+            --pkgver "6.18" \
+            --output-dir apt-repo || echo "Kernel 6.18 not found, skipping."
+
+      - name: Build Device Debian Packages
+        run: |
+          ./.github/scripts/build-deb-packages.sh "$PWD/apt-repo"
+
+      - name: Generate APT Metadata
+        run: |
+          ./.github/scripts/generate-apt-repo.sh "$PWD/apt-repo"
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="ubuntu"
+          REPO="${{ github.repository }}"
+          TITLE="Xiaomi Pad 5 Ubuntu APT Repository"
+
+          cat > release-notes.md << 'EOF'
+          # Ubuntu APT Repository for Xiaomi Pad 5 (nabu)
+
+          This release contains the **official APT repository** for running Ubuntu on the Xiaomi Pad 5 (`sm8150`).
+
+          ---
+
+          ## 🚀 How to Add This Repository to Ubuntu
+
+          Create `/etc/apt/sources.list.d/nabu.sources`:
+
+          ```deb822
+          Types: deb
+          URIs: https://github.com/Kumar-Jy/nabu-pkgs/releases/download/ubuntu/
+          Suites: ./
+          Trusted: yes
+          ```
+
+          Then run:
+          ```bash
+          sudo apt update
+          sudo apt upgrade
+          ```
+
+          ---
+
+          ## 📦 Available Packages
+
+          - **Kernel:** `linux-image-*`, `linux-headers-*`, `linux-libc-dev` (built from `Kumar-Jy/linux`)
+          - **Audio:** `xiaomi-nabu-alsa` (ALSA UCM2 quad-speaker profiles & mic capture)
+          - **Firmware:** `xiaomi-nabu-firmware` (DSP, sensor, Ath10k & Cirrus calibration blobs)
+          EOF
+
+          cd apt-repo
+
+          # Collect all files to upload
+          upload_files=(Packages Packages.gz Release *.deb)
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Updating release assets..."
+            gh release upload "$TAG" "${upload_files[@]}" --repo "$REPO" --clobber
+            gh release edit "$TAG" --repo "$REPO" --title "$TITLE" --notes-file ../release-notes.md
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" "${upload_files[@]}" --repo "$REPO" --title "$TITLE" --notes-file ../release-notes.md
+          fi

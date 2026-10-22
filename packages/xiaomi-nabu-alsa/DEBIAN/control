@@ -1,0 +1,10 @@
+Package: xiaomi-nabu-alsa
+Version: 1.2-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: sound
+Priority: optional
+Depends: alsa-ucm-conf
+Description: ALSA UCM configuration and speaker protection for Xiaomi Pad 5 (nabu)
+ ALSA Use Case Manager (UCM2) profiles for the Cirrus Logic CS35L41 quad-speaker
+ amplifier setup and 24-bit microphone capture on sm8150 Xiaomi Pad 5.
