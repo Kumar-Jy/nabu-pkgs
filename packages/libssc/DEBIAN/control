@@ -1,0 +1,10 @@
+Package: libssc
+Version: 0.4.4-1
+Section: libs
+Priority: optional
+Architecture: arm64
+Maintainer: Kumar <kumar@nabu>
+Depends: libc6 (>= 2.34), libglib2.0-0t64, libqmi-glib5, libprotobuf-c1
+Description: Library for exposing Qualcomm Sensor Core sensors to Linux
+ Library and utilities to discover and read sensors from Qualcomm Snapdragon
+ Sensor Core (SLPI / SSC) over QRTR and QMI.

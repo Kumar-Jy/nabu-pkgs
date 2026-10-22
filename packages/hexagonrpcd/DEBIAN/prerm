@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        systemctl stop hexagonrpcd.service 2>/dev/null || true
+        systemctl disable hexagonrpcd.service hexagonrpcd-suspend.service hexagonrpcd-resume.service 2>/dev/null || true
+        ;;
+esac
+
+exit 0

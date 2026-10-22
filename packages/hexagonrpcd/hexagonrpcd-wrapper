@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Load parameters according to devices configuration
+if [ -z "$@" ]; then
+	for _dt_compatible in $(cat /proc/device-tree/compatible | tr '\0' ' '); do
+		# HexagonRPC parameters
+		case "$_dt_compatible" in
+			"qcom,sm8150")
+				hexagonrpcd_device=${hexagonrpcd_device:-"/dev/fastrpc-sdsp"}
+				hexagonrpcd_dsp=${hexagonrpcd_dsp:-"sdsp"}
+				break
+				;;
+		esac
+	done
+	hexagonrpcd_device=${hexagonrpcd_device:-"/dev/fastrpc-adsp"}
+	hexagonrpcd_dsp=${hexagonrpcd_dsp:-"adsp"}
+	hexagonrpcd_fw_dir=${hexagonrpcd_fw_dir:-"/lib/firmware/hexagonfs/"}
+	hexagonrpcd_extra=${hexagonrpcd_extra-"-s"}
+
+	exec /usr/libexec/hexagonrpc/hexagonrpcd -f ${hexagonrpcd_device} -d ${hexagonrpcd_dsp} ${hexagonrpcd_extra} -R ${hexagonrpcd_fw_dir}
+else
+	exec /usr/libexec/hexagonrpc/hexagonrpcd $@
+fi

@@ -1,0 +1,14 @@
+Package: iio-sensor-proxy
+Version: 3.9-1nabu1
+Section: utils
+Priority: optional
+Architecture: arm64
+Maintainer: Kumar <kumar@nabu>
+Provides: iio-sensor-proxy
+Conflicts: iio-sensor-proxy (<< 3.9-1nabu1)
+Replaces: iio-sensor-proxy (<< 3.9-1nabu1)
+Depends: libc6 (>= 2.34), libglib2.0-0t64, libgudev-1.0-0, libssc, polkitd
+Description: IIO accelerometer sensor to input device proxy (with Snapdragon SSC support)
+ IIO sensors to D-Bus proxy compiled with Snapdragon Sensor Core (libssc)
+ support for Xiaomi Pad 5 (nabu). Provides auto-rotation and ambient light
+ brightness to GNOME and KDE desktops.

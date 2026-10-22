@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Ensure fastrpc system user and group exist
+        if ! getent passwd fastrpc >/dev/null; then
+            useradd --system --user-group --home /run/fastrpc --shell /usr/sbin/nologin fastrpc
+        fi
+
+        # SNS registry persistence path
+        install -d -o root -g root -m 0700 /var/lib/tqftpserv/sensors/registry 2>/dev/null || true
+
+        # Ensure permissions on /lib/firmware/hexagonfs
+        if [ -d /lib/firmware/hexagonfs ]; then
+            chown -R fastrpc:fastrpc /lib/firmware/hexagonfs 2>/dev/null || true
+        fi
+
+        udevadm trigger --subsystem-match=misc --action=change 2>/dev/null || true
+        systemctl daemon-reload
+        systemctl enable hexagonrpcd.service hexagonrpcd-suspend.service hexagonrpcd-resume.service 2>/dev/null || true
+        systemctl restart hexagonrpcd.service 2>/dev/null || true
+        ;;
+esac
+
+exit 0

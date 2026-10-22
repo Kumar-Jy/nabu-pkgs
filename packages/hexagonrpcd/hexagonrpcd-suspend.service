@@ -1,0 +1,28 @@
+[Unit]
+Description=Stop the Hexagon DSP sensors daemon on suspend
+ConditionFirmware=device-tree-compatible(qcom,sm8150)
+Before=suspend.target
+
+[Service]
+Type=simple
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ExecStart=/usr/bin/systemctl stop hexagonrpcd.service
+
+[Install]
+WantedBy=suspend.target

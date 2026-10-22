@@ -18,6 +18,9 @@ This document lists all packages available in the **`nabu-pkgs` Ubuntu repositor
 
 | Package | Description |
 | :--- | :--- |
+| **`hexagonrpcd`** | FastRPC reverse-listener daemon serving the Hexagon DSP / SLPI sensors registry (`/lib/firmware/hexagonfs/sensors/`). Prevents SLPI crash on boot. |
+| **`libssc`** | Library and `ssccli` tool for discovering and communicating with Qualcomm Snapdragon Sensor Core (SLPI / SSC) over QRTR/QMI. |
+| **`iio-sensor-proxy`** | D-Bus sensor proxy patched with Snapdragon SSC support for automatic screen rotation, auto-brightness, and proximity. |
 | **`nabu-tablet-mode`** | Exposes tablet mode to GNOME Mutter and KDE Plasma for automatic screen rotation, handles sensor sleep/wake recovery, and provides the `nabu-tablet-toggle` CLI tool. |
 | **`nabu-autobrightness`** | Intelligent ambient light sensor daemon that smoothly adjusts backlight brightness based on lux readings over SLPI. Includes a quick toggle desktop shortcut. |
 | **`nabu-torch`** | Dual rear camera flash controller with GUI slider intensity control, CLI tool (`torch` / `flashlight`), and quick toggles. |

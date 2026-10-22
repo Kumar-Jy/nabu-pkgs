@@ -1,0 +1,11 @@
+Package: hexagonrpcd
+Version: 0.4.0-1
+Section: utils
+Priority: optional
+Architecture: arm64
+Maintainer: Kumar <kumar@nabu>
+Depends: libc6 (>= 2.34), systemd
+Description: FastRPC reverse-listener server exposing the SLPI sensors filesystem on Xiaomi Pad 5 (nabu)
+ The DSP sensors (SSC) connect back over FastRPC on the sdsp channel;
+ hexagonrpcd serves the sensor config/registry over that channel and
+ re-synchronizes sensor state on suspend/resume.
