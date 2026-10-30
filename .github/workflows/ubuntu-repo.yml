@@ -3,18 +3,18 @@ name: Ubuntu APT Repository
 on:
   workflow_dispatch:
     inputs:
-      import_kernel_73:
+      import_kernel:
         type: boolean
         default: true
-        description: "Import linux-nabu 7.3 .deb from Kumar-Jy/linux"
-      import_kernel_72:
+        description: "Import latest available linux-nabu .deb from Kumar-Jy/linux"
+      kernel_version:
+        type: string
+        default: "latest"
+        description: "Target kernel version ('latest', '7.3', '7.2', etc.)"
+      clean_old_kernels:
         type: boolean
-        default: false
-        description: "Import linux-nabu 7.2 .deb from Kumar-Jy/linux"
-      import_kernel_618:
-        type: boolean
-        default: false
-        description: "Import linux-nabu 6.18 .deb from Kumar-Jy/linux"
+        default: true
+        description: "Remove superseded kernel .debs from release assets"
   push:
     branches:
       - ubuntu
@@ -44,35 +44,18 @@ jobs:
         run: |
           mkdir -p apt-repo
 
-      - name: Import Kernel 7.3 debs
-        if: github.event_name == 'push' || inputs.import_kernel_73
+      - name: Import Kernel Debian Packages
+        if: github.event_name == 'push' || inputs.import_kernel
+        id: import_kernel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          chmod +x .github/scripts/*.py
+          version_filter="${{ github.event.inputs.kernel_version || 'latest' }}"
           python3 .github/scripts/import-kernel-deb.py \
             --repo "Kumar-Jy/linux" \
-            --pkgver "7.3" \
-            --output-dir apt-repo || echo "Kernel 7.3 not found, skipping."
-
-      - name: Import Kernel 7.2 debs
-        if: inputs.import_kernel_72
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python3 .github/scripts/import-kernel-deb.py \
-            --repo "Kumar-Jy/linux" \
-            --pkgver "7.2" \
-            --output-dir apt-repo || echo "Kernel 7.2 not found, skipping."
-
-      - name: Import Kernel 6.18 debs
-        if: inputs.import_kernel_618
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python3 .github/scripts/import-kernel-deb.py \
-            --repo "Kumar-Jy/linux" \
-            --pkgver "6.18" \
-            --output-dir apt-repo || echo "Kernel 6.18 not found, skipping."
+            --pkgver "$version_filter" \
+            --output-dir apt-repo || echo "Kernel import failed or not found, continuing."
 
       - name: Build Device Debian Packages
         run: |
@@ -91,40 +74,58 @@ jobs:
           REPO="${{ github.repository }}"
           TITLE="Xiaomi Pad 5 Ubuntu APT Repository"
 
-          cat > release-notes.md << 'EOF'
+          KERNEL_VER="${{ steps.import_kernel.outputs.kernel_version }}"
+          if [ -z "$KERNEL_VER" ]; then
+            KERNEL_VER=$(ls apt-repo/linux-image-*.deb 2>/dev/null | head -n1 | sed -n 's/.*linux-image-\([0-9]\+\.[0-9]\+[^_]*\).*/\1/p' || echo "latest")
+          fi
+
+          cat > release-notes.md << EOF
           # Ubuntu APT Repository for Xiaomi Pad 5 (nabu)
 
-          This release contains the **official APT repository** for running Ubuntu on the Xiaomi Pad 5 (`sm8150`).
+          This release contains the **official APT repository** for running Ubuntu on the Xiaomi Pad 5 (\`sm8150\`).
 
           ---
 
           ## 🚀 How to Add This Repository to Ubuntu
 
-          Create `/etc/apt/sources.list.d/nabu.sources`:
+          Create \`/etc/apt/sources.list.d/nabu.sources\`:
 
-          ```deb822
+          \`\`\`deb822
           Types: deb
           URIs: https://github.com/Kumar-Jy/nabu-pkgs/releases/download/ubuntu/
           Suites: ./
           Trusted: yes
-          ```
+          \`\`\`
 
           Then run:
-          ```bash
+          \`\`\`bash
           sudo apt update
           sudo apt upgrade
-          ```
+          \`\`\`
 
           ---
 
           ## 📦 Available Packages
 
-          - **Kernel:** `linux-image-*`, `linux-headers-*`, `linux-libc-dev` (built from `Kumar-Jy/linux`)
-          - **Audio:** `xiaomi-nabu-alsa` (ALSA UCM2 quad-speaker profiles & mic capture)
-          - **Firmware:** `xiaomi-nabu-firmware` (DSP, sensor, Ath10k & Cirrus calibration blobs)
+          - **Kernel:** \`linux-image-*\`, \`linux-headers-*\`, \`linux-libc-dev\` (currently \`${KERNEL_VER}\`, built from \`Kumar-Jy/linux\`)
+          - **Audio:** \`xiaomi-nabu-alsa\` (ALSA UCM2 quad-speaker profiles & mic capture)
+          - **Firmware:** \`xiaomi-nabu-firmware\` (DSP, sensor, Ath10k & Cirrus calibration blobs)
+          - **Sensors & Daemons:** \`hexagonrpcd\`, \`iio-sensor-proxy\`, \`libssc\`
+          - **Hardware Controls:** \`nabu-pmac\`, \`nabu-tablet-mode\`, \`nabu-torch\`, \`nabu-autobrightness\`
           EOF
 
           cd apt-repo
+
+          # Prune superseded remote kernel deb assets if requested
+          if [ "${{ github.event.inputs.clean_old_kernels != 'false' }}" = "true" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            remote_debs=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | select(.name | startswith("linux-") and endswith(".deb")) | .name' 2>/dev/null || true)
+            for rdeb in $remote_debs; do
+              if [ ! -f "$rdeb" ]; then
+                echo "Removing superseded kernel deb from release: $rdeb"
+                gh release delete-asset "$TAG" "$rdeb" --repo "$REPO" --yes 2>/dev/null || true
+              fi
+            done
+          fi
 
           # Collect all files to upload
           upload_files=(Packages Packages.gz Release *.deb)
