@@ -22,7 +22,7 @@ on:
       build_linux_nabu_73:
         type: boolean
         default: true
-        description: Import linux-nabu 7.3 (from Linux Release or CI artifact)
+        description: Import linux-nabu 7.3.y (latest available from Linux Release or CI artifact)
       build_linux_nabu_72:
         type: boolean
         default: true
@@ -273,15 +273,14 @@ jobs:
           mkdir -p pkg-cache
           if [[ "${{ matrix.pkg }}" == "linux-nabu-73" || "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
             echo "::group::Importing ${{ matrix.pkg }} from Linux Release or CI Artifact..."
-            pkgver=$(grep -m1 '^pkgver=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
-            pkgrel=$(grep -m1 '^pkgrel=' "packages/${{ matrix.pkg }}/PKGBUILD" | sed 's/.*=//' | tr -d '"')
             branch="nabu/7.3.y"
+            pkgver="7.3"
             if [[ "${{ matrix.pkg }}" == "linux-nabu-72" ]]; then
               branch="nabu/7.2.y"
+              pkgver="7.2"
             fi
             python3 .github/scripts/import-kernel.py \
               --pkgver "$pkgver" \
-              --pkgrel "$pkgrel" \
               --branch "$branch" \
               --output-dir "pkg-cache"
             echo "::endgroup::"

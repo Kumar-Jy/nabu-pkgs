@@ -1,3 +1,10 @@
+2026-10-30 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 7.3.1-0:
+	- Linux 7.3.1 upstream maintenance release
+	- Media: Iris SM8150 VPU5 runtime PM fix and Gen1 buffer negotiation
+	- FastRPC / SLPI sensors, quad-speaker audio, and Novatek touch support preserved
+	- Build number synced to 7.3.1-0-krjy
+
 2026-10-21 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 7.3.0-0:
 	- Final release for Linux 7.3.0 with complete Xiaomi Pad 5 (nabu) hardware support

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Import linux-nabu package dynamically from Kumar-Jy/linux Release or CI Artifact.
+"""
 import argparse
 import hashlib
 import io
@@ -17,47 +20,56 @@ from datetime import datetime
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Import linux-nabu package from Release or CI Artifact")
-    parser.add_argument("--pkgver", required=True, help="Target kernel pkgver (e.g. 7.2.11)")
+    parser.add_argument("--pkgver", default="latest", help="Target kernel pkgver (e.g. 7.3.1, 7.3, or 'latest')")
     parser.add_argument("--pkgrel", type=int, default=0, help="Target pkgrel if new version (default: 0)")
     parser.add_argument("--repo", default="Kumar-Jy/linux", help="Upstream kernel repository")
-    parser.add_argument("--branch", default="nabu/7.2.y", help="Upstream branch for CI runs")
+    parser.add_argument("--branch", default="nabu/7.3.y", help="Upstream branch for CI runs")
     parser.add_argument("--db-url", default="https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/nabu.db.tar.gz", help="Pacman database URL")
     parser.add_argument("--output-dir", required=True, help="Directory to save final packages")
     return parser.parse_args()
 
 def get_headers():
-    headers = {"User-Agent": "nabu-pkgs-ci/1.0"}
+    headers = {"User-Agent": "nabu-pkgs-ci/2.0"}
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
+def parse_iso_time(ts_str):
+    try:
+        return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
 def find_candidate(repo, branch, pkgver):
     headers = get_headers()
+    is_latest = not pkgver or pkgver.lower() == "latest"
 
     # 1. Query GitHub Releases
     release_cand = None
     try:
-        url = f"https://api.github.com/repos/{repo}/releases"
+        url = f"https://api.github.com/repos/{repo}/releases?per_page=30"
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as resp:
             releases = json.loads(resp.read().decode())
         for r in releases:
+            if r.get("draft"):
+                continue
             tag = r.get("tag_name", "")
-            if pkgver in tag:
-                for a in r.get("assets", []):
-                    name = a.get("name", "")
-                    if "arch" in name and (pkgver in name or "linux-nabu" in name):
-                        dt = datetime.fromisoformat(r["published_at"].replace("Z", "+00:00"))
-                        release_cand = {
-                            "type": "release",
-                            "tag": tag,
-                            "timestamp": dt.timestamp(),
-                            "date_str": r["published_at"],
-                            "download_url": a["browser_download_url"],
-                            "name": name,
-                        }
-                        break
+            if not is_latest and pkgver not in tag:
+                continue
+            for a in r.get("assets", []):
+                name = a.get("name", "")
+                if "arch" in name and (is_latest or pkgver in name or "linux-nabu" in name) and name.endswith(".zip"):
+                    release_cand = {
+                        "type": "release",
+                        "tag": tag,
+                        "timestamp": parse_iso_time(r.get("published_at", "")),
+                        "date_str": r.get("published_at", ""),
+                        "download_url": a.get("browser_download_url"),
+                        "name": name,
+                    }
+                    break
             if release_cand:
                 break
     except Exception as e:
@@ -66,26 +78,30 @@ def find_candidate(repo, branch, pkgver):
     # 2. Query GitHub Actions Artifacts
     artifact_cand = None
     try:
-        url = f"https://api.github.com/repos/{repo}/actions/runs?branch={urllib.parse.quote(branch, safe='')}&status=success"
-        req = urllib.request.Request(url, headers=headers)
+        runs_url = f"https://api.github.com/repos/{repo}/actions/runs?status=success&per_page=20"
+        if branch:
+            runs_url += f"&branch={urllib.parse.quote(branch, safe='')}"
+        req = urllib.request.Request(runs_url, headers=headers)
         with urllib.request.urlopen(req) as resp:
             runs = json.loads(resp.read().decode()).get("workflow_runs", [])
         for run in runs:
-            art_req = urllib.request.Request(run["artifacts_url"], headers=headers)
+            art_url = run.get("artifacts_url")
+            if not art_url:
+                continue
+            art_req = urllib.request.Request(art_url, headers=headers)
             with urllib.request.urlopen(art_req) as resp2:
                 arts = json.loads(resp2.read().decode()).get("artifacts", [])
             for a in arts:
                 aname = a.get("name", "")
-                if pkgver in aname and "arch" in aname:
-                    dt = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+                if "arch" in aname and (is_latest or pkgver in aname or "linux-nabu" in aname):
                     artifact_cand = {
                         "type": "artifact",
-                        "run_id": run["id"],
-                        "artifact_id": a["id"],
+                        "run_id": run.get("id"),
+                        "artifact_id": a.get("id"),
                         "artifact_name": aname,
-                        "timestamp": dt.timestamp(),
-                        "date_str": run["created_at"],
-                        "download_url": a["archive_download_url"],
+                        "timestamp": parse_iso_time(run.get("created_at", "")),
+                        "date_str": run.get("created_at", ""),
+                        "download_url": a.get("archive_download_url"),
                     }
                     break
             if artifact_cand:
@@ -108,27 +124,32 @@ def find_candidate(repo, branch, pkgver):
         print(f"Picking Action Artifact candidate ({artifact_cand['artifact_name']}, run: {artifact_cand['run_id']}, date: {artifact_cand['date_str']})")
         return artifact_cand
     else:
-        print(f"ERROR: No release or action artifact found for version {pkgver} in {repo}")
+        print(f"ERROR: No release or action artifact found for version '{pkgver}' in {repo}")
         sys.exit(1)
 
 def download_candidate(cand, dest_dir, branch):
     os.makedirs(dest_dir, exist_ok=True)
-    headers = get_headers()
     zip_dest = os.path.join(dest_dir, "kernel.zip")
 
     if cand["type"] == "release":
-        print(f"Downloading release asset from: {cand['download_url']}")
-        req = urllib.request.Request(cand["download_url"], headers=headers)
-        with urllib.request.urlopen(req) as resp, open(zip_dest, "wb") as out:
-            shutil.copyfileobj(resp, out)
+        download_url = cand.get("download_url")
+        print(f"Downloading release asset from: {download_url}")
+        res = subprocess.run(["curl", "-fSL", "-o", zip_dest, download_url], capture_output=True, text=True)
+        if res.returncode == 0 and os.path.exists(zip_dest) and os.path.getsize(zip_dest) > 0:
+            print("Downloaded release asset via curl.")
+        else:
+            print("curl fallback to urllib streaming...")
+            req = urllib.request.Request(download_url, headers={"User-Agent": "nabu-pkgs-ci/2.0"})
+            with urllib.request.urlopen(req) as resp, open(zip_dest, "wb") as out:
+                shutil.copyfileobj(resp, out)
     else:
         # Artifact download
         downloaded = False
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if token:
             try:
-                print(f"Attempting artifact download via GitHub API...")
-                req = urllib.request.Request(cand["download_url"], headers=headers)
+                print("Attempting artifact download via GitHub API...")
+                req = urllib.request.Request(cand["download_url"], headers={"Authorization": f"Bearer {token}", "User-Agent": "nabu-pkgs-ci/2.0"})
                 with urllib.request.urlopen(req) as resp, open(zip_dest, "wb") as out:
                     shutil.copyfileobj(resp, out)
                 downloaded = True
@@ -144,7 +165,11 @@ def download_candidate(cand, dest_dir, branch):
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 if res.returncode == 0:
                     print("Downloaded artifact via gh CLI.")
-                    return
+                    for f in os.listdir(dest_dir):
+                        if f.endswith(".zip"):
+                            zip_dest = os.path.join(dest_dir, f)
+                            downloaded = True
+                            break
                 else:
                     print(f"gh CLI download failed: {res.stderr.strip()}")
             except Exception as e:
@@ -154,7 +179,8 @@ def download_candidate(cand, dest_dir, branch):
             # Fallback 2: nightly.link blob extraction
             try:
                 print("Attempting artifact download via nightly.link...")
-                page_url = f"https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/{urllib.parse.quote(branch, safe='')}/{cand['artifact_name']}"
+                target_branch = branch or "nabu/7.3.y"
+                page_url = f"https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/{urllib.parse.quote(target_branch, safe='')}/{cand['artifact_name']}"
                 req = urllib.request.Request(page_url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req) as resp:
                     html = resp.read().decode("utf-8", errors="ignore")
@@ -241,7 +267,7 @@ def get_existing_db_pkg(db_url, pkgname):
 
 def main():
     args = parse_args()
-    print(f"=== Checking kernel import for version {args.pkgver} ===")
+    print(f"=== Checking kernel import for version filter '{args.pkgver}' ===")
     cand = find_candidate(args.repo, args.branch, args.pkgver)
 
     tmp_dir = tempfile.mkdtemp(prefix="kernel-import-")
@@ -270,13 +296,16 @@ def main():
         cand_pkgver_full = cand_info.get("pkgver", "")
         if "-" in cand_pkgver_full:
             cand_base_ver, cand_rel_str = cand_pkgver_full.rsplit("-", 1)
-            cand_rel = int(cand_rel_str)
+            try:
+                cand_rel = int(cand_rel_str)
+            except ValueError:
+                cand_rel = 0
         else:
             cand_base_ver = cand_pkgver_full
             cand_rel = 0
 
         is_new_build = False
-        target_pkgrel = args.pkgrel
+        target_pkgrel = args.pkgrel if args.pkgrel > 0 else cand_rel
 
         if existing_info is None:
             print(f"No existing linux-nabu in database. New build accepted.")
@@ -285,7 +314,7 @@ def main():
         elif cand_base_ver != existing_info.get("base_ver"):
             print(f"New base version detected ({cand_base_ver} vs existing {existing_info.get('base_ver')}). New build accepted.")
             is_new_build = True
-            target_pkgrel = args.pkgrel
+            target_pkgrel = cand_rel
         else:
             # Same base version: verify build date and hash
             existing_sha256 = existing_info.get("SHA256SUM", "")
@@ -382,6 +411,13 @@ def main():
         for out_file in os.listdir(args.output_dir):
             out_p = os.path.join(args.output_dir, out_file)
             print(f"  {out_file} ({os.path.getsize(out_p)} bytes, sha256={hashlib.sha256(open(out_p, 'rb').read()).hexdigest()})")
+
+        # Export kernel version to GITHUB_OUTPUT if available
+        github_output = os.environ.get("GITHUB_OUTPUT")
+        if github_output and os.path.exists(github_output):
+            with open(github_output, "a") as f:
+                f.write(f"kernel_version={cand_base_ver}-{target_pkgrel}\n")
+                f.write(f"kernel_tag={cand.get('tag', '')}\n")
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
