@@ -32,7 +32,7 @@ This document lists all packages available in the **`nabu-pkgs` Ubuntu repositor
 
 | Package | Description |
 | :--- | :--- |
-| **`xiaomi-nabu-alsa`** | ALSA Use Case Manager (UCM2) configuration for quad Cirrus CS35L41 speakers and 24-bit microphone routing. |
+| **`xiaomi-nabu-alsa`** | ALSA Use Case Manager (UCM2) configuration for quad Cirrus CS35L41 speakers, 24-bit microphone routing, speaker protection, and PipeWire quantum/buffer fixes for Waydroid and containers. |
 | **`xiaomi-nabu-firmware`** | Proprietary Qualcomm DSP, Hexagon, sensor, Ath10k Wi-Fi/BT, and Cirrus amp firmware blobs. |
 
 ---
