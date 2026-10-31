@@ -46,7 +46,7 @@ sudo pacman -Syu
 
 | Package | Install Command | What is this for? |
 | :--- | :--- | :--- |
-| **`alsa-ucm-conf-xiaomi-nabu`** | `sudo pacman -S alsa-ucm-conf-xiaomi-nabu` | Custom ALSA Use Case Manager (UCM) profile for Xiaomi Pad 5. Configures 4-channel surround playback across all 4 speakers (Cirrus CS35L41 amplifiers) and disables broken internal mic capture to prevent PipeWire/WirePlumber sound card initialization errors. |
+| **`alsa-ucm-conf-xiaomi-nabu`** | `sudo pacman -S alsa-ucm-conf-xiaomi-nabu` | Custom ALSA Use Case Manager (UCM) profile for Xiaomi Pad 5. Configures 4-channel surround playback across all 4 speakers (Cirrus CS35L41 amplifiers), speaker protection biquad high-pass filters, and PipeWire quantum/buffer alignment rules for Waydroid and container audio. |
 | **`linux-firmware-xiaomi-nabu`** | `sudo pacman -S linux-firmware-xiaomi-nabu` | Complete hardware firmware package for Xiaomi Pad 5 (Qualcomm DSP, ADSP, SLPI sensor island, Adreno 640 GPU, Bluetooth, and Wi-Fi blobs). |
 
 ---

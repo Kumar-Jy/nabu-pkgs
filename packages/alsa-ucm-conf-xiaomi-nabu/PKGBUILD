@@ -4,17 +4,29 @@
 
 pkgname=alsa-ucm-conf-xiaomi-nabu
 pkgver=1.0
-pkgrel=3
-pkgdesc="ALSA UCM profiles for Xiaomi Pad 5 (nabu)"
+pkgrel=4
+pkgdesc="ALSA UCM profiles and PipeWire speaker protection / Waydroid audio config for Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/linux-msm/alsa-ucm-conf"
 license=('custom:ucm')
 depends=('alsa-ucm-conf')
-source=("HiFi.conf" "sm8150.conf" "99-nabu-speaker-protection.conf")
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+source=(
+  "HiFi.conf"
+  "sm8150.conf"
+  "99-nabu-speaker-protection.conf"
+  "10-quantum.conf"
+  "50-waydroid.conf"
+)
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
 
 package() {
   install -Dm644 HiFi.conf "$pkgdir/usr/share/alsa/ucm2/Xiaomi/nabu/HiFi.conf"
   install -Dm644 sm8150.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8150/sm8150.conf"
   install -Dm644 99-nabu-speaker-protection.conf "$pkgdir/etc/pipewire/pipewire.conf.d/99-nabu-speaker-protection.conf"
+  install -Dm644 10-quantum.conf "$pkgdir/etc/pipewire/pipewire.conf.d/10-quantum.conf"
+  install -Dm644 50-waydroid.conf "$pkgdir/etc/pipewire/pipewire-pulse.conf.d/50-waydroid.conf"
 }
