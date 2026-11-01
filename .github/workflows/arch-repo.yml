@@ -25,7 +25,7 @@ on:
         description: Import linux-nabu 7.3.y (latest available from Linux Release or CI artifact)
       build_linux_nabu_72:
         type: boolean
-        default: true
+        default: false
         description: Import linux-nabu 7.2 (from Linux Release or CI artifact)
 #      build_linux_nabu_614:
 #        type: boolean
@@ -37,7 +37,7 @@ on:
 #        description: Build linux-nabu 6.16
       build_linux_nabu_618:
         type: boolean
-        default: true
+        default: false
         description: Build linux-nabu 6.18
       build_nabu_pmac:
         type: boolean
@@ -81,7 +81,7 @@ on:
         description: Build linux-firmware-xiaomi-nabu
       build_oskb:
         type: boolean
-        default: true
+        default: false
         description: Build oskb
       build_nabu_autobrightness:
         type: boolean
