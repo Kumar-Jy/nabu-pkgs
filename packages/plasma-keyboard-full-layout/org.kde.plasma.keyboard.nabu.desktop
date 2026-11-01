@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Plasma Keyboard (full layout)
+Comment=Plasma Keyboard with full-size two-page layouts and working modifier chords
+Exec=/usr/local/bin/plasma-keyboard-nabu
+Type=Application
+X-KDE-Wayland-VirtualKeyboard=true
+Icon=input-keyboard-virtual
+NoDisplay=true

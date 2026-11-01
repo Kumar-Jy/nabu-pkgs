@@ -1,0 +1,201 @@
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index ca6bb6a..cf566df 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -336,6 +336,17 @@ void InputListenerItem::keyPressEvent(QKeyEvent *event)
+         return;
+     }
+ 
++    // Modifier chords coming from the on-screen keyboard (the layout calls
++    // InputContext.sendKeyClick() with empty text and the modifier flags) are
++    // forwarded as real key events. Forwarding them as keysyms would drop the
++    // modifiers, so Ctrl+C, Ctrl+V or Ctrl+Shift+V would arrive as plain
++    // characters.
++    if (event->text().isEmpty() && (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
++        m_input.sendChord(static_cast<Qt::Key>(event->key()), event->modifiers());
++        event->accept();
++        return;
++    }
++
+     const QList<xkb_keysym_t> keys = QXkbCommon::toKeysym(event);
+     for (auto key : keys) {
+         // Simulate key press only if it's not textual
+@@ -351,6 +362,14 @@ void InputListenerItem::keyReleaseEvent(QKeyEvent *event)
+         return;
+     }
+ 
++    // The matching press already sent the complete chord, including the
++    // key release. Swallow the release so it does not turn into a stray
++    // keysym event.
++    if (event->text().isEmpty() && (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
++        event->accept();
++        return;
++    }
++
+     const QList<xkb_keysym_t> keys = QXkbCommon::toKeysym(event);
+     for (auto key : keys) {
+         if (event->text().isEmpty() || key == XKB_KEY_Return) { // (return is technically "\n")
+diff --git a/src/inputmethod_p.h b/src/inputmethod_p.h
+index 895165a..ad47f57 100644
+--- a/src/inputmethod_p.h
++++ b/src/inputmethod_p.h
+@@ -94,6 +94,23 @@ public:
+     Keyboard(::wl_keyboard *keyboard, InputMethodContext *parent);
+     ~Keyboard();
+ 
++    xkb_keymap *keymap() const
++    {
++        return mXkbKeymap.get();
++    }
++    uint32_t layoutGroup() const
++    {
++        return mXkbState ? xkb_state_serialize_layout(mXkbState.get(), XKB_STATE_LAYOUT_EFFECTIVE) : 0;
++    }
++    uint32_t latchedModifiers() const
++    {
++        return mXkbState ? xkb_state_serialize_mods(mXkbState.get(), XKB_STATE_MODS_LATCHED) : 0;
++    }
++    uint32_t lockedModifiers() const
++    {
++        return mXkbState ? xkb_state_serialize_mods(mXkbState.get(), XKB_STATE_MODS_LOCKED) : 0;
++    }
++
+ Q_SIGNALS:
+     void keyPressed(QKeyEvent *keyEvent);
+     void keyReleased(QKeyEvent *keyEvent);
+diff --git a/src/inputplugin.cpp b/src/inputplugin.cpp
+index 9b14cbf..75e5b49 100644
+--- a/src/inputplugin.cpp
++++ b/src/inputplugin.cpp
+@@ -7,6 +7,109 @@
+ 
+ #include "inputplugin.h"
+ #include "inputmethod_p.h"
++#include "logging.h"
++
++#include <QDateTime>
++#include <QChar>
++
++namespace
++{
++
++// Finds the keycode producing @p sym in the compositor keymap. The keysym
++// coming from a synthetic QKeyEvent can be either a plain Latin-1 keysym
++// (XKB_KEY_v) or the Unicode form (0x01000056 for "V"), so compare both the
++// keysym itself and its UTF-32 representation, case insensitively.
++xkb_keycode_t keycodeForKeysym(xkb_keymap *keymap, xkb_keysym_t sym)
++{
++    const xkb_keysym_t lowerSym = xkb_keysym_to_lower(sym);
++    const uint32_t utf32 = xkb_keysym_to_utf32(sym);
++    const uint32_t lowerUtf32 = utf32 ? QChar::toLower(char32_t(utf32)) : 0;
++
++    const xkb_keycode_t minKeycode = xkb_keymap_min_keycode(keymap);
++    const xkb_keycode_t maxKeycode = xkb_keymap_max_keycode(keymap);
++    for (xkb_keycode_t keycode = minKeycode; keycode <= maxKeycode; ++keycode) {
++        const xkb_layout_index_t layouts = xkb_keymap_num_layouts_for_key(keymap, keycode);
++        for (xkb_layout_index_t layout = 0; layout < layouts; ++layout) {
++            const xkb_level_index_t levels = xkb_keymap_num_levels_for_key(keymap, keycode, layout);
++            for (xkb_level_index_t level = 0; level < levels; ++level) {
++                const xkb_keysym_t *syms = nullptr;
++                const int count = xkb_keymap_key_get_syms_by_level(keymap, keycode, layout, level, &syms);
++                for (int i = 0; i < count; ++i) {
++                    if (syms[i] == sym || xkb_keysym_to_lower(syms[i]) == lowerSym)
++                        return keycode;
++                    if (lowerUtf32) {
++                        const uint32_t otherUtf32 = xkb_keysym_to_utf32(syms[i]);
++                        if (otherUtf32 && QChar::toLower(char32_t(otherUtf32)) == lowerUtf32)
++                            return keycode;
++                    }
++                }
++            }
++        }
++    }
++    return XKB_KEYCODE_INVALID;
++}
++
++uint32_t modifierMask(xkb_keymap *keymap, Qt::KeyboardModifiers modifiers)
++{
++    uint32_t mask = 0;
++    const auto addModifier = [&mask, keymap](const char *name) {
++        const xkb_mod_index_t index = xkb_keymap_mod_get_index(keymap, name);
++        if (index != XKB_MOD_INVALID)
++            mask |= 1u << index;
++    };
++    if (modifiers & Qt::ShiftModifier)
++        addModifier(XKB_MOD_NAME_SHIFT);
++    if (modifiers & Qt::ControlModifier)
++        addModifier(XKB_MOD_NAME_CTRL);
++    if (modifiers & Qt::AltModifier)
++        addModifier(XKB_MOD_NAME_ALT);
++    if (modifiers & Qt::MetaModifier)
++        addModifier(XKB_MOD_NAME_LOGO);
++    return mask;
++}
++
++} // namespace
++
++void InputPlugin::sendChord(Qt::Key key, Qt::KeyboardModifiers modifiers)
++{
++    if (!m_context || !m_keyboard)
++        return;
++
++    xkb_keymap *keymap = m_keyboard->keymap();
++    if (!keymap)
++        return;
++
++    QKeyEvent probe(QEvent::KeyPress, key, Qt::NoModifier, QString());
++    const QList<xkb_keysym_t> syms = QXkbCommon::toKeysym(&probe);
++    xkb_keycode_t keycode = XKB_KEYCODE_INVALID;
++    for (const xkb_keysym_t sym : syms) {
++        keycode = keycodeForKeysym(keymap, sym);
++        if (keycode != XKB_KEYCODE_INVALID)
++            break;
++    }
++    if (keycode == XKB_KEYCODE_INVALID) {
++        qCWarning(PlasmaKeyboard) << "Unable to resolve a keycode for chord key" << key;
++        return;
++    }
++
++    const uint32_t depressed = modifierMask(keymap, modifiers);
++    const uint32_t latched = m_keyboard->latchedModifiers();
++    const uint32_t locked = m_keyboard->lockedModifiers();
++    const uint32_t group = m_keyboard->layoutGroup();
++    const uint32_t time = QDateTime::currentMSecsSinceEpoch();
++    // XKB keycodes are evdev keycodes offset by 8.
++    const uint32_t evdevKey = keycode - 8;
++
++    // Press the modifiers, press and release the key, then release the
++    // modifiers again. The modifier state is sent through the input method
++    // protocol, which makes KWin update its xkb state and forward it to the
++    // focused surface before the key event arrives.
++    m_context->modifiers(m_context->m_latestSerial, depressed, latched, locked, group);
++    m_context->key(m_context->m_latestSerial, time, evdevKey, 1 /* pressed */);
++    m_context->key(m_context->m_latestSerial, time, evdevKey, 0 /* released */);
++    m_context->modifiers(m_context->m_latestSerial, 0, latched, locked, group);
++}
++
+ 
+ InputPlugin::InputPlugin(InputMethod *inputMethod)
+ {
+diff --git a/src/inputplugin.h b/src/inputplugin.h
+index 9a51153..cfdcff6 100644
+--- a/src/inputplugin.h
++++ b/src/inputplugin.h
+@@ -79,6 +79,17 @@ public:
+     void keysym(uint timestamp, uint sym, KeyState state, uint modifiers);
+     void key(KeyState state, quint32 scancode);
+ 
++    /**
++     * Sends a key press/release together with the given modifiers as real key
++     * events to the focused application.
++     *
++     * The zwp_input_method_v1 protocol can only forward text or keysyms; text
++     * carries no modifiers and KWin drops the modifiers of a keysym for clients
++     * using text-input-v3. Sending the modifier state and the raw keycode makes
++     * shortcuts such as Ctrl+C or Ctrl+Shift+V work in every application.
++     */
++    void sendChord(Qt::Key key, Qt::KeyboardModifiers modifiers);
++
+     ContentHint contentHint() const;
+     ContentPurpose contentPurpose() const;
+     uint32_t cursorPos() const;

@@ -1,0 +1,61 @@
+_nabu_desktop=/usr/local/share/applications/org.kde.plasma.keyboard.nabu.desktop
+
+_enable_for_existing_users() {
+    local home user
+    for home in /home/*; do
+        [ -d "$home" ] || continue
+        user="$(basename "$home")"
+        id "$user" >/dev/null 2>&1 || continue
+        [ -f "$home/.config/kwinrc" ] || continue
+        if grep -q '^InputMethod='"$_nabu_desktop"'$' "$home/.config/kwinrc"; then
+            continue
+        fi
+        runuser -u "$user" -- kwriteconfig6 --file kwinrc --group Wayland \
+            --key InputMethod "$_nabu_desktop" >/dev/null 2>&1 || true
+    done
+}
+
+_nabu_message() {
+    cat <<EOF
+The full-size Plasma Keyboard layout and the patched keyboard are installed.
+
+The stock plasma-keyboard package is still installed and untouched. The
+add-on is selected through KWin's InputMethod setting. It has been enabled
+for existing desktop users; log out and back in (or run the command below
+as your user) to use it right away:
+
+  kwriteconfig6 --file kwinrc --group Wayland --key InputMethod --notify \\
+      $_nabu_desktop
+
+To type in another language, enable it under
+System Settings -> Input & Output -> Virtual Keyboard -> Languages
+(or add it to ~/.config/plasmakeyboardrc, [General] enabledLocales).
+The globe key on the keyboard then switches between the enabled languages.
+"Hindi" is listed twice: hi_IN is the phonetic layout and hi_IN_inscript
+is the InScript layout.
+
+If a per-user layout override exists, remove it so the packaged layouts are
+used:
+
+  rm -rf ~/.local/share/plasma/keyboard/layouts
+EOF
+}
+
+post_install() {
+    _enable_for_existing_users
+    _nabu_message
+}
+
+post_upgrade() {
+    _nabu_message
+}
+
+post_remove() {
+    cat <<EOF
+The full-size Plasma Keyboard add-on has been removed. If the on-screen
+keyboard does not appear anymore, point KWin back at the stock keyboard:
+
+  kwriteconfig6 --file kwinrc --group Wayland --key InputMethod --notify \\
+      /usr/share/applications/org.kde.plasma.keyboard.desktop
+EOF
+}
