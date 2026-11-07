@@ -943,7 +943,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         about = Adw.AboutDialog(
             application_name="System Monitor",
             application_icon="system-monitor",
-            version="1.2.0",
+            version="1.3.0",
             developer_name="Kumar-Jy",
             developers=["Kumar-Jy (@Kumar-Jy) <https://github.com/Kumar-Jy>"],
             website="https://github.com/Kumar-Jy/nabu-pkgs",
@@ -1761,7 +1761,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         # Hero Branding Card
         hero_group = Adw.PreferencesGroup()
         self.card_about_hero, self.lbl_about_hero_val, self.badge_about_hero, self.lbl_about_hero_sub, self.progress_about_hero = create_hero_card(
-            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.2.0", "pill-accent"
+            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.3.0", "pill-accent"
         )
         self.progress_about_hero.set_visible(False)
         hero_group.add(self.card_about_hero)
@@ -2633,11 +2633,11 @@ class NabuSystemMonitorApp(Adw.Application):
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
-        print("System Monitor 1.2.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
         print("https://github.com/Kumar-Jy/nabu-pkgs")
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h'):
-        print("System Monitor 1.2.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
         print("Usage:")
         print("  system-monitor              Launch GTK4/Libadwaita GUI")
         print("  system-monitor --log [CAT]  Print diagnostic log to stdout")
