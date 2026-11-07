@@ -13,7 +13,7 @@ from datetime import datetime
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Gdk, GObject, Pango
+from gi.repository import Gtk, Adw, GLib, Gdk, GObject, Pango, Gio
 
 
 def get_desktop_environment():
@@ -94,10 +94,19 @@ def detect_system_hardware():
     if bats:
         hw['battery_path'] = bats[0]
 
-    # Chargers
-    chargers = glob.glob('/sys/class/power_supply/*charger*') + glob.glob('/sys/class/power_supply/AC*') + glob.glob('/sys/class/power_supply/Mains*')
+    # Chargers & Wall Input
+    chargers = []
+    for pattern in ('*charger*', 'qcom-usb', 'AC*', 'Mains*', '*usb*'):
+        for p in glob.glob(f'/sys/class/power_supply/{pattern}'):
+            base = os.path.basename(p).lower()
+            if 'battery' not in base and 'bat' not in base and 'idtp' not in base and p not in chargers:
+                chargers.append(p)
     if chargers:
         hw['charger_path'] = chargers[0]
+
+    # Stylus Wireless Charger
+    pens = glob.glob('/sys/class/power_supply/idtp*') + glob.glob('/sys/class/power_supply/*pen*') + glob.glob('/sys/class/power_supply/*stylus*')
+    hw['pen_charger_path'] = pens[0] if pens else None
 
     # USB Type-C / TCPM
     typec = glob.glob('/sys/class/power_supply/*tcpm*') + glob.glob('/sys/class/power_supply/*typec*')
@@ -429,6 +438,8 @@ def build_diagnostic_report(category="all"):
                 c_stat = open(f"{cpath}/status").read().strip() if os.path.exists(f"{cpath}/status") else "N/A"
                 c_type = open(f"{cpath}/type").read().strip() if os.path.exists(f"{cpath}/type") else "N/A"
                 usb_type = open(f"{cpath}/usb_type").read().strip() if os.path.exists(f"{cpath}/usb_type") else "Standard"
+                v_in_u = int(open(f"{cpath}/voltage_now").read().strip()) if os.path.exists(f"{cpath}/voltage_now") else 0
+                c_in_u = int(open(f"{cpath}/current_now").read().strip()) if os.path.exists(f"{cpath}/current_now") else 0
                 lines.append("")
                 lines.append("  [Charger Controller]")
                 lines.append(f"    • Controller Device:  {os.path.basename(cpath)}")
@@ -436,6 +447,9 @@ def build_diagnostic_report(category="all"):
                 lines.append(f"    • Charging Status:    {c_stat}")
                 lines.append(f"    • Hardware Type:      {c_type}")
                 lines.append(f"    • USB Protocol:       {usb_type}")
+                if v_in_u > 0 or c_in_u > 0:
+                    p_in_w = (v_in_u / 1e6) * (c_in_u / 1e6)
+                    lines.append(f"    • Wall Power Draw:    {p_in_w:.2f} W ({v_in_u/1e6:.2f} V @ {c_in_u/1000:.0f} mA)")
             except Exception as e:
                 lines.append(f"    • Charger Error:      {e}")
 
@@ -445,11 +459,15 @@ def build_diagnostic_report(category="all"):
             try:
                 t_online = open(f"{tpath}/online").read().strip()
                 t_usb_type = open(f"{tpath}/usb_type").read().strip() if os.path.exists(f"{tpath}/usb_type") else "N/A"
+                t_v = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6 if os.path.exists(f"{tpath}/voltage_now") else 0.0
+                t_c = int(open(f"{tpath}/current_max").read().strip()) / 1e6 if os.path.exists(f"{tpath}/current_max") else 0.0
                 lines.append("")
                 lines.append("  [USB Type-C / TCPM]")
                 lines.append(f"    • Port Controller:    {os.path.basename(tpath)}")
                 lines.append(f"    • Connection Online:  {t_online}")
                 lines.append(f"    • Supported Modes:    {t_usb_type}")
+                if t_v > 0 and t_c > 0:
+                    lines.append(f"    • USB-PD Contract:    {t_v*t_c:.1f} W ({t_v:.1f} V @ {t_c:.1f} A max)")
             except Exception:
                 pass
         lines.append("")
@@ -771,6 +789,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.last_proc_ticks = {}
         self.last_proc_total_ticks = 0
         self.cached_procs = []
+        self.cached_gpu_proc = {}
         self.apps_row_pool = []
 
         # Keyboard shortcuts (Space = Pause/Resume, Ctrl+Q = Quit)
@@ -1151,7 +1170,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.apps_mode_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
         filter_row.append(self.apps_mode_drop)
 
-        self.apps_sort_drop = Gtk.DropDown.new_from_strings(["Sort: Memory", "Sort: CPU %", "Sort: Name", "Sort: PID"])
+        self.apps_sort_drop = Gtk.DropDown.new_from_strings(["Sort: Memory", "Sort: CPU %", "Sort: GPU %", "Sort: Name", "Sort: PID"])
         self.apps_sort_drop.set_tooltip_text("Sort active applications")
         self.apps_sort_drop.set_hexpand(True)
         self.apps_sort_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
@@ -1193,6 +1212,13 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             lbl_cpu.set_valign(Gtk.Align.CENTER)
             row.add_suffix(lbl_cpu)
 
+            lbl_gpu = Gtk.Label(label="0.0% GPU")
+            lbl_gpu.add_css_class("pill-badge")
+            lbl_gpu.add_css_class("pill-warning")
+            lbl_gpu.set_valign(Gtk.Align.CENTER)
+            lbl_gpu.set_visible(False)
+            row.add_suffix(lbl_gpu)
+
             lbl_mem = Gtk.Label(label="0 MB")
             lbl_mem.add_css_class("pill-badge")
             lbl_mem.add_css_class("pill-neutral")
@@ -1213,6 +1239,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 'row': row,
                 'icon': icon,
                 'lbl_cpu': lbl_cpu,
+                'lbl_gpu': lbl_gpu,
                 'lbl_mem': lbl_mem,
                 'btn_kill': btn_kill,
                 'pid': None,
@@ -1265,6 +1292,12 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         )
         self.last_proc_ticks = curr_ticks
         self.last_proc_total_ticks = total_ticks
+
+        for p in procs:
+            gpu_info = self.cached_gpu_proc.get(p['pid'], {'pct': 0.0, 'mem_mb': 0.0})
+            p['gpu_pct'] = gpu_info['pct']
+            p['gpu_mem_mb'] = gpu_info['mem_mb']
+
         self.cached_procs = procs
         self.update_apps_display()
 
@@ -1302,9 +1335,11 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             filtered.sort(key=lambda x: x['rss_mb'], reverse=True)
         elif sort_idx == 1:  # CPU %
             filtered.sort(key=lambda x: x['cpu_pct'], reverse=True)
-        elif sort_idx == 2:  # Name
+        elif sort_idx == 2:  # GPU %
+            filtered.sort(key=lambda x: (x.get('gpu_pct', 0.0), x.get('gpu_mem_mb', 0.0)), reverse=True)
+        elif sort_idx == 3:  # Name
             filtered.sort(key=lambda x: x['name'].lower())
-        elif sort_idx == 3:  # PID
+        elif sort_idx == 4:  # PID
             filtered.sort(key=lambda x: x['pid'])
 
         # Update Hero Card
@@ -1340,6 +1375,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             empty_row['row'].set_subtitle("Try adjusting your search filter or switch to 'All Processes'")
             empty_row['icon'].set_from_icon_name("system-search-symbolic")
             empty_row['lbl_cpu'].set_label("")
+            empty_row['lbl_gpu'].set_visible(False)
             empty_row['lbl_mem'].set_label("")
             empty_row['btn_kill'].set_visible(False)
             empty_row['row'].set_visible(True)
@@ -1352,7 +1388,13 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 row_data['name'] = item['name']
 
                 row_data['row'].set_title(item['name'])
+
+                gpu_pct = item.get('gpu_pct', 0.0)
+                gpu_mem = item.get('gpu_mem_mb', 0.0)
+
                 sub_info = f"PID: {item['pid']}  •  {item['comm']}"
+                if gpu_mem >= 2.0:
+                    sub_info += f"  •  VRAM: {gpu_mem:.1f} MB"
                 row_data['row'].set_subtitle(sub_info)
 
                 resolved_icon = self.resolve_app_icon(item['icon'])
@@ -1367,6 +1409,21 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                     row_data['lbl_cpu'].add_css_class("pill-warning")
                 else:
                     row_data['lbl_cpu'].add_css_class("pill-accent")
+
+                # GPU % Badge
+                if gpu_pct >= 0.1 or (sort_idx == 2 and (gpu_pct > 0.0 or gpu_mem > 0.0)):
+                    row_data['lbl_gpu'].set_label(f"{gpu_pct:.1f}% GPU")
+                    for c in ("pill-accent", "pill-warning", "pill-error"):
+                        row_data['lbl_gpu'].remove_css_class(c)
+                    if gpu_pct >= 50.0:
+                        row_data['lbl_gpu'].add_css_class("pill-error")
+                    elif gpu_pct >= 15.0:
+                        row_data['lbl_gpu'].add_css_class("pill-warning")
+                    else:
+                        row_data['lbl_gpu'].add_css_class("pill-accent")
+                    row_data['lbl_gpu'].set_visible(True)
+                else:
+                    row_data['lbl_gpu'].set_visible(False)
 
                 if item['rss_mb'] >= 1024.0:
                     row_data['lbl_mem'].set_label(f"{item['rss_mb']/1024:.2f} GB")
@@ -1425,18 +1482,23 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         page.add(chg_group)
 
         self.row_chg_status = make_row("Charger Connection", "Reading...", "ac-adapter-symbolic")
+        self.row_chg_power = make_row("Charger Power Draw (Wall)", "Reading...", "preferences-system-power-symbolic")
         self.row_chg_proto = make_row("Negotiated Charging Standard", "Reading...", "network-wireless-symbolic")
         self.row_chg_ctrl = make_row("Charger Controller Hardware", "Reading...", "computer-symbolic")
         self.row_chg_input = make_row("USB Input Voltage &amp; Current", "Reading...", "power-profile-balanced-symbolic")
         self.row_chg_temp = make_row("Charger IC Temperature", "Reading...", "org.gnome.Settings-device-diagnostics-symbolic")
         self.row_chg_typec = make_row("Type-C Port Controller", "Reading...", "media-removable-symbolic")
+        self.row_chg_pen = make_row("Xiaomi Smart Pen Wireless Dock", "Reading...", "input-dialpad-symbolic")
 
         chg_group.add(self.row_chg_status)
+        chg_group.add(self.row_chg_power)
         chg_group.add(self.row_chg_proto)
         chg_group.add(self.row_chg_ctrl)
         chg_group.add(self.row_chg_input)
         chg_group.add(self.row_chg_temp)
         chg_group.add(self.row_chg_typec)
+        if self.hw.get('pen_charger_path'):
+            chg_group.add(self.row_chg_pen)
 
         # Group 3: Diagnostics
         log_group = Adw.PreferencesGroup(title="Diagnostics")
@@ -1519,10 +1581,14 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             hw_sensor_group = Adw.PreferencesGroup(title="Hardware State &amp; Switch Sensors")
             page.add(hw_sensor_group)
 
+            self.row_sensor_orient = make_row("Tablet Physical Orientation", "Reading...", "input-tablet-symbolic")
+            self.row_sensor_light = make_row("Ambient Light &amp; Proximity", "Reading...", "display-brightness-symbolic")
             self.row_sensor_tablet = make_row("Tablet Mode Sensor", "Reading...", "input-tablet-symbolic")
             self.row_sensor_jack = make_row("3.5mm Headset Jack", "Reading...", "audio-headset-symbolic")
             self.row_sensor_adc = make_row("PMIC ADC Precision Channels", "Reading...", "view-refresh-symbolic")
 
+            hw_sensor_group.add(self.row_sensor_orient)
+            hw_sensor_group.add(self.row_sensor_light)
             hw_sensor_group.add(self.row_sensor_tablet)
             hw_sensor_group.add(self.row_sensor_jack)
             hw_sensor_group.add(self.row_sensor_adc)
@@ -1584,6 +1650,16 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.row_net_speed = make_row("Transfer Rates", "Reading...", "network-transmit-receive-symbolic")
         net_group.add(self.row_net_status)
         net_group.add(self.row_net_speed)
+
+        # Display Subsystem
+        disp_group = Adw.PreferencesGroup(title="Display &amp; Visual Output")
+        page.add(disp_group)
+
+        self.row_disp_mode = make_row("Active Display Mode", "Detecting...", "video-display-symbolic")
+        panel_model = "CSOT NT36523 DSI Panel (2560×1600)" if self.hw['is_nabu'] else "Internal DRM Panel"
+        self.row_disp_panel = make_row("Display Hardware Panel", panel_model, "preferences-desktop-display-symbolic")
+        disp_group.add(self.row_disp_mode)
+        disp_group.add(self.row_disp_panel)
 
         # Input & Peripherals
         input_group = Adw.PreferencesGroup(title="Input Devices &amp; Chassis Peripherals")
@@ -1836,6 +1912,10 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         self.lbl_gpu_hero_sub.set_label(f"{self.hw['gpu_model']} • {freq_info} • Temp: {gpu_temp_str} • VRAM: {total_resident_kib / 1024:.1f} MB")
 
         proc_stats.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        self.cached_gpu_proc = {
+            pid: {'pct': pct, 'mem_mb': mem_mb}
+            for pid, comm, pct, mem_mb in proc_stats
+        }
         current_pids = set()
         for pid, comm, pct, mem_mb in proc_stats:
             if pct < 0.1 and mem_mb < 2.0:
@@ -2011,6 +2091,36 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 row.set_visible(False)
 
     def refresh_power_stats(self):
+        # 1. Probe Charger & Wall Input
+        cpath = self.hw['charger_path']
+        c_online = False
+        c_stat = "Disconnected"
+        usb_type = "Unknown"
+        v_in = 0.0
+        c_in = 0.0
+        c_limit = 0.0
+        p_in = 0.0
+
+        if cpath and os.path.exists(cpath):
+            try:
+                c_online = open(f"{cpath}/online").read().strip() == '1'
+                if os.path.exists(f"{cpath}/status"):
+                    c_stat = open(f"{cpath}/status").read().strip()
+                if os.path.exists(f"{cpath}/usb_type"):
+                    usb_type = open(f"{cpath}/usb_type").read().strip()
+                if os.path.exists(f"{cpath}/voltage_now"):
+                    v_in = int(open(f"{cpath}/voltage_now").read().strip()) / 1e6
+                if os.path.exists(f"{cpath}/current_now"):
+                    c_in = int(open(f"{cpath}/current_now").read().strip()) / 1e6
+                p_in = v_in * c_in
+                if os.path.exists(f"{cpath}/input_current_limit"):
+                    c_limit = int(open(f"{cpath}/input_current_limit").read().strip()) / 1e6
+                elif os.path.exists(f"{cpath}/current_max"):
+                    c_limit = int(open(f"{cpath}/current_max").read().strip()) / 1e6
+            except Exception:
+                pass
+
+        # 2. Battery Telemetry
         bpath = self.hw['battery_path']
         if bpath and os.path.exists(bpath):
             try:
@@ -2031,7 +2141,10 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 direction = "+" if status.lower() == "charging" else "-"
                 if status.lower() == "charging":
                     badge_cls = "pill-success"
-                    badge_str = f"⚡ Charging ({direction}{p_w:.1f}W)"
+                    if p_in > 0.1:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W Net / {p_in:.1f}W Wall)"
+                    else:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W)"
                 else:
                     if cap <= 10:
                         badge_cls = "pill-error"
@@ -2049,7 +2162,10 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 self.progress_bat_main.set_fraction(min(max(cap / 100.0, 0.0), 1.0))
 
                 # Flow rate
-                self.row_bat_rate.set_subtitle(f"{direction}{p_w:.2f} Watts ({status})")
+                if status.lower() == "charging" and p_in > 0.1:
+                    self.row_bat_rate.set_subtitle(f"+{p_w:.2f} Watts into Battery (Wall Input: {p_in:.2f} W)")
+                else:
+                    self.row_bat_rate.set_subtitle(f"{direction}{p_w:.2f} Watts ({status})")
 
                 # Voltage
                 v_min = int(open(f"{bpath}/voltage_min_design").read().strip()) / 1e6 if os.path.exists(f"{bpath}/voltage_min_design") else 3.4
@@ -2097,7 +2213,8 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 else:
                     self.row_bat_est.set_subtitle("Calculating runtime estimate...")
 
-                self.lbl_bat_hero_sub.set_label(f"{est_str} • Voltage: {v_v:.2f}V • Cell Temp: {temp_str} • Health: Good")
+                chg_info = f" • Wall: {p_in:.1f}W" if p_in > 0.1 else ""
+                self.lbl_bat_hero_sub.set_label(f"{est_str} • Voltage: {v_v:.2f}V{chg_info} • Cell Temp: {temp_str} • Health: Good")
 
             except Exception as e:
                 self.row_bat_hero.set_subtitle(f"Battery Telemetry Error: {e}")
@@ -2118,35 +2235,33 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             self.row_bat_health.set_subtitle("AC Mains")
             self.row_bat_est.set_subtitle("Continuous Wall Power")
 
-        # Charger Hardware
-        cpath = self.hw['charger_path']
+        # 3. Charger Rows Update
         if cpath and os.path.exists(cpath):
             try:
-                online = open(f"{cpath}/online").read().strip() == '1'
-                c_stat = open(f"{cpath}/status").read().strip() if os.path.exists(f"{cpath}/status") else "Discharging"
-                usb_type = open(f"{cpath}/usb_type").read().strip() if os.path.exists(f"{cpath}/usb_type") else "Unknown"
-
-                if online:
-                    self.row_chg_status.set_subtitle("🟢 Plugged In (Power Source Active)")
+                if c_online:
+                    self.row_chg_status.set_subtitle(f"🟢 Plugged In (Power Source Active • {c_stat})")
                     self.row_chg_proto.set_subtitle(f"Fast / Standard Protocol: {usb_type}")
+                    if p_in > 0.05:
+                        self.row_chg_power.set_subtitle(f"{p_in:.2f} Watts (Wall Input Draw)")
+                    else:
+                        self.row_chg_power.set_subtitle("Standby / Trickle Flow")
                 else:
                     self.row_chg_status.set_subtitle("⚪ Disconnected (Running on Battery)")
                     self.row_chg_proto.set_subtitle("Unplugged")
+                    self.row_chg_power.set_subtitle("0.00 Watts (Unplugged)")
 
                 self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (PM8150B Charger IC)")
 
-                # Input Voltage/Current
-                v_in = int(open(f"{cpath}/voltage_now").read().strip()) / 1e6 if os.path.exists(f"{cpath}/voltage_now") else 0.0
-                c_in = int(open(f"{cpath}/current_now").read().strip()) / 1e6 if os.path.exists(f"{cpath}/current_now") else 0.0
-                c_max = int(open(f"{cpath}/current_max").read().strip()) / 1e6 if os.path.exists(f"{cpath}/current_max") else 0.0
                 if v_in > 0 or c_in > 0:
-                    self.row_chg_input.set_subtitle(f"Input: {v_in:.2f} V • Current: {c_in*1000:.0f} mA (Limit: {c_max*1000:.0f} mA)")
+                    lim_str = f" (Limit: {c_limit*1000:.0f} mA)" if c_limit > 0 else ""
+                    self.row_chg_input.set_subtitle(f"Input: {v_in:.2f} V • Current: {c_in*1000:.0f} mA ({c_in:.2f} A){lim_str}")
                 else:
-                    self.row_chg_input.set_subtitle(f"Standby / Inactive (Online: {online})")
+                    self.row_chg_input.set_subtitle(f"Standby / Inactive (Online: {c_online})")
             except Exception:
                 self.row_chg_status.set_subtitle("Charger status unavailable")
         else:
             self.row_chg_status.set_subtitle("Standard AC/DC Supply")
+            self.row_chg_power.set_subtitle("Mains Line Power")
             self.row_chg_proto.set_subtitle("Direct Power")
             self.row_chg_ctrl.set_subtitle("AC Adapter")
             self.row_chg_input.set_subtitle("AC Line Voltage")
@@ -2168,11 +2283,28 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             try:
                 t_online = open(f"{tpath}/online").read().strip()
                 t_usb_type = open(f"{tpath}/usb_type").read().strip() if os.path.exists(f"{tpath}/usb_type") else "N/A"
-                self.row_chg_typec.set_subtitle(f"Port Online: {t_online} • Protocol: {t_usb_type}")
+                t_v = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6 if os.path.exists(f"{tpath}/voltage_now") else 0.0
+                t_c = int(open(f"{tpath}/current_max").read().strip()) / 1e6 if os.path.exists(f"{tpath}/current_max") else 0.0
+                contract_str = ""
+                if t_v > 0 and t_c > 0:
+                    contract_str = f" • PD Contract: {t_v*t_c:.1f}W ({t_v:.1f}V @ {t_c:.1f}A)"
+                self.row_chg_typec.set_subtitle(f"Port Online: {t_online} • Protocol: {t_usb_type}{contract_str}")
             except Exception:
                 self.row_chg_typec.set_subtitle("TCPM port active")
         else:
             self.row_chg_typec.set_subtitle("Standard USB / Power Port")
+
+        # Wireless Pen Charger
+        pen_path = self.hw.get('pen_charger_path')
+        if pen_path and hasattr(self, 'row_chg_pen') and os.path.exists(pen_path):
+            try:
+                pen_online = open(f"{pen_path}/online").read().strip() == '1'
+                if pen_online:
+                    self.row_chg_pen.set_subtitle("🟢 Stylus Attached & Charging on Top Rail")
+                else:
+                    self.row_chg_pen.set_subtitle("⚪ Standby / No Stylus on Magnetic Rail")
+            except Exception:
+                self.row_chg_pen.set_subtitle("Wireless Charging IC Ready")
 
     def refresh_sensors_stats(self):
         zones = {}
@@ -2278,7 +2410,41 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             # Subtitle summary on hero card
             self.lbl_sensor_hero_sub.set_label(f"CPU Silver: {avg_s_str} • Gold: {avg_g_str} • GPU: {gpu_str} • PMIC: {pmic_str}")
 
-            # 8. Switch & Position Sensors
+            # 8. Switch, Position & Motion Sensors
+            try:
+                if not hasattr(self, 'sensor_proxy'):
+                    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+                    self.sensor_proxy = Gio.DBusProxy.new_sync(
+                        bus, Gio.DBusProxyFlags.NONE, None,
+                        'net.hadess.SensorProxy', '/net/hadess/SensorProxy', 'net.hadess.SensorProxy', None
+                    )
+                if self.sensor_proxy:
+                    orient_val = self.sensor_proxy.get_cached_property('AccelerometerOrientation')
+                    tilt_val = self.sensor_proxy.get_cached_property('AccelerometerTilt')
+                    orient = orient_val.unpack() if orient_val else "normal"
+                    tilt = tilt_val.unpack() if tilt_val else ""
+                    tilt_str = f" • Tilt: {tilt}" if tilt else ""
+                    orient_friendly = {
+                        'normal': 'Portrait (Upright)',
+                        'bottom-up': 'Portrait (Inverted)',
+                        'left-up': 'Landscape (Left Side Up)',
+                        'right-up': 'Landscape (Right Side Up)',
+                    }.get(orient, orient.capitalize())
+                    self.row_sensor_orient.set_subtitle(f"{orient_friendly}{tilt_str}")
+
+                    light_val = self.sensor_proxy.get_cached_property('LightLevel')
+                    has_light = self.sensor_proxy.get_cached_property('HasAmbientLight')
+                    if light_val and light_val.unpack() is not None:
+                        lux = light_val.unpack()
+                        self.row_sensor_light.set_subtitle(f"Ambient Illuminance: {lux:.1f} lux")
+                    elif has_light and has_light.unpack():
+                        self.row_sensor_light.set_subtitle("Light Sensor Active (Automatic Brightness)")
+                    else:
+                        self.row_sensor_light.set_subtitle("Ambient Light Sensor Calibrated")
+            except Exception:
+                if hasattr(self, 'row_sensor_orient'):
+                    self.row_sensor_orient.set_subtitle("SensorProxy unavailable")
+
             tablet_found = False
             for p in glob.glob('/sys/class/input/input*/name'):
                 try:
@@ -2388,6 +2554,20 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             self.row_dev_kbd.set_subtitle(" • ".join(kbd_devices))
         else:
             self.row_dev_kbd.set_subtitle("Standard Keyboard / Dock")
+
+        # 5. Display & Visual Output
+        try:
+            display = Gdk.Display.get_default()
+            if display:
+                monitors = display.get_monitors()
+                if monitors.get_n_items() > 0:
+                    m = monitors.get_item(0)
+                    geom = m.get_geometry()
+                    rr = m.get_refresh_rate() / 1000.0
+                    model = m.get_model() or "Internal Panel"
+                    self.row_disp_mode.set_subtitle(f"{geom.width} × {geom.height} @ {rr:.1f} Hz ({model})")
+        except Exception:
+            pass
 
     def refresh_sysinfo_stats(self):
         try:
