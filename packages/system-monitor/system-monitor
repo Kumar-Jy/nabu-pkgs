@@ -2139,10 +2139,15 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 self.progress_bat_hero.set_fraction(min(max(cap / 100.0, 0.0), 1.0))
                 
                 direction = "+" if status.lower() == "charging" else "-"
-                if status.lower() == "charging":
+                is_charging = status.lower() == "charging"
+                direct_idle = is_charging and c_online and (p_in > 0 and p_in < p_w)
+
+                if is_charging:
                     badge_cls = "pill-success"
-                    if p_in > 0.1:
+                    if p_in >= p_w:
                         badge_str = f"⚡ Charging (+{p_w:.1f}W Net / {p_in:.1f}W Wall)"
+                    elif direct_idle:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W Net • PMIC Active)"
                     else:
                         badge_str = f"⚡ Charging (+{p_w:.1f}W)"
                 else:
@@ -2156,14 +2161,16 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 set_badge_text_and_class(self.badge_bat_hero, badge_str, badge_cls)
 
                 # Hero row & Progress
-                status_icon = "⚡ Charging" if status.lower() == "charging" else ("🔋 Discharging" if status.lower() == "discharging" else f"🔌 {status}")
+                status_icon = "⚡ Charging" if is_charging else ("🔋 Discharging" if status.lower() == "discharging" else f"🔌 {status}")
                 self.row_bat_hero.set_title(f"Battery Level: {cap}%")
                 self.row_bat_hero.set_subtitle(f"{status_icon} • State of Charge")
                 self.progress_bat_main.set_fraction(min(max(cap / 100.0, 0.0), 1.0))
 
                 # Flow rate
-                if status.lower() == "charging" and p_in > 0.1:
+                if is_charging and p_in >= p_w:
                     self.row_bat_rate.set_subtitle(f"+{p_w:.2f} Watts into Battery (Wall Input: {p_in:.2f} W)")
+                elif is_charging:
+                    self.row_bat_rate.set_subtitle(f"+{p_w:.2f} Watts into Battery (PM8150B Buck-Boost Charger)")
                 else:
                     self.row_bat_rate.set_subtitle(f"{direction}{p_w:.2f} Watts ({status})")
 
@@ -2241,8 +2248,13 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 if c_online:
                     self.row_chg_status.set_subtitle(f"🟢 Plugged In (Power Source Active • {c_stat})")
                     self.row_chg_proto.set_subtitle(f"Fast / Standard Protocol: {usb_type}")
-                    if p_in > 0.05:
+                    if p_in >= p_w and p_in > 0.05:
                         self.row_chg_power.set_subtitle(f"{p_in:.2f} Watts (Wall Input Draw)")
+                    elif is_charging:
+                        est_wall = (p_w / 0.88) + 3.5
+                        self.row_chg_power.set_subtitle(f"PM8150B Active (~{est_wall:.1f}W Wall Draw) • Direct IC (LN8000): {p_in:.2f}W Standby")
+                    elif p_in > 0.05:
+                        self.row_chg_power.set_subtitle(f"{p_in:.2f} Watts (Standby / Trickle Flow)")
                     else:
                         self.row_chg_power.set_subtitle("Standby / Trickle Flow")
                 else:
