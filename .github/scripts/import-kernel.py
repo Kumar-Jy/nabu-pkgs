@@ -64,8 +64,8 @@ def find_candidate(repo, branch, pkgver):
                     release_cand = {
                         "type": "release",
                         "tag": tag,
-                        "timestamp": parse_iso_time(r.get("published_at", "")),
-                        "date_str": r.get("published_at", ""),
+                        "timestamp": parse_iso_time(a.get("updated_at") or a.get("created_at") or r.get("published_at", "")),
+                        "date_str": a.get("updated_at") or a.get("created_at") or r.get("published_at", ""),
                         "download_url": a.get("browser_download_url"),
                         "name": name,
                     }
@@ -111,11 +111,14 @@ def find_candidate(repo, branch, pkgver):
 
     # 3. Select newest candidate
     if release_cand and artifact_cand:
-        if release_cand["timestamp"] >= artifact_cand["timestamp"]:
-            print(f"Found both Release and Artifact. Picking newer Release ({release_cand['date_str']} vs {artifact_cand['date_str']})")
+        # Prefer official releases if matching requested version or newer/equal.
+        # Release assets are hosted on GitHub Releases CDN and do not suffer from cross-repository CI token 401 errors.
+        if is_latest or release_cand["tag"].lstrip("v").startswith(pkgver) or release_cand["timestamp"] >= artifact_cand["timestamp"]:
+            print(f"Found both Release and Artifact. Preferring official Release ({release_cand['tag']}, date: {release_cand['date_str']})")
             return release_cand
         else:
             print(f"Found both Release and Artifact. Picking newer Artifact ({artifact_cand['date_str']} vs {release_cand['date_str']})")
+            artifact_cand["fallback_release"] = release_cand
             return artifact_cand
     elif release_cand:
         print(f"Picking Release candidate ({release_cand['tag']}, date: {release_cand['date_str']})")
@@ -127,7 +130,7 @@ def find_candidate(repo, branch, pkgver):
         print(f"ERROR: No release or action artifact found for version '{pkgver}' in {repo}")
         sys.exit(1)
 
-def download_candidate(cand, dest_dir, branch):
+def download_candidate(cand, dest_dir, branch, repo="Kumar-Jy/linux"):
     os.makedirs(dest_dir, exist_ok=True)
     zip_dest = os.path.join(dest_dir, "kernel.zip")
 
@@ -161,7 +164,7 @@ def download_candidate(cand, dest_dir, branch):
             # Fallback 1: gh CLI
             try:
                 print("Attempting artifact download via gh CLI...")
-                cmd = ["gh", "run", "download", str(cand["run_id"]), "--name", cand["artifact_name"], "--dir", dest_dir]
+                cmd = ["gh", "run", "download", str(cand["run_id"]), "--repo", repo, "--name", cand["artifact_name"], "--dir", dest_dir]
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 if res.returncode == 0:
                     print("Downloaded artifact via gh CLI.")
@@ -180,7 +183,7 @@ def download_candidate(cand, dest_dir, branch):
             try:
                 print("Attempting artifact download via nightly.link...")
                 target_branch = branch or "nabu/7.3.y"
-                page_url = f"https://nightly.link/Kumar-Jy/linux/workflows/pkgbuild/{urllib.parse.quote(target_branch, safe='')}/{cand['artifact_name']}"
+                page_url = f"https://nightly.link/{repo}/workflows/pkgbuild/{urllib.parse.quote(target_branch, safe='')}/{cand['artifact_name']}"
                 req = urllib.request.Request(page_url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req) as resp:
                     html = resp.read().decode("utf-8", errors="ignore")
@@ -193,6 +196,16 @@ def download_candidate(cand, dest_dir, branch):
                     print("Downloaded artifact via nightly.link blob URL.")
             except Exception as e:
                 print(f"nightly.link download failed: {e}")
+
+        if not downloaded and "fallback_release" in cand:
+            print("Artifact download failed through all methods; falling back to official release...")
+            fb = cand["fallback_release"]
+            fb_url = fb.get("download_url")
+            print(f"Downloading release asset from: {fb_url}")
+            res = subprocess.run(["curl", "-fSL", "-o", zip_dest, fb_url], capture_output=True, text=True)
+            if res.returncode == 0 and os.path.exists(zip_dest) and os.path.getsize(zip_dest) > 0:
+                print("Downloaded fallback release asset via curl.")
+                downloaded = True
 
         if not downloaded:
             print("ERROR: Failed to download candidate artifact through all methods.")
@@ -272,7 +285,7 @@ def main():
 
     tmp_dir = tempfile.mkdtemp(prefix="kernel-import-")
     try:
-        download_candidate(cand, tmp_dir, args.branch)
+        download_candidate(cand, tmp_dir, args.branch, args.repo)
 
         pkg_files = [f for f in os.listdir(tmp_dir) if f.endswith(".pkg.tar.xz") or f.endswith(".pkg.tar.zst")]
         if not pkg_files:
