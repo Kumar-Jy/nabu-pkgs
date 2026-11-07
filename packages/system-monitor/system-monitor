@@ -752,7 +752,7 @@ def set_badge_text_and_class(badge, text, cls_name):
 class NabuSystemMonitorWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="System Monitor")
-        self.set_default_size(840, 620)
+        self.set_default_size(720, 480)
         self.set_resizable(True)
 
         # Detect hardware dynamically
@@ -800,14 +800,14 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         # Layout: ToastOverlay wrapping OverlaySplitView
         self.toast_overlay = Adw.ToastOverlay()
         self.split_view = Adw.OverlaySplitView()
-        self.split_view.set_min_sidebar_width(190)
-        self.split_view.set_max_sidebar_width(260)
-        self.split_view.set_sidebar_width_fraction(0.22)
+        self.split_view.set_min_sidebar_width(175)
+        self.split_view.set_max_sidebar_width(220)
+        self.split_view.set_sidebar_width_fraction(0.24)
         self.split_view.set_pin_sidebar(False)
         self.split_view.set_show_sidebar(True)
 
         # Responsive breakpoint: auto-collapse sidebar to overlay on narrower widths
-        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 740px"))
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 620px"))
         bp.add_setter(self.split_view, "collapsed", True)
         self.add_breakpoint(bp)
 
