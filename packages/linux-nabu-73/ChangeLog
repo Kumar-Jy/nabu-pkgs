@@ -1,3 +1,10 @@
+2026-11-07 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 7.3.3-0:
+	- Linux: merge upstream stable Linux 7.3.3 (v7.3.3)
+	- Display: fix Novatek NT36523 60Hz mode-switch sync-pen & VFP porch timing (fixes gray screen on 60Hz mode switch)
+	- Power: fix PM8150B BMS charging status reporting logic (accurately reports Charging when plugged in and current is positive)
+	- Packaging: bump linux-nabu to 7.3.3-0 (kernel release 7.3.3-0-krjy)
+
 2026-11-01 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 7.3.1-1:
 	- Power: restore 300ms hardware timer s2idle grace window to prevent immediate wakeups from power button release

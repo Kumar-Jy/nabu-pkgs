@@ -15,8 +15,8 @@
 #   - Default config: arch/arm64/configs/nabu_defconfig
 
 pkgbase=linux-nabu
-pkgver=7.3.1
-pkgrel=1
+pkgver=7.3.3
+pkgrel=0
 arch=('aarch64')
 url="https://github.com/Kumar-Jy/linux"
 license=('GPL2')
@@ -36,7 +36,6 @@ prepare() {
   cd "${srcdir}/linux-nabu"
 
   echo "-${pkgrel}" > localversion.10-pkgrel
-  echo "-krjy" > localversion.20-pkgname
 
   make ARCH=arm64 nabu_defconfig
 }
@@ -49,8 +48,8 @@ build() {
   make -s ARCH=arm64 kernelrelease > version
 
   unset LDFLAGS
-  make ${MAKEFLAGS} ARCH=arm64 Image Image.gz modules
-  make ${MAKEFLAGS} ARCH=arm64 DTC_FLAGS="-@" dtbs
+  make ${MAKEFLAGS:-"-j$(nproc)"} ARCH=arm64 Image Image.gz modules
+  make ${MAKEFLAGS:-"-j$(nproc)"} ARCH=arm64 DTC_FLAGS="-@" dtbs
 }
 
 _package_common() {
