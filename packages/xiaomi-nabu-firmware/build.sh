@@ -12,7 +12,8 @@ cp "$SCRIPT_DIR/DEBIAN/control" "$PKG_DIR/DEBIAN/control"
 
 echo "==> Downloading Xiaomi Pad 5 firmware archive..."
 FW_URL="https://github.com/rodriguezst/arch-repo/releases/download/aarch64/linux-firmware-xiaomi-nabu-25.04.26-1-any.pkg.tar.xz"
-curl -fL "$FW_URL" -o "$WORK_DIR/fw.pkg.tar.xz"
+FW_FALLBACK="https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/linux-firmware-xiaomi-nabu-25.04.26-1-any.pkg.tar.xz"
+curl -fL --retry 5 --retry-delay 2 "$FW_URL" -o "$WORK_DIR/fw.pkg.tar.xz" || curl -fL --retry 5 --retry-delay 2 "$FW_FALLBACK" -o "$WORK_DIR/fw.pkg.tar.xz"
 
 echo "==> Extracting firmware..."
 tar -xf "$WORK_DIR/fw.pkg.tar.xz" -C "$WORK_DIR"
