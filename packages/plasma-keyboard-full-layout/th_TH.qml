@@ -12,6 +12,10 @@
 // after the next key; Shift is cleared after the next character. The globe
 // key switches between the enabled languages.
 
+import QtQuick
+import QtQuick.VirtualKeyboard
+import QtQuick.VirtualKeyboard.Components
+
 KeyboardLayoutLoader {
     id: root
 

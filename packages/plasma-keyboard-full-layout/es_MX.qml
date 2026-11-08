@@ -12,20 +12,6 @@
 // after the next key; Shift is cleared after the next character. The globe
 // key switches between the enabled languages.
 
-// Full-size en_US layout for Plasma Keyboard.
-//
-// Loaded from ~/.local/share/plasma/keyboard/layouts/en_US/main.qml.
-// FullKey.qml next to this file implements the key behaviour (sticky
-// Ctrl/Alt/Super/AltGr, Shift/Caps Lock, shifted symbols, page switching).
-//
-// The keyboard has two pages so that the keys can be larger:
-//   page 1 - normal typing (Q/W/E/R/T/Y ...)
-//   page 2 - function keys, navigation and symbols
-//
-// Modifier keys are one-shot/toggle keys: tap Ctrl, then tap C to send Ctrl+C.
-// Ctrl, Alt, Super and AltGr clear after the next key. Shift is cleared after
-// the next character. Caps Lock stays on until you tap it again.
-
 import QtQuick
 import QtQuick.VirtualKeyboard
 import QtQuick.VirtualKeyboard.Components
@@ -427,6 +413,7 @@ KeyboardLayoutLoader {
                     keyCode: Qt.Key_Period
                     baseText: "."
                     shiftedText: ">"
+                    alternativeKeys: "!¿¡.?"
                 }
                 FullKey {
                     layoutRoot: root

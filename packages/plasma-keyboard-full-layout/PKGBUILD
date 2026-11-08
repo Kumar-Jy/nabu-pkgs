@@ -17,7 +17,7 @@
 
 pkgname=plasma-keyboard-full-layout
 pkgver=1.3.0
-pkgrel=3
+pkgrel=4
 pkgdesc='Full-size two-page Plasma Keyboard layouts with working modifier chords'
 arch=('aarch64')
 url='https://invent.kde.org/plasma/plasma-keyboard'

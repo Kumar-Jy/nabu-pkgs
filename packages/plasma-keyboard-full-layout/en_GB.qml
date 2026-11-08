@@ -88,6 +88,7 @@ KeyboardLayoutLoader {
                     keyCode: Qt.Key_3
                     baseText: "3"
                     shiftedText: "#"
+                    alternativeKeys: "3£"
                 }
                 FullKey {
                     layoutRoot: root
