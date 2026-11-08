@@ -61,8 +61,8 @@ def find_candidate(repo, branch, pkgver):
                     release_cand = {
                         "type": "release",
                         "tag": tag,
-                        "timestamp": parse_iso_time(r.get("published_at", "")),
-                        "date_str": r.get("published_at", ""),
+                        "timestamp": parse_iso_time(a.get("updated_at") or a.get("created_at") or r.get("published_at", "")),
+                        "date_str": a.get("updated_at") or a.get("created_at") or r.get("published_at", ""),
                         "download_url": a.get("browser_download_url"),
                         "asset_name": name,
                     }
@@ -109,13 +109,14 @@ def find_candidate(repo, branch, pkgver):
     except Exception as e:
         print(f"Notice: Actions runs search returned: {e}", file=sys.stderr)
 
-    # 3. Choose candidate (prefer newer timestamp)
+    # 3. Choose candidate (prefer official release assets for reliable cross-repo downloads)
     if release_cand and artifact_cand:
-        if release_cand["timestamp"] >= artifact_cand["timestamp"]:
-            print(f"Picked Release candidate: {release_cand['asset_name']} ({release_cand['tag']}, date: {release_cand['date_str']})")
+        if is_latest or release_cand["tag"].lstrip("v").startswith(pkgver) or release_cand["timestamp"] >= artifact_cand["timestamp"]:
+            print(f"Found both Release and Artifact. Preferring official Release ({release_cand['tag']}, date: {release_cand['date_str']})")
             return release_cand
         else:
-            print(f"Picked Action Artifact candidate: {artifact_cand['artifact_name']} (run: {artifact_cand['run_id']}, date: {artifact_cand['date_str']})")
+            print(f"Found both Release and Artifact. Picking newer Artifact ({artifact_cand['date_str']} vs {release_cand['date_str']})")
+            artifact_cand["fallback_release"] = release_cand
             return artifact_cand
     elif release_cand:
         print(f"Picked Release candidate: {release_cand['asset_name']} ({release_cand['tag']}, date: {release_cand['date_str']})")
@@ -127,7 +128,7 @@ def find_candidate(repo, branch, pkgver):
         print(f"ERROR: No release or CI artifact found for version '{pkgver}' in {repo}", file=sys.stderr)
         return None
 
-def download_candidate(cand, dest_zip):
+def download_candidate(cand, dest_zip, branch="", repo="Kumar-Jy/linux"):
     download_url = cand.get("download_url")
     print(f"Downloading from: {download_url}")
 
@@ -144,34 +145,68 @@ def download_candidate(cand, dest_zip):
             shutil.copyfileobj(resp, out)
         return True
 
-    # Artifact candidate: requires GitHub Token
+    # Artifact candidate: requires GitHub Token or nightly.link / gh fallback
+    downloaded = False
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
         try:
             req = urllib.request.Request(download_url, headers={"Authorization": f"Bearer {token}", "User-Agent": "nabu-ubuntu-repo/2.0"})
             with urllib.request.urlopen(req) as resp, open(dest_zip, "wb") as out:
                 shutil.copyfileobj(resp, out)
-            return True
+            if os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
+                print("Downloaded artifact via urllib API.")
+                downloaded = True
         except Exception as e:
             print(f"urllib artifact download failed: {e}")
 
-    # Fallback: gh CLI
-    try:
-        run_id = str(cand["run_id"])
-        art_name = cand["artifact_name"]
-        tmp_dir = os.path.dirname(dest_zip)
-        cmd = ["gh", "run", "download", run_id, "--name", art_name, "--dir", tmp_dir]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode == 0:
-            # gh downloads the artifact either as files or as a zip
-            for f in os.listdir(tmp_dir):
-                if f.endswith(".zip"):
-                    shutil.move(os.path.join(tmp_dir, f), dest_zip)
-                    return True
-    except Exception as e:
-        print(f"gh CLI download failed: {e}")
+    # Fallback 1: gh CLI with explicit repo
+    if not downloaded:
+        try:
+            run_id = str(cand["run_id"])
+            art_name = cand["artifact_name"]
+            tmp_dir = os.path.dirname(dest_zip)
+            cmd = ["gh", "run", "download", run_id, "--repo", repo, "--name", art_name, "--dir", tmp_dir]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                for f in os.listdir(tmp_dir):
+                    if f.endswith(".zip") and f != os.path.basename(dest_zip):
+                        shutil.move(os.path.join(tmp_dir, f), dest_zip)
+                        downloaded = True
+                        break
+        except Exception as e:
+            print(f"gh CLI download failed: {e}")
 
-    return False
+    # Fallback 2: nightly.link
+    if not downloaded:
+        try:
+            print("Attempting artifact download via nightly.link...")
+            target_branch = branch or "nabu/7.3.y"
+            page_url = f"https://nightly.link/{repo}/workflows/pkgbuild/{urllib.parse.quote(target_branch, safe='')}/{cand['artifact_name']}"
+            req = urllib.request.Request(page_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'href="([^"]+\.zip)"', html)
+            if m:
+                direct_url = m.group(1)
+                res = subprocess.run(["curl", "-fSL", "-o", dest_zip, direct_url], capture_output=True, text=True)
+                if res.returncode == 0 and os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
+                    print("Downloaded artifact via nightly.link.")
+                    downloaded = True
+        except Exception as e:
+            print(f"nightly.link download failed: {e}")
+
+    # Fallback 3: Fall back to official release asset if artifact download failed
+    if not downloaded and "fallback_release" in cand:
+        print("Artifact download failed through all methods; falling back to official release...")
+        fb = cand["fallback_release"]
+        fb_url = fb.get("download_url")
+        print(f"Downloading release asset from: {fb_url}")
+        res = subprocess.run(["curl", "-fSL", "-o", dest_zip, fb_url], capture_output=True, text=True)
+        if res.returncode == 0 and os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
+            print("Downloaded fallback release asset via curl.")
+            downloaded = True
+
+    return downloaded
 
 def main():
     args = parse_args()
@@ -185,7 +220,7 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="nabu-deb-") as tmp_dir:
         dest_zip = os.path.join(tmp_dir, "kernel-ubuntu.zip")
-        if not download_candidate(cand, dest_zip):
+        if not download_candidate(cand, dest_zip, args.branch, args.repo):
             print("ERROR: Failed to download candidate archive", file=sys.stderr)
             return 1
 

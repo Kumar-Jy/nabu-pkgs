@@ -25,6 +25,7 @@ This document lists all packages available in the **`nabu-pkgs` Ubuntu repositor
 | **`nabu-autobrightness`** | Intelligent ambient light sensor daemon that smoothly adjusts backlight brightness based on lux readings over SLPI. Includes a quick toggle desktop shortcut. |
 | **`nabu-torch`** | Dual rear camera flash controller with GUI slider intensity control, CLI tool (`torch` / `flashlight`), and quick toggles. |
 | **`nabu-pmac`** | Derives a permanent, deterministic Wi-Fi MAC address from the SoC serial number to prevent random MAC changes across reboots. |
+| **`system-monitor`** | Universal hardware and system telemetry monitor (GTK4 / Libadwaita) with GPU (Adreno 640), CPU, RAM, charging power draw, and sensor metrics. |
 
 ---
 

@@ -112,6 +112,7 @@ jobs:
           - **Firmware:** \`xiaomi-nabu-firmware\` (DSP, sensor, Ath10k & Cirrus calibration blobs)
           - **Sensors & Daemons:** \`hexagonrpcd\`, \`iio-sensor-proxy\`, \`libssc\`
           - **Hardware Controls:** \`nabu-pmac\`, \`nabu-tablet-mode\`, \`nabu-torch\`, \`nabu-autobrightness\`
+          - **System Tools:** \`system-monitor\` (GTK4/Libadwaita real-time hardware telemetry and GPU diagnostics)
           EOF
 
           cd apt-repo

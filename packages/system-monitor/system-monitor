@@ -1,0 +1,2654 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Kumar-Jy <https://github.com/Kumar-Jy>
+# Part of nabu-pkgs (Arch Linux ARM for Xiaomi Pad 5)
+
+import sys
+import glob
+import time
+import os
+import re
+from datetime import datetime
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, GLib, Gdk, GObject, Pango, Gio
+
+
+def get_desktop_environment():
+    """Dynamically detects the running desktop environment across all distributions."""
+    de = os.environ.get('XDG_CURRENT_DESKTOP') or os.environ.get('DESKTOP_SESSION') or ''
+    session_type = os.environ.get('XDG_SESSION_TYPE', 'unknown')
+
+    de_clean = de.strip()
+    if not de_clean:
+        return f"Linux Desktop ({session_type})"
+
+    de_lower = de_clean.lower()
+    if 'kde' in de_lower or 'plasma' in de_lower:
+        ver = os.environ.get('KDE_SESSION_VERSION', '')
+        prefix = f"KDE Plasma {ver}".strip()
+        return f"{prefix} ({session_type})"
+    elif 'gnome' in de_lower:
+        return f"GNOME ({session_type})"
+    elif 'xfce' in de_lower:
+        return f"XFCE ({session_type})"
+    elif 'cinnamon' in de_lower:
+        return f"Cinnamon ({session_type})"
+    elif 'mate' in de_lower:
+        return f"MATE ({session_type})"
+    elif 'lxqt' in de_lower:
+        return f"LXQt ({session_type})"
+    elif 'hyprland' in de_lower:
+        return f"Hyprland ({session_type})"
+    elif 'sway' in de_lower:
+        return f"Sway ({session_type})"
+    return f"{de_clean} ({session_type})"
+
+
+def detect_system_hardware():
+    """Dynamically probes hardware across different SoC and PC architectures."""
+    hw = {
+        'model': 'Generic Linux Device',
+        'is_nabu': False,
+        'battery_path': None,
+        'charger_path': None,
+        'typec_path': None,
+        'gpu_devfreq': None,
+        'gpu_model': 'DRM Graphics Accelerator',
+        'gpu_temp_zone': None,
+        'cpu_count': max(os.cpu_count() or 1, 1),
+        'net_iface': 'wlan0',
+    }
+
+    # 1. Device Tree / DMI Model
+    if os.path.exists('/sys/firmware/devicetree/base/model'):
+        try:
+            with open('/sys/firmware/devicetree/base/model') as f:
+                hw['model'] = f.read().strip('\x00\n ')
+        except Exception:
+            pass
+    elif os.path.exists('/sys/class/dmi/id/product_name'):
+        try:
+            with open('/sys/class/dmi/id/product_name') as f:
+                hw['model'] = f.read().strip()
+        except Exception:
+            pass
+
+    model_low = hw['model'].lower()
+    if 'pad 5' in model_low or 'nabu' in model_low or 'sm8150' in model_low:
+        hw['is_nabu'] = True
+    elif os.path.exists('/sys/firmware/devicetree/base/compatible'):
+        try:
+            with open('/sys/firmware/devicetree/base/compatible') as f:
+                comp = f.read().lower()
+                if 'nabu' in comp or 'sm8150' in comp:
+                    hw['is_nabu'] = True
+        except Exception:
+            pass
+
+    # 2. Power Supply detection
+    # Batteries
+    bats = glob.glob('/sys/class/power_supply/*battery*') + glob.glob('/sys/class/power_supply/BAT*')
+    if bats:
+        hw['battery_path'] = bats[0]
+
+    # Chargers & Wall Input
+    chargers = []
+    for pattern in ('*charger*', 'qcom-usb', 'AC*', 'Mains*', '*usb*'):
+        for p in glob.glob(f'/sys/class/power_supply/{pattern}'):
+            base = os.path.basename(p).lower()
+            if 'battery' not in base and 'bat' not in base and 'idtp' not in base and p not in chargers:
+                chargers.append(p)
+    if chargers:
+        hw['charger_path'] = chargers[0]
+
+    # Stylus Wireless Charger
+    pens = glob.glob('/sys/class/power_supply/idtp*') + glob.glob('/sys/class/power_supply/*pen*') + glob.glob('/sys/class/power_supply/*stylus*')
+    hw['pen_charger_path'] = pens[0] if pens else None
+
+    # USB Type-C / TCPM
+    typec = glob.glob('/sys/class/power_supply/*tcpm*') + glob.glob('/sys/class/power_supply/*typec*')
+    if typec:
+        hw['typec_path'] = typec[0]
+
+    # 3. GPU Devfreq detection
+    gpu_dfs = glob.glob('/sys/class/devfreq/*gpu*') + glob.glob('/sys/class/devfreq/*3d*')
+    if gpu_dfs:
+        hw['gpu_devfreq'] = gpu_dfs[0]
+
+    # 4. GPU Model detection from DRM / SoC
+    if hw['is_nabu']:
+        hw['gpu_model'] = 'Qualcomm Adreno 640 • Driver: msm (DRM)'
+    else:
+        # Check DRM devices
+        drm_drivers = set()
+        for p in glob.glob('/sys/class/drm/card[0-9]/device/driver'):
+            try:
+                drm_drivers.add(os.path.basename(os.readlink(p)))
+            except Exception:
+                pass
+        if drm_drivers:
+            hw['gpu_model'] = f"DRM GPU ({', '.join(sorted(drm_drivers))})"
+
+    # 5. Network interface detection
+    ifaces = []
+    if os.path.exists('/proc/net/dev'):
+        try:
+            with open('/proc/net/dev') as f:
+                for line in f:
+                    if ':' in line:
+                        name = line.split(':')[0].strip()
+                        if name != 'lo':
+                            ifaces.append(name)
+        except Exception:
+            pass
+    if ifaces:
+        hw['net_iface'] = ifaces[0]
+
+    return hw
+
+
+def format_temp(temp_c):
+    """Formats temperature with emoji and descriptive badge."""
+    if temp_c is None:
+        return "N/A"
+    if temp_c < 55.0:
+        badge = "🟢"
+        desc = "Cool"
+    elif temp_c < 70.0:
+        badge = "🔵"
+        desc = "Normal"
+    elif temp_c < 82.0:
+        badge = "🟡"
+        desc = "Warm"
+    else:
+        badge = "🔴"
+        desc = "Hot"
+    return f"{badge} {temp_c:.1f} °C ({desc})"
+
+
+def load_desktop_apps_map():
+    """Maps executable names and application IDs to human-readable names and icons."""
+    apps_map = {}
+    search_dirs = [
+        os.path.expanduser('~/.local/share/applications'),
+        '/usr/local/share/applications',
+        '/usr/share/applications',
+        '/var/lib/flatpak/exports/share/applications',
+    ]
+    for d in search_dirs:
+        if not os.path.exists(d):
+            continue
+        for f in glob.glob(f'{d}/*.desktop'):
+            try:
+                name, icon, exec_cmd = '', '', ''
+                base_id = os.path.basename(f)
+                if base_id.endswith('.desktop'):
+                    base_id = base_id[:-8]
+                with open(f, errors='ignore') as fp:
+                    for line in fp:
+                        line = line.strip()
+                        if line.startswith('Name=') and not name:
+                            name = line.split('=', 1)[1].strip()
+                        elif line.startswith('Icon=') and not icon:
+                            icon = line.split('=', 1)[1].strip()
+                        elif line.startswith('Exec=') and not exec_cmd:
+                            raw = line.split('=', 1)[1].strip()
+                            parts = raw.split()
+                            if parts:
+                                exec_cmd = os.path.basename(parts[0])
+                if name:
+                    meta = {'name': name, 'icon': icon or 'application-x-executable-symbolic'}
+                    if exec_cmd:
+                        apps_map[exec_cmd] = meta
+                        apps_map[exec_cmd.lower()] = meta
+                    if base_id:
+                        apps_map[base_id] = meta
+                        apps_map[base_id.lower()] = meta
+            except Exception:
+                pass
+    return apps_map
+
+
+def scan_system_processes(last_ticks, last_total_ticks, apps_map):
+    """Scans /proc for active processes, calculating CPU% and RSS memory."""
+    total_ticks = 0
+    try:
+        with open('/proc/stat') as fp:
+            total_ticks = sum(int(x) for x in fp.readline().split()[1:])
+    except Exception:
+        pass
+
+    dt_total = max(total_ticks - last_total_ticks, 1) if last_total_ticks > 0 else 0
+    num_cpus = max(os.cpu_count() or 1, 1)
+    curr_ticks = {}
+    procs = []
+
+    for p in os.listdir('/proc'):
+        if not p.isdigit():
+            continue
+        pid = int(p)
+        try:
+            with open(f'/proc/{pid}/stat') as fp:
+                stat_content = fp.read()
+            rparen = stat_content.rfind(')')
+            fields = stat_content[rparen + 2:].split()
+            utime = int(fields[11])
+            stime = int(fields[12])
+            ticks = utime + stime
+            curr_ticks[pid] = ticks
+
+            # CPU %
+            cpu_pct = 0.0
+            if dt_total > 0 and pid in last_ticks:
+                dt_proc = max(ticks - last_ticks[pid], 0)
+                cpu_pct = (dt_proc / dt_total) * 100.0 * num_cpus
+
+            # Memory (statm field 1 = RSS pages)
+            with open(f'/proc/{pid}/statm') as fp:
+                rss_pages = int(fp.read().split()[1])
+            rss_mb = (rss_pages * 4096) / (1024 * 1024)
+
+            # Cmdline & comm
+            with open(f'/proc/{pid}/cmdline', 'rb') as fp:
+                raw_cmd = fp.read()
+            if not raw_cmd:
+                continue  # kernel thread
+            cmd_parts = [part.decode(errors='ignore') for part in raw_cmd.split(b'\0') if part]
+            if not cmd_parts:
+                continue
+
+            with open(f'/proc/{pid}/comm') as fp:
+                comm = fp.read().strip()
+
+            exe = os.path.basename(cmd_parts[0])
+            st = os.stat(f'/proc/{pid}')
+            uid = st.st_uid
+
+            app_meta = apps_map.get(exe) or apps_map.get(exe.lower()) or apps_map.get(comm) or apps_map.get(comm.lower())
+            is_desktop = app_meta is not None
+            is_user_app = is_desktop or (uid >= 1000 and not comm.startswith(('(sd-', 'dbus-')))
+
+            display_name = app_meta['name'] if app_meta else comm
+            icon_name = app_meta['icon'] if app_meta and app_meta['icon'] else 'application-x-executable-symbolic'
+
+            procs.append({
+                'pid': pid,
+                'name': display_name,
+                'comm': comm,
+                'exe': exe,
+                'cmd': ' '.join(cmd_parts),
+                'icon': icon_name,
+                'cpu_pct': cpu_pct,
+                'rss_mb': rss_mb,
+                'uid': uid,
+                'is_app': is_user_app,
+                'is_desktop': is_desktop,
+            })
+        except Exception:
+            continue
+
+    return procs, curr_ticks, total_ticks
+
+
+def build_diagnostic_report(category="all"):
+    """Compiles a detailed diagnostic text report for the requested subsystem."""
+    hw = detect_system_hardware()
+    lines = []
+    lines.append("=" * 72)
+    lines.append("           SYSTEM & HARDWARE MONITOR - DIAGNOSTIC REPORT")
+    lines.append(f"  Generated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"  Developer:  Kumar-Jy (https://github.com/Kumar-Jy)")
+    lines.append(f"  Device:     {hw['model']}")
+    lines.append(f"  Kernel:     {os.uname().release} ({os.uname().machine})")
+    lines.append(f"  Desktop:    {get_desktop_environment()}")
+    lines.append(f"  Category:   {category.upper()}")
+    lines.append("=" * 72)
+    lines.append("")
+
+    # --- GPU SECTION ---
+    if category in ("gpu", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append(f"1. GPU STATUS & ENGINE METRICS ({hw['gpu_model']})")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        if hw['gpu_devfreq'] and os.path.exists(f"{hw['gpu_devfreq']}/cur_freq"):
+            try:
+                freq_hz = int(open(f"{hw['gpu_devfreq']}/cur_freq").read().strip())
+                lines.append(f"  Clock Frequency:      {freq_hz / 1e6:.1f} MHz")
+                gov = open(f"{hw['gpu_devfreq']}/governor").read().strip()
+                lines.append(f"  Frequency Governor:   {gov}")
+            except Exception:
+                pass
+        else:
+            lines.append("  Clock Frequency:      Hardware Scaling Dynamic")
+
+        # GPU Temp
+        for tz in glob.glob('/sys/class/thermal/thermal_zone*'):
+            try:
+                t = open(f"{tz}/type").read().strip().lower()
+                if 'gpu' in t:
+                    temp_c = int(open(f"{tz}/temp").read().strip()) / 1000.0
+                    lines.append(f"  GPU Core Temp:        {temp_c:.1f} °C ({t})")
+                    break
+            except Exception:
+                pass
+
+        lines.append("")
+        lines.append("  [Active DRM GPU Clients (from /proc/<pid>/fdinfo)]")
+        clients_found = False
+        seen_pids = set()
+        for path in glob.glob('/proc/[0-9]*/fdinfo/*'):
+            try:
+                with open(path) as f:
+                    content = f.read()
+                if 'drm-driver:' in content:
+                    pid = int(path.split('/')[2])
+                    if pid in seen_pids:
+                        continue
+                    seen_pids.add(pid)
+                    comm = open(f'/proc/{pid}/comm').read().strip()
+                    lines.append(f"    • PID {pid:<7} ({comm})")
+                    for cl in content.splitlines():
+                        if cl.startswith(('drm-driver:', 'drm-engine-', 'drm-resident-', 'drm-total-')):
+                            lines.append(f"        {cl}")
+                    clients_found = True
+            except Exception:
+                pass
+        if not clients_found:
+            lines.append("    No active DRM GPU processes found in fdinfo.")
+        lines.append("")
+
+    # --- CPU SECTION ---
+    if category in ("cpu", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append(f"2. CPU FREQUENCY & CORE STATUS ({hw['cpu_count']} Logical Cores)")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        for i in range(hw['cpu_count']):
+            freq = "Offline"
+            gov = "N/A"
+            try:
+                freq = f"{int(open(f'/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq').read().strip()) / 1000:.0f} MHz"
+                gov = open(f'/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_governor').read().strip()
+            except Exception:
+                pass
+            lines.append(f"  Core {i:<2}:  Freq: {freq:<9} Gov: {gov:<10}")
+        lines.append("")
+
+    # --- MEMORY SECTION ---
+    if category in ("memory", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("3. MEMORY & SWAP SUBSYSTEM")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        try:
+            with open('/proc/meminfo') as f:
+                for l in f:
+                    if l.startswith(('MemTotal:', 'MemFree:', 'MemAvailable:', 'Buffers:', 'Cached:', 'SwapTotal:', 'SwapFree:', 'SwapCached:')):
+                        lines.append(f"  {l.strip()}")
+        except Exception:
+            pass
+        lines.append("")
+
+    # --- POWER & BATTERY SECTION ---
+    if category in ("power", "battery", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("4. BATTERY & CHARGING TELEMETRY")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        if hw['battery_path'] and os.path.exists(hw['battery_path']):
+            bpath = hw['battery_path']
+            try:
+                cap = open(f"{bpath}/capacity").read().strip()
+                stat = open(f"{bpath}/status").read().strip()
+                tech = open(f"{bpath}/technology").read().strip() if os.path.exists(f"{bpath}/technology") else "Li-ion"
+                lines.append(f"  Battery Status:       {cap}% ({stat})")
+                lines.append(f"  Battery Chemistry:    {tech}")
+                
+                if os.path.exists(f"{bpath}/voltage_now") and os.path.exists(f"{bpath}/current_now"):
+                    v_u = int(open(f"{bpath}/voltage_now").read().strip())
+                    c_u = abs(int(open(f"{bpath}/current_now").read().strip()))
+                    v_v = v_u / 1e6
+                    c_a = c_u / 1e6
+                    p_w = v_v * c_a
+                    lines.append(f"  Battery Voltage:      {v_v:.3f} V (Raw: {v_u} µV)")
+                    lines.append(f"  Current Flow:         {c_a * 1000:.0f} mA ({c_a:.3f} A)")
+                    flow_dir = "+" if stat.lower() == "charging" else "-"
+                    lines.append(f"  Power Rate:           {flow_dir}{p_w:.2f} W")
+
+                if os.path.exists(f"{bpath}/charge_full_design"):
+                    chg_full = int(open(f"{bpath}/charge_full_design").read().strip()) / 1000.0
+                    lines.append(f"  Design Capacity:      {chg_full:.0f} mAh")
+                if os.path.exists(f"{bpath}/energy_full_design"):
+                    energy_full = int(open(f"{bpath}/energy_full_design").read().strip()) / 1e6
+                    lines.append(f"  Design Energy:        {energy_full:.2f} Wh")
+
+                if os.path.exists(f"{bpath}/temp"):
+                    temp_c = int(open(f"{bpath}/temp").read().strip()) / 10.0
+                    lines.append(f"  Battery Cell Temp:    {temp_c:.1f} °C")
+            except Exception as e:
+                lines.append(f"  Battery Read Error:   {e}")
+        else:
+            lines.append("  Battery Level:        AC Mains Powered (No battery detected)")
+
+        # Charger Hardware
+        if hw['charger_path'] and os.path.exists(hw['charger_path']):
+            cpath = hw['charger_path']
+            try:
+                c_online = open(f"{cpath}/online").read().strip()
+                c_stat = open(f"{cpath}/status").read().strip() if os.path.exists(f"{cpath}/status") else "N/A"
+                c_type = open(f"{cpath}/type").read().strip() if os.path.exists(f"{cpath}/type") else "N/A"
+                usb_type = open(f"{cpath}/usb_type").read().strip() if os.path.exists(f"{cpath}/usb_type") else "Standard"
+                v_in_u = int(open(f"{cpath}/voltage_now").read().strip()) if os.path.exists(f"{cpath}/voltage_now") else 0
+                c_in_u = int(open(f"{cpath}/current_now").read().strip()) if os.path.exists(f"{cpath}/current_now") else 0
+                lines.append("")
+                lines.append("  [Charger Controller]")
+                lines.append(f"    • Controller Device:  {os.path.basename(cpath)}")
+                lines.append(f"    • Plugged In (Online):{'Yes' if c_online == '1' else 'No (Running on Battery)'}")
+                lines.append(f"    • Charging Status:    {c_stat}")
+                lines.append(f"    • Hardware Type:      {c_type}")
+                lines.append(f"    • USB Protocol:       {usb_type}")
+                if v_in_u > 0 or c_in_u > 0:
+                    p_in_w = (v_in_u / 1e6) * (c_in_u / 1e6)
+                    lines.append(f"    • Wall Power Draw:    {p_in_w:.2f} W ({v_in_u/1e6:.2f} V @ {c_in_u/1000:.0f} mA)")
+            except Exception as e:
+                lines.append(f"    • Charger Error:      {e}")
+
+        # Type-C / TCPM
+        if hw['typec_path'] and os.path.exists(hw['typec_path']):
+            tpath = hw['typec_path']
+            try:
+                t_online = open(f"{tpath}/online").read().strip()
+                t_usb_type = open(f"{tpath}/usb_type").read().strip() if os.path.exists(f"{tpath}/usb_type") else "N/A"
+                t_v = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6 if os.path.exists(f"{tpath}/voltage_now") else 0.0
+                t_c = int(open(f"{tpath}/current_max").read().strip()) / 1e6 if os.path.exists(f"{tpath}/current_max") else 0.0
+                lines.append("")
+                lines.append("  [USB Type-C / TCPM]")
+                lines.append(f"    • Port Controller:    {os.path.basename(tpath)}")
+                lines.append(f"    • Connection Online:  {t_online}")
+                lines.append(f"    • Supported Modes:    {t_usb_type}")
+                if t_v > 0 and t_c > 0:
+                    lines.append(f"    • USB-PD Contract:    {t_v*t_c:.1f} W ({t_v:.1f} V @ {t_c:.1f} A max)")
+            except Exception:
+                pass
+        lines.append("")
+
+    # --- SENSORS & THERMALS SECTION ---
+    if category in ("sensors", "thermals", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("5. HARDWARE SENSORS & THERMAL ZONES")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        zones = {}
+        for tz in sorted(glob.glob('/sys/class/thermal/thermal_zone*'), key=lambda x: int(os.path.basename(x).replace('thermal_zone', '') or 0)):
+            try:
+                t = open(f"{tz}/type").read().strip()
+                temp_c = int(open(f"{tz}/temp").read().strip()) / 1000.0
+                zones[t] = temp_c
+            except Exception:
+                pass
+
+        if hw['is_nabu']:
+            # Grouped cleanly for Snapdragon 855/860
+            groups = [
+                ("CPU Cores & Clusters", [
+                    'cpu0-thermal', 'cpu1-thermal', 'cpu2-thermal', 'cpu3-thermal',
+                    'cpu4-top-thermal', 'cpu4-bottom-thermal', 'cpu5-top-thermal', 'cpu5-bottom-thermal',
+                    'cpu6-top-thermal', 'cpu6-bottom-thermal', 'cpu7-top-thermal', 'cpu7-bottom-thermal',
+                    'cluster0-thermal', 'cluster1-thermal', 'compute-thermal', 'q6-hvx-thermal'
+                ]),
+                ("Graphics & Multimedia", [
+                    'gpu-top-thermal', 'video-thermal', 'camera-thermal'
+                ]),
+                ("PMIC Power & System Sensors", [
+                    'pm8150-thermal', 'pm8150b-thermal', 'pm8150l-thermal', 'qcom-battery',
+                    'mem-thermal', 'wlan-thermal', 'modem-thermal', 'aoss0-thermal', 'aoss1-thermal'
+                ])
+            ]
+            for grp_title, keys in groups:
+                lines.append(f"  [{grp_title}]")
+                for k in keys:
+                    if k in zones:
+                        lines.append(f"    • {k:<24}: {zones[k]:.1f} °C")
+                lines.append("")
+        else:
+            for name, temp_c in zones.items():
+                lines.append(f"    • {name:<24}: {temp_c:.1f} °C")
+            lines.append("")
+
+        # Input & switch sensors
+        lines.append("  [Hardware State Switches]")
+        tablet_switch = False
+        for p in glob.glob('/sys/class/input/input*/name'):
+            try:
+                name = open(p).read().strip()
+                if 'tablet mode' in name.lower():
+                    lines.append(f"    • Tablet Mode Switch:   Available ({name})")
+                    tablet_switch = True
+                elif 'headset' in name.lower() or 'jack' in name.lower():
+                    lines.append(f"    • Audio Jack Sensor:    Available ({name})")
+            except Exception:
+                pass
+        if not tablet_switch:
+            lines.append("    • Hardware Switches:    Standard Chassis")
+        lines.append("")
+
+    # --- DEVICE & STORAGE SECTION ---
+    if category in ("device", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("6. STORAGE & NETWORK TELEMETRY")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        try:
+            st = os.statvfs('/')
+            tot_gb = (st.f_blocks * st.f_frsize) / (1024**3)
+            free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+            used_gb = tot_gb - free_gb
+            lines.append(f"  Root Storage (/):     {used_gb:.1f} GB used / {tot_gb:.1f} GB total ({free_gb:.1f} GB free)")
+        except Exception:
+            pass
+
+        # Network interface
+        try:
+            target_if = hw['net_iface']
+            lines.append(f"  Network Interface:    {target_if}")
+        except Exception:
+            pass
+        lines.append("")
+
+    # --- RUNNING APPLICATIONS & PROCESSES SECTION ---
+    if category in ("apps", "processes", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("7. RUNNING APPLICATIONS & ACTIVE PROCESSES")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        apps_map = load_desktop_apps_map()
+        procs, _, _ = scan_system_processes({}, 0, apps_map)
+        apps_only = [p for p in procs if p['is_app']]
+        apps_only.sort(key=lambda x: x['rss_mb'], reverse=True)
+        lines.append(f"  Active User/Desktop Applications ({len(apps_only)} detected):")
+        for a in apps_only[:25]:
+            lines.append(f"    • PID {a['pid']:<6} | {a['name']:<28} | {a['rss_mb']:6.1f} MB RAM | {a['cmd'][:45]}")
+        lines.append("")
+
+    # --- SYSTEM INFO SECTION ---
+    if category in ("sysinfo", "all"):
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append("8. FIRMWARE, OS & KERNEL INFORMATION")
+        lines.append("────────────────────────────────────────────────────────────────────────")
+        lines.append(f"  Hardware Model:       {hw['model']}")
+        try:
+            with open('/etc/os-release') as f:
+                for l in f:
+                    if l.startswith('PRETTY_NAME='):
+                        lines.append(f"  Distribution:         {l.split('=', 1)[1].strip().strip('\"')}")
+        except Exception:
+            pass
+        lines.append(f"  Desktop Environment:  {get_desktop_environment()}")
+        lines.append(f"  Linux Kernel:         {os.uname().release}")
+        lines.append(f"  Architecture:         {os.uname().machine}")
+        try:
+            with open('/proc/uptime') as f:
+                up_sec = float(f.read().split()[0])
+            d = int(up_sec // 86400)
+            h = int((up_sec % 86400) // 3600)
+            m = int((up_sec % 3600) // 60)
+            lines.append(f"  System Uptime:        {d}d {h}h {m}m")
+        except Exception:
+            pass
+        lines.append("")
+
+    lines.append("=" * 72)
+    lines.append("                         END OF REPORT")
+    lines.append("=" * 72)
+    return "\n".join(lines)
+
+
+
+SYSTEM_MONITOR_CSS = """
+.numeric-data, .hero-val, row subtitle, .monotext {
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.hero-card {
+    padding: 16px 20px;
+    border-radius: 16px;
+    background: alpha(@card_bg_color, 0.75);
+    border: 1px solid alpha(@window_fg_color, 0.08);
+    box-shadow: 0 2px 8px alpha(black, 0.04);
+}
+
+.hero-val {
+    font-size: 1.85rem;
+    font-weight: 750;
+    letter-spacing: -0.3px;
+}
+
+.hero-sub {
+    font-size: 0.90rem;
+    font-weight: 500;
+}
+
+.pill-badge {
+    padding: 3px 10px;
+    border-radius: 9999px;
+    font-size: 0.80rem;
+    font-weight: 650;
+    letter-spacing: 0.2px;
+}
+
+.pill-success {
+    background-color: alpha(@success_color, 0.18);
+    color: @success_color;
+}
+
+.pill-warning {
+    background-color: alpha(@warning_color, 0.22);
+    color: @warning_color;
+}
+
+.pill-error {
+    background-color: alpha(@error_color, 0.22);
+    color: @error_color;
+}
+
+.pill-accent {
+    background-color: alpha(@accent_color, 0.18);
+    color: @accent_color;
+}
+
+.pill-neutral {
+    background-color: alpha(@window_fg_color, 0.10);
+    color: @window_fg_color;
+}
+
+progressbar.hero-bar progress {
+    min-height: 8px;
+    border-radius: 8px;
+}
+
+progressbar.hero-bar trough {
+    min-height: 8px;
+    border-radius: 8px;
+    background-color: alpha(@window_fg_color, 0.08);
+}
+
+.proc-badge {
+    font-size: 0.78rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+}
+"""
+
+
+def make_row(title, subtitle=None, icon_name=None):
+    row = Adw.ActionRow(title=title)
+    if subtitle:
+        row.set_subtitle(subtitle)
+    if icon_name:
+        img = Gtk.Image.new_from_icon_name(icon_name)
+        img.add_css_class("dim-label")
+        row.add_prefix(img)
+    return row
+
+
+def create_hero_card(icon_name, initial_val, initial_sub, initial_badge="", initial_badge_cls="pill-accent"):
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    card.add_css_class("card")
+    card.add_css_class("hero-card")
+    card.set_margin_top(6)
+    card.set_margin_bottom(12)
+    card.set_margin_start(4)
+    card.set_margin_end(4)
+
+    top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    if icon_name:
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_pixel_size(36)
+        icon.add_css_class("accent")
+        top_row.append(icon)
+
+    val_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    lbl_val = Gtk.Label(label=initial_val)
+    lbl_val.add_css_class("hero-val")
+    lbl_val.set_halign(Gtk.Align.START)
+    lbl_val.set_wrap(True)
+    lbl_val.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    lbl_val.set_ellipsize(Pango.EllipsizeMode.END)
+    lbl_val.set_max_width_chars(25)
+    val_box.append(lbl_val)
+    top_row.append(val_box)
+
+    badge = Gtk.Label(label=initial_badge)
+    badge.add_css_class("pill-badge")
+    badge.add_css_class(initial_badge_cls)
+    badge.set_halign(Gtk.Align.END)
+    badge.set_valign(Gtk.Align.CENTER)
+    badge.set_hexpand(True)
+    top_row.append(badge)
+    card.append(top_row)
+
+    lbl_sub = Gtk.Label(label=initial_sub)
+    lbl_sub.add_css_class("hero-sub")
+    lbl_sub.add_css_class("dim-label")
+    lbl_sub.set_halign(Gtk.Align.START)
+    lbl_sub.set_wrap(True)
+    lbl_sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    lbl_sub.set_ellipsize(Pango.EllipsizeMode.END)
+    card.append(lbl_sub)
+
+    pbar = Gtk.ProgressBar()
+    pbar.add_css_class("hero-bar")
+    card.append(pbar)
+
+    return card, lbl_val, badge, lbl_sub, pbar
+
+
+def set_badge_text_and_class(badge, text, cls_name):
+    badge.set_label(text)
+    for c in ("pill-success", "pill-warning", "pill-error", "pill-accent", "pill-neutral"):
+        badge.remove_css_class(c)
+    badge.add_css_class(cls_name)
+
+
+class NabuSystemMonitorWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="System Monitor")
+        self.set_default_size(720, 480)
+        self.set_resizable(True)
+
+        # Detect hardware dynamically
+        self.hw = detect_system_hardware()
+
+        # Universal theming: Automatically respect FreeDesktop Portal / KDE Plasma / GNOME dark or light theme
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+
+        # Ensure icon is loaded across GNOME, KDE, XFCE, and custom WMs
+        disp = self.get_display()
+        theme = Gtk.IconTheme.get_for_display(disp)
+        theme.add_search_path('/home/user/.local/share/icons/hicolor')
+        theme.add_search_path('/home/user/.local/share/pixmaps')
+        theme.add_search_path('/usr/share/pixmaps')
+        self.set_icon_name("system-monitor")
+
+        # Load custom CSS
+        provider = Gtk.CssProvider()
+        provider.load_from_data(SYSTEM_MONITOR_CSS.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_display(
+            disp, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        self.last_cpu_stats = {}
+        self.last_engine = {}
+        self.last_net_bytes = (0, 0)
+        self.last_time = time.time()
+        self.paused = False
+        self.thermal_zones = self.detect_thermal_zones()
+
+        # Running applications & process monitoring state
+        self.desktop_apps_map = load_desktop_apps_map()
+        self.last_proc_ticks = {}
+        self.last_proc_total_ticks = 0
+        self.cached_procs = []
+        self.cached_gpu_proc = {}
+        self.apps_row_pool = []
+
+        # Keyboard shortcuts (Space = Pause/Resume, Ctrl+Q = Quit)
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", self.on_key_pressed)
+        self.add_controller(key_controller)
+
+        # Layout: ToastOverlay wrapping OverlaySplitView
+        self.toast_overlay = Adw.ToastOverlay()
+        self.split_view = Adw.OverlaySplitView()
+        self.split_view.set_min_sidebar_width(175)
+        self.split_view.set_max_sidebar_width(220)
+        self.split_view.set_sidebar_width_fraction(0.24)
+        self.split_view.set_pin_sidebar(False)
+        self.split_view.set_show_sidebar(True)
+
+        # Responsive breakpoint: auto-collapse sidebar to overlay on narrower widths
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 620px"))
+        bp.add_setter(self.split_view, "collapsed", True)
+        self.add_breakpoint(bp)
+
+        self.stack = Adw.ViewStack()
+
+        # --- LEFT SIDEBAR ---
+        sidebar_toolbar = Adw.ToolbarView()
+        sidebar_header = Adw.HeaderBar()
+        sidebar_header.set_show_end_title_buttons(False)
+
+        # Live Heartbeat Indicator on Sidebar Header
+        live_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        live_box.set_valign(Gtk.Align.CENTER)
+        self.live_badge = Gtk.Label(label="● LIVE")
+        self.live_badge.add_css_class("pill-badge")
+        self.live_badge.add_css_class("pill-success")
+        live_box.append(self.live_badge)
+        sidebar_header.pack_start(live_box)
+
+        sidebar_title = Adw.WindowTitle(title="System Monitor", subtitle="Kumar-Jy")
+        sidebar_header.set_title_widget(sidebar_title)
+        sidebar_toolbar.add_top_bar(sidebar_header)
+
+        self.sidebar_switcher = Adw.ViewSwitcherSidebar(stack=self.stack)
+        sidebar_toolbar.set_content(self.sidebar_switcher)
+
+        # --- RIGHT CONTENT AREA ---
+        content_toolbar = Adw.ToolbarView()
+        content_header = Adw.HeaderBar()
+        content_header.set_show_start_title_buttons(False)
+
+        # Sidebar Toggle Button
+        btn_toggle_sidebar = Gtk.ToggleButton(icon_name="sidebar-show-symbolic")
+        btn_toggle_sidebar.set_tooltip_text("Toggle Navigation Sidebar")
+        self.split_view.bind_property(
+            "show-sidebar", btn_toggle_sidebar, "active",
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE
+        )
+        content_header.pack_start(btn_toggle_sidebar)
+
+        # Active View Title in Content Header
+        self.content_title = Adw.WindowTitle(title="GPU", subtitle=f"{self.hw['model']}")
+        content_header.set_title_widget(self.content_title)
+
+        # Header Action Buttons
+        self.btn_pause = Gtk.Button(icon_name="media-playback-pause-symbolic")
+        self.btn_pause.set_tooltip_text("Pause / Resume Real-Time Telemetry (Space)")
+        self.btn_pause.connect("clicked", self.toggle_pause)
+        content_header.pack_end(self.btn_pause)
+
+        self.btn_export = Gtk.Button(icon_name="document-save-symbolic")
+        self.btn_export.set_tooltip_text("Generate Complete Diagnostic Log")
+        self.btn_export.connect("clicked", lambda b: self.export_log("all"))
+        content_header.pack_end(self.btn_export)
+
+        self.btn_about = Gtk.Button(icon_name="help-about-symbolic")
+        self.btn_about.set_tooltip_text("About System Monitor (Built by Kumar-Jy)")
+        self.btn_about.connect("clicked", self.on_about_clicked)
+        content_header.pack_end(self.btn_about)
+
+        content_toolbar.add_top_bar(content_header)
+
+        # Build View Pages into Stack
+        self.build_gpu_page()
+        self.build_cpu_page()
+        self.build_memory_page()
+        self.build_apps_page()
+        self.build_power_page()
+        self.build_sensors_page()
+        self.build_device_page()
+        self.build_sysinfo_page()
+        self.build_about_page()
+
+        # Connect page change listener to update header title dynamically
+        self.stack.connect("notify::visible-child", self.on_stack_page_changed)
+
+        content_toolbar.set_content(self.stack)
+
+        self.split_view.set_sidebar(sidebar_toolbar)
+        self.split_view.set_content(content_toolbar)
+
+        self.toast_overlay.set_child(self.split_view)
+        self.set_content(self.toast_overlay)
+
+        # Refresh loop (1 second)
+        GLib.timeout_add(1000, self.refresh_all_stats)
+        self.refresh_all_stats()
+
+    def on_stack_page_changed(self, stack, pspec):
+        child = stack.get_visible_child()
+        if child:
+            page = stack.get_page(child)
+            self.content_title.set_title(page.get_title())
+            # Close sidebar overlay on selection when in collapsed mode
+            if self.split_view.get_collapsed():
+                self.split_view.set_show_sidebar(False)
+
+    def on_key_pressed(self, controller, keyval, keycode, state):
+        if keyval == Gdk.KEY_space:
+            self.toggle_pause()
+            return True
+        elif keyval in (Gdk.KEY_q, Gdk.KEY_Escape) and (state & Gdk.ModifierType.CONTROL_MASK):
+            self.close()
+            return True
+        return False
+
+    def toggle_pause(self, button=None):
+        self.paused = not self.paused
+        if self.paused:
+            self.btn_pause.set_icon_name("media-playback-start-symbolic")
+            self.btn_pause.set_tooltip_text("Resume Live Telemetry (Space)")
+            set_badge_text_and_class(self.live_badge, "❚❚ PAUSED", "pill-warning")
+            self.toast_overlay.add_toast(Adw.Toast(title="Live telemetry paused"))
+        else:
+            self.btn_pause.set_icon_name("media-playback-pause-symbolic")
+            self.btn_pause.set_tooltip_text("Pause Live Telemetry (Space)")
+            set_badge_text_and_class(self.live_badge, "● LIVE", "pill-success")
+            self.toast_overlay.add_toast(Adw.Toast(title="Live telemetry resumed"))
+            self.refresh_all_stats()
+
+    def detect_thermal_zones(self):
+        zones = {}
+        for path in glob.glob('/sys/class/thermal/thermal_zone*'):
+            try:
+                with open(os.path.join(path, 'type')) as f:
+                    t = f.read().strip()
+                zones[t] = os.path.join(path, 'temp')
+            except Exception:
+                pass
+        return zones
+
+    def on_about_clicked(self, button=None):
+        about = Adw.AboutDialog(
+            application_name="System Monitor",
+            application_icon="system-monitor",
+            version="1.3.0",
+            developer_name="Kumar-Jy",
+            developers=["Kumar-Jy (@Kumar-Jy) <https://github.com/Kumar-Jy>"],
+            website="https://github.com/Kumar-Jy/nabu-pkgs",
+            issue_url="https://github.com/Kumar-Jy/nabu-pkgs/issues",
+            copyright="© 2026 Kumar-Jy",
+            license_type=Gtk.License.MIT_X11
+        )
+        about.add_link("GitHub Profile (@Kumar-Jy)", "https://github.com/Kumar-Jy")
+        about.add_link("Repository (nabu-pkgs)", "https://github.com/Kumar-Jy/nabu-pkgs")
+        about.present(self)
+
+    def export_log(self, category="all"):
+        """Generates a text report and saves it to ~/Documents/."""
+        try:
+            report_text = build_diagnostic_report(category)
+            out_dir = os.path.expanduser("~/Documents")
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"sysmon-{category}-log-{ts}.txt"
+            filepath = os.path.join(out_dir, filename)
+
+            with open(filepath, "w") as f:
+                f.write(report_text)
+
+            toast = Adw.Toast(title=f"Saved report to ~/Documents/{filename}")
+            self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            toast = Adw.Toast(title=f"Error saving log: {e}")
+            self.toast_overlay.add_toast(toast)
+
+    # ==========================================
+    # 1. GPU PAGE
+    # ==========================================
+    def build_gpu_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_gpu_hero, self.lbl_gpu_hero_val, self.badge_gpu_hero, self.lbl_gpu_hero_sub, self.progress_gpu_hero = create_hero_card(
+            "video-display-symbolic", "0.0%", "Adreno Graphics Engine • Initializing...", "msm-adreno-tz", "pill-accent"
+        )
+        hero_group.add(self.card_gpu_hero)
+        page.add(hero_group)
+
+        hw_group = Adw.PreferencesGroup(title="GPU Hardware &amp; Clocks")
+        page.add(hw_group)
+
+        self.row_gpu_model = make_row("GPU Model", self.hw['gpu_model'], "video-display-symbolic")
+        self.row_gpu_freq = make_row("Clock Frequency", "Reading...", "view-refresh-symbolic")
+        self.row_gpu_gov = make_row("Scaling Governor", "Reading...", "preferences-system-symbolic")
+        self.row_gpu_temp = make_row("GPU Temperature", "Reading...", "org.gnome.Settings-device-diagnostics-symbolic")
+        self.row_gpu_mem = make_row("DRM Video Memory (VRAM)", "Reading...", "drive-multidisk-symbolic")
+
+        hw_group.add(self.row_gpu_model)
+        hw_group.add(self.row_gpu_freq)
+        hw_group.add(self.row_gpu_gov)
+        hw_group.add(self.row_gpu_temp)
+        hw_group.add(self.row_gpu_mem)
+
+        self.proc_group = Adw.PreferencesGroup(title="Active GPU Clients (DRM fdinfo)")
+        page.add(self.proc_group)
+        self.proc_rows = {}
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export GPU Diagnostics", "Save clock, temperature and DRM client log to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("gpu"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "gpu", "GPU", "video-display-symbolic")
+
+    # ==========================================
+    # 2. CPU PAGE (Dynamic Core Count)
+    # ==========================================
+    def build_cpu_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        title_suffix = "Snapdragon 855/860 Kryo 485" if self.hw['is_nabu'] else f"{self.hw['cpu_count']}-Core Processor"
+        self.card_cpu_hero, self.lbl_cpu_hero_val, self.badge_cpu_hero, self.lbl_cpu_hero_sub, self.progress_cpu_hero = create_hero_card(
+            "applications-engineering-symbolic", "0.0%", f"{title_suffix} • Max 2.96 GHz", f"{self.hw['cpu_count']} Cores Online", "pill-accent"
+        )
+        hero_group.add(self.card_cpu_hero)
+        page.add(hero_group)
+
+        self.core_group = Adw.PreferencesGroup(title=f"Core-Wise Status ({title_suffix})")
+        page.add(self.core_group)
+
+        self.core_rows = []
+        self.core_bars = []
+
+        nabu_labels = [
+            ("Core 0", "Silver (Little) • Cortex-A55 • max 1.78 GHz"),
+            ("Core 1", "Silver (Little) • Cortex-A55 • max 1.78 GHz"),
+            ("Core 2", "Silver (Little) • Cortex-A55 • max 1.78 GHz"),
+            ("Core 3", "Silver (Little) • Cortex-A55 • max 1.78 GHz"),
+            ("Core 4", "Gold (Big) • Cortex-A76 • max 2.42 GHz"),
+            ("Core 5", "Gold (Big) • Cortex-A76 • max 2.42 GHz"),
+            ("Core 6", "Gold (Big) • Cortex-A76 • max 2.42 GHz"),
+            ("Core 7", "Gold Prime (Super) • Cortex-A76 • max 2.96 GHz"),
+        ]
+
+        for i in range(self.hw['cpu_count']):
+            if self.hw['is_nabu'] and i < len(nabu_labels):
+                name, role = nabu_labels[i]
+            else:
+                name, role = f"Core {i}", "Processor Core"
+
+            row = make_row(name, role, "applications-engineering-symbolic")
+            pbar = Gtk.ProgressBar()
+            pbar.set_valign(Gtk.Align.CENTER)
+            pbar.set_size_request(140, -1)
+            row.add_suffix(pbar)
+            self.core_group.add(row)
+            self.core_rows.append(row)
+            self.core_bars.append(pbar)
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export CPU Diagnostics", "Save core loads, frequencies and temperatures to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("cpu"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "cpu", "CPU", "applications-engineering-symbolic")
+
+    # ==========================================
+    # 3. MEMORY PAGE (RAM & ZRAM)
+    # ==========================================
+    def build_memory_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_ram_hero, self.lbl_ram_hero_val, self.badge_ram_hero, self.lbl_ram_hero_sub, self.progress_ram_hero = create_hero_card(
+            "drive-multidisk-symbolic", "Reading...", "Physical Memory & Allocation", "Memory", "pill-accent"
+        )
+        hero_group.add(self.card_ram_hero)
+        page.add(hero_group)
+
+        ram_group = Adw.PreferencesGroup(title="RAM (Physical Memory)")
+        page.add(ram_group)
+
+        self.row_ram_usage = make_row("Memory Usage", "Reading...", "drive-multidisk-symbolic")
+        self.progress_ram = Gtk.ProgressBar()
+        self.progress_ram.set_valign(Gtk.Align.CENTER)
+        self.progress_ram.set_size_request(160, -1)
+        self.row_ram_usage.add_suffix(self.progress_ram)
+        ram_group.add(self.row_ram_usage)
+
+        self.row_ram_breakdown = make_row("Memory Allocation", "Reading...", "view-list-bullet-symbolic")
+        ram_group.add(self.row_ram_breakdown)
+
+        swap_group = Adw.PreferencesGroup(title="Swap / ZRAM Compression")
+        page.add(swap_group)
+
+        self.row_swap_usage = make_row("Swap Usage", "Reading...", "media-flash-symbolic")
+        self.progress_swap = Gtk.ProgressBar()
+        self.progress_swap.set_valign(Gtk.Align.CENTER)
+        self.progress_swap.set_size_request(160, -1)
+        self.row_swap_usage.add_suffix(self.progress_swap)
+        swap_group.add(self.row_swap_usage)
+
+        self.row_swap_detail = make_row("Swap Device &amp; Free Space", "Reading...", "drive-harddisk-symbolic")
+        swap_group.add(self.row_swap_detail)
+
+        self.mem_apps_group = Adw.PreferencesGroup(title="Top Memory Consumers (Resident RSS)")
+        page.add(self.mem_apps_group)
+        self.mem_app_rows = []
+        for _ in range(5):
+            r = make_row("...", "...", "applications-system-symbolic")
+            self.mem_apps_group.add(r)
+            self.mem_app_rows.append(r)
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Memory Diagnostics", "Save RAM, ZRAM and per-process memory stats to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("memory"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "memory", "RAM", "drive-multidisk-symbolic")
+
+    # ==========================================
+    # 4. RUNNING APPLICATIONS & PROCESSES PAGE
+    # ==========================================
+    def build_apps_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_apps_hero, self.lbl_apps_hero_val, self.badge_apps_hero, self.lbl_apps_hero_sub, self.progress_apps_hero = create_hero_card(
+            "view-app-grid-symbolic", "Scanning...", "Active User Applications & System Tasks", "Apps", "pill-accent"
+        )
+        hero_group.add(self.card_apps_hero)
+        page.add(hero_group)
+
+        # Filter & Search Controls Bar
+        ctrl_group = Adw.PreferencesGroup()
+        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        ctrl_box.set_margin_top(2)
+        ctrl_box.set_margin_bottom(2)
+
+        self.apps_search = Gtk.SearchEntry()
+        self.apps_search.set_placeholder_text("Search running apps by name, command, or PID...")
+        self.apps_search.set_hexpand(True)
+        self.apps_search.connect("search-changed", lambda s: self.on_apps_filter_changed())
+        ctrl_box.append(self.apps_search)
+
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.apps_mode_drop = Gtk.DropDown.new_from_strings(["User Applications", "All Processes"])
+        self.apps_mode_drop.set_tooltip_text("Filter between User Desktop Applications and All Processes")
+        self.apps_mode_drop.set_hexpand(True)
+        self.apps_mode_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
+        filter_row.append(self.apps_mode_drop)
+
+        self.apps_sort_drop = Gtk.DropDown.new_from_strings(["Sort: Memory", "Sort: CPU %", "Sort: GPU %", "Sort: Name", "Sort: PID"])
+        self.apps_sort_drop.set_tooltip_text("Sort active applications")
+        self.apps_sort_drop.set_hexpand(True)
+        self.apps_sort_drop.connect("notify::selected", lambda d, p: self.on_apps_filter_changed())
+        filter_row.append(self.apps_sort_drop)
+
+        ctrl_box.append(filter_row)
+        ctrl_group.add(ctrl_box)
+        page.add(ctrl_group)
+
+        # Process List Group
+        self.apps_list_group = Adw.PreferencesGroup(title="Running Applications")
+        page.add(self.apps_list_group)
+
+        # Diagnostics Group
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Applications Diagnostics", "Save active process list, CPU/RAM usage and PIDs to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("apps"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "apps", "Apps", "view-app-grid-symbolic")
+
+    def get_or_create_app_row(self, index):
+        while len(self.apps_row_pool) <= index:
+            row = Adw.ActionRow()
+            row.set_title_lines(1)
+            row.set_subtitle_lines(1)
+
+            icon = Gtk.Image()
+            icon.set_pixel_size(26)
+            row.add_prefix(icon)
+
+            lbl_cpu = Gtk.Label(label="0.0% CPU")
+            lbl_cpu.add_css_class("pill-badge")
+            lbl_cpu.add_css_class("pill-accent")
+            lbl_cpu.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(lbl_cpu)
+
+            lbl_gpu = Gtk.Label(label="0.0% GPU")
+            lbl_gpu.add_css_class("pill-badge")
+            lbl_gpu.add_css_class("pill-warning")
+            lbl_gpu.set_valign(Gtk.Align.CENTER)
+            lbl_gpu.set_visible(False)
+            row.add_suffix(lbl_gpu)
+
+            lbl_mem = Gtk.Label(label="0 MB")
+            lbl_mem.add_css_class("pill-badge")
+            lbl_mem.add_css_class("pill-neutral")
+            lbl_mem.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(lbl_mem)
+
+            btn_kill = Gtk.Button(icon_name="process-stop-symbolic")
+            btn_kill.add_css_class("flat")
+            btn_kill.set_valign(Gtk.Align.CENTER)
+            btn_kill.set_tooltip_text("End Task (SIGTERM)")
+
+            row_idx = len(self.apps_row_pool)
+            btn_kill.connect("clicked", lambda b, idx=row_idx: self.on_kill_app_clicked(idx))
+            row.add_suffix(btn_kill)
+
+            self.apps_list_group.add(row)
+            self.apps_row_pool.append({
+                'row': row,
+                'icon': icon,
+                'lbl_cpu': lbl_cpu,
+                'lbl_gpu': lbl_gpu,
+                'lbl_mem': lbl_mem,
+                'btn_kill': btn_kill,
+                'pid': None,
+                'name': '',
+            })
+        return self.apps_row_pool[index]
+
+    def on_kill_app_clicked(self, idx):
+        if idx < len(self.apps_row_pool):
+            pid = self.apps_row_pool[idx]['pid']
+            name = self.apps_row_pool[idx]['name']
+            if pid:
+                self.terminate_process(pid, name)
+
+    def terminate_process(self, pid, name):
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Terminated {name} (PID {pid})"))
+            GLib.timeout_add(300, self.refresh_apps_stats)
+        except ProcessLookupError:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Process {name} (PID {pid}) already terminated"))
+        except PermissionError:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Cannot terminate {name}: Permission denied"))
+        except Exception as e:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Error terminating {name}: {e}"))
+
+    def resolve_app_icon(self, icon_name):
+        if not icon_name:
+            return "application-x-executable-symbolic"
+        try:
+            theme = Gtk.IconTheme.get_for_display(self.get_display())
+            if theme.has_icon(icon_name):
+                return icon_name
+            if theme.has_icon(f"{icon_name}-symbolic"):
+                return f"{icon_name}-symbolic"
+            for fallback in ("application-x-executable-symbolic", "applications-system-symbolic", "system-run-symbolic"):
+                if theme.has_icon(fallback):
+                    return fallback
+        except Exception:
+            pass
+        return "application-x-executable-symbolic"
+
+    def on_apps_filter_changed(self):
+        self.update_apps_display()
+
+    def refresh_apps_stats(self):
+        procs, curr_ticks, total_ticks = scan_system_processes(
+            self.last_proc_ticks, self.last_proc_total_ticks, self.desktop_apps_map
+        )
+        self.last_proc_ticks = curr_ticks
+        self.last_proc_total_ticks = total_ticks
+
+        for p in procs:
+            gpu_info = self.cached_gpu_proc.get(p['pid'], {'pct': 0.0, 'mem_mb': 0.0})
+            p['gpu_pct'] = gpu_info['pct']
+            p['gpu_mem_mb'] = gpu_info['mem_mb']
+
+        self.cached_procs = procs
+        self.update_apps_display()
+
+    def update_apps_display(self):
+        if not hasattr(self, 'cached_procs') or not hasattr(self, 'apps_search'):
+            return
+
+        search_query = self.apps_search.get_text().strip().lower()
+        mode_idx = self.apps_mode_drop.get_selected()  # 0: User Apps, 1: All Processes
+
+        filtered = []
+        total_app_ram = 0.0
+        app_count = 0
+
+        for p in self.cached_procs:
+            if p['is_app']:
+                total_app_ram += p['rss_mb']
+                app_count += 1
+
+            if mode_idx == 0 and not p['is_app']:
+                continue
+
+            if search_query:
+                if (search_query not in p['name'].lower() and
+                    search_query not in p['comm'].lower() and
+                    search_query not in str(p['pid']) and
+                    search_query not in p['cmd'].lower()):
+                    continue
+
+            filtered.append(p)
+
+        # Sort
+        sort_idx = self.apps_sort_drop.get_selected()
+        if sort_idx == 0:  # Memory
+            filtered.sort(key=lambda x: x['rss_mb'], reverse=True)
+        elif sort_idx == 1:  # CPU %
+            filtered.sort(key=lambda x: x['cpu_pct'], reverse=True)
+        elif sort_idx == 2:  # GPU %
+            filtered.sort(key=lambda x: (x.get('gpu_pct', 0.0), x.get('gpu_mem_mb', 0.0)), reverse=True)
+        elif sort_idx == 3:  # Name
+            filtered.sort(key=lambda x: x['name'].lower())
+        elif sort_idx == 4:  # PID
+            filtered.sort(key=lambda x: x['pid'])
+
+        # Update Hero Card
+        total_sys_ram_mb = 1.0
+        try:
+            with open('/proc/meminfo') as fp:
+                for line in fp:
+                    if line.startswith('MemTotal:'):
+                        total_sys_ram_mb = int(line.split()[1]) / 1024.0
+                        break
+        except Exception:
+            pass
+
+        ram_pct = (total_app_ram / max(total_sys_ram_mb, 1.0)) * 100.0
+        self.lbl_apps_hero_val.set_label(f"{app_count} Active Apps")
+        self.lbl_apps_hero_sub.set_label(
+            f"{app_count} Applications Running • {total_app_ram/1024:.2f} GB RAM ({ram_pct:.1f}%) • {len(self.cached_procs)} Total System Tasks"
+        )
+        self.progress_apps_hero.set_fraction(min(total_app_ram / max(total_sys_ram_mb, 1.0), 1.0))
+        set_badge_text_and_class(self.badge_apps_hero, f"{len(filtered)} Visible", "pill-accent")
+
+        mode_label = "Running Applications" if mode_idx == 0 else "Active System Processes"
+        self.apps_list_group.set_title(f"{mode_label} ({len(filtered)})")
+
+        max_rows = 45
+        display_items = filtered[:max_rows]
+
+        if not display_items:
+            empty_row = self.get_or_create_app_row(0)
+            empty_row['pid'] = None
+            empty_row['name'] = ''
+            empty_row['row'].set_title("No applications or processes found")
+            empty_row['row'].set_subtitle("Try adjusting your search filter or switch to 'All Processes'")
+            empty_row['icon'].set_from_icon_name("system-search-symbolic")
+            empty_row['lbl_cpu'].set_label("")
+            empty_row['lbl_gpu'].set_visible(False)
+            empty_row['lbl_mem'].set_label("")
+            empty_row['btn_kill'].set_visible(False)
+            empty_row['row'].set_visible(True)
+            for j in range(1, len(self.apps_row_pool)):
+                self.apps_row_pool[j]['row'].set_visible(False)
+        else:
+            for i, item in enumerate(display_items):
+                row_data = self.get_or_create_app_row(i)
+                row_data['pid'] = item['pid']
+                row_data['name'] = item['name']
+
+                row_data['row'].set_title(item['name'])
+
+                gpu_pct = item.get('gpu_pct', 0.0)
+                gpu_mem = item.get('gpu_mem_mb', 0.0)
+
+                sub_info = f"PID: {item['pid']}  •  {item['comm']}"
+                if gpu_mem >= 2.0:
+                    sub_info += f"  •  VRAM: {gpu_mem:.1f} MB"
+                row_data['row'].set_subtitle(sub_info)
+
+                resolved_icon = self.resolve_app_icon(item['icon'])
+                row_data['icon'].set_from_icon_name(resolved_icon)
+
+                row_data['lbl_cpu'].set_label(f"{item['cpu_pct']:.1f}% CPU")
+                for c in ("pill-accent", "pill-warning", "pill-error", "pill-neutral"):
+                    row_data['lbl_cpu'].remove_css_class(c)
+                if item['cpu_pct'] >= 50.0:
+                    row_data['lbl_cpu'].add_css_class("pill-error")
+                elif item['cpu_pct'] >= 15.0:
+                    row_data['lbl_cpu'].add_css_class("pill-warning")
+                else:
+                    row_data['lbl_cpu'].add_css_class("pill-accent")
+
+                # GPU % Badge
+                if gpu_pct >= 0.1 or (sort_idx == 2 and (gpu_pct > 0.0 or gpu_mem > 0.0)):
+                    row_data['lbl_gpu'].set_label(f"{gpu_pct:.1f}% GPU")
+                    for c in ("pill-accent", "pill-warning", "pill-error"):
+                        row_data['lbl_gpu'].remove_css_class(c)
+                    if gpu_pct >= 50.0:
+                        row_data['lbl_gpu'].add_css_class("pill-error")
+                    elif gpu_pct >= 15.0:
+                        row_data['lbl_gpu'].add_css_class("pill-warning")
+                    else:
+                        row_data['lbl_gpu'].add_css_class("pill-accent")
+                    row_data['lbl_gpu'].set_visible(True)
+                else:
+                    row_data['lbl_gpu'].set_visible(False)
+
+                if item['rss_mb'] >= 1024.0:
+                    row_data['lbl_mem'].set_label(f"{item['rss_mb']/1024:.2f} GB")
+                else:
+                    row_data['lbl_mem'].set_label(f"{item['rss_mb']:.1f} MB")
+
+                row_data['btn_kill'].set_visible(True)
+                row_data['row'].set_visible(True)
+
+            for j in range(len(display_items), len(self.apps_row_pool)):
+                self.apps_row_pool[j]['row'].set_visible(False)
+
+    # ==========================================
+    # 5. POWER & BATTERY PAGE
+    # ==========================================
+    def build_power_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_bat_hero, self.lbl_bat_hero_val, self.badge_bat_hero, self.lbl_bat_hero_sub, self.progress_bat_hero = create_hero_card(
+            "battery-full-charging-symbolic", "Reading...", "Battery & Charging Telemetry", "Power", "pill-accent"
+        )
+        hero_group.add(self.card_bat_hero)
+        page.add(hero_group)
+
+        # Group 1: Battery State
+        bat_group = Adw.PreferencesGroup(title="Battery Status &amp; State of Charge")
+        page.add(bat_group)
+
+        self.row_bat_hero = make_row("Battery Level", "Reading...", "battery-symbolic")
+        self.progress_bat_main = Gtk.ProgressBar()
+        self.progress_bat_main.set_valign(Gtk.Align.CENTER)
+        self.progress_bat_main.set_size_request(160, -1)
+        self.row_bat_hero.add_suffix(self.progress_bat_main)
+        bat_group.add(self.row_bat_hero)
+
+        self.row_bat_rate = make_row("Power Rate &amp; Flow", "Reading...", "preferences-system-power-symbolic")
+        self.row_bat_volts = make_row("Battery Voltage", "Reading...", "power-profile-performance-symbolic")
+        self.row_bat_current = make_row("Current Flow", "Reading...", "utilities-terminal-symbolic")
+        self.row_bat_cap = make_row("Capacity &amp; Energy", "Reading...", "battery-full-charging-symbolic")
+        self.row_bat_temp = make_row("Cell Temperature", "Reading...", "org.gnome.Settings-device-diagnostics-symbolic")
+        self.row_bat_health = make_row("Battery Health &amp; Chemistry", "Reading...", "emblem-important-symbolic")
+        self.row_bat_est = make_row("Estimated Runtime", "Reading...", "alarm-symbolic")
+
+        bat_group.add(self.row_bat_rate)
+        bat_group.add(self.row_bat_volts)
+        bat_group.add(self.row_bat_current)
+        bat_group.add(self.row_bat_cap)
+        bat_group.add(self.row_bat_temp)
+        bat_group.add(self.row_bat_health)
+        bat_group.add(self.row_bat_est)
+
+        # Group 2: Charging & USB Type-C
+        chg_group = Adw.PreferencesGroup(title="Charger &amp; USB Type-C Telemetry")
+        page.add(chg_group)
+
+        self.row_chg_status = make_row("Charger Connection", "Reading...", "ac-adapter-symbolic")
+        self.row_chg_power = make_row("Charger Power Draw (Wall)", "Reading...", "preferences-system-power-symbolic")
+        self.row_chg_proto = make_row("Negotiated Charging Standard", "Reading...", "network-wireless-symbolic")
+        self.row_chg_ctrl = make_row("Charger Controller Hardware", "Reading...", "computer-symbolic")
+        self.row_chg_input = make_row("USB Input Voltage &amp; Current", "Reading...", "power-profile-balanced-symbolic")
+        self.row_chg_temp = make_row("Charger IC Temperature", "Reading...", "org.gnome.Settings-device-diagnostics-symbolic")
+        self.row_chg_typec = make_row("Type-C Port Controller", "Reading...", "media-removable-symbolic")
+        self.row_chg_pen = make_row("Xiaomi Smart Pen Wireless Dock", "Reading...", "input-dialpad-symbolic")
+
+        chg_group.add(self.row_chg_status)
+        chg_group.add(self.row_chg_power)
+        chg_group.add(self.row_chg_proto)
+        chg_group.add(self.row_chg_ctrl)
+        chg_group.add(self.row_chg_input)
+        chg_group.add(self.row_chg_temp)
+        chg_group.add(self.row_chg_typec)
+        if self.hw.get('pen_charger_path'):
+            chg_group.add(self.row_chg_pen)
+
+        # Group 3: Diagnostics
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Power Diagnostics", "Save battery metrics, voltage curve and charger telemetry to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("battery"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "power", "Power", "battery-full-charging-symbolic")
+
+    # ==========================================
+    # 5. SENSORS PAGE
+    # ==========================================
+    def build_sensors_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_sensor_hero, self.lbl_sensor_hero_val, self.badge_sensor_hero, self.lbl_sensor_hero_sub, self.progress_sensor_hero = create_hero_card(
+            "org.gnome.Settings-device-diagnostics-symbolic", "Reading...", "Thermal Zones & System Monitors", "Sensors", "pill-accent"
+        )
+        hero_group.add(self.card_sensor_hero)
+        page.add(hero_group)
+
+        if self.hw['is_nabu']:
+            # Group 1: CPU Subsystem Thermals
+            cpu_therm_group = Adw.PreferencesGroup(title="CPU &amp; Compute Thermals (Snapdragon 855/860)")
+            page.add(cpu_therm_group)
+
+            self.row_therm_silver = make_row("Silver Cluster (Cores 0-3 Little)", "Reading...", "weather-clear-symbolic")
+            self.row_therm_gold_top = make_row("Gold Cluster (Cores 4-6 Big) • Top", "Reading...", "weather-clear-symbolic")
+            self.row_therm_gold_bot = make_row("Gold Cluster (Cores 4-6 Big) • Bottom", "Reading...", "weather-clear-symbolic")
+            self.row_therm_prime = make_row("Gold Prime Core 7 (Super Core)", "Reading...", "weather-clear-symbolic")
+            self.row_therm_clusters = make_row("Silicon Cluster Averages", "Reading...", "weather-clear-symbolic")
+            self.row_therm_compute = make_row("AI / DSP Compute &amp; Hexagon HVX", "Reading...", "applications-engineering-symbolic")
+
+            cpu_therm_group.add(self.row_therm_silver)
+            cpu_therm_group.add(self.row_therm_gold_top)
+            cpu_therm_group.add(self.row_therm_gold_bot)
+            cpu_therm_group.add(self.row_therm_prime)
+            cpu_therm_group.add(self.row_therm_clusters)
+            cpu_therm_group.add(self.row_therm_compute)
+
+            # Group 2: GPU & Multimedia Thermals
+            media_therm_group = Adw.PreferencesGroup(title="Graphics &amp; Multimedia Thermals")
+            page.add(media_therm_group)
+
+            self.row_therm_gpu = make_row("Adreno 640 GPU Core", "Reading...", "video-display-symbolic")
+            self.row_therm_vpu = make_row("Iris Video Processor (VPU)", "Reading...", "camera-photo-symbolic")
+            self.row_therm_cam = make_row("CamSS ISP Camera Subsystem", "Reading...", "camera-photo-symbolic")
+
+            media_therm_group.add(self.row_therm_gpu)
+            media_therm_group.add(self.row_therm_vpu)
+            media_therm_group.add(self.row_therm_cam)
+
+            # Group 3: PMIC & Board Thermals
+            board_therm_group = Adw.PreferencesGroup(title="Power Management &amp; Board Thermals")
+            page.add(board_therm_group)
+
+            self.row_therm_pmic_main = make_row("PM8150 Master PMIC", "Reading...", "preferences-system-power-symbolic")
+            self.row_therm_pmic_chg = make_row("PM8150B Charger &amp; Battery PMIC", "Reading...", "ac-adapter-symbolic")
+            self.row_therm_pmic_sec = make_row("PM8150L Secondary PMIC", "Reading...", "preferences-system-power-symbolic")
+            self.row_therm_mem = make_row("DRAM System Memory", "Reading...", "drive-multidisk-symbolic")
+            self.row_therm_wlan = make_row("Wi-Fi (WLAN) Subsystem", "Reading...", "network-wireless-symbolic")
+            self.row_therm_modem = make_row("Cellular / Modem Subsystem", "Reading...", "network-wireless-symbolic")
+            self.row_therm_aoss = make_row("Always-On Subsystem (AOSS)", "Reading...", "emblem-system-symbolic")
+
+            board_therm_group.add(self.row_therm_pmic_main)
+            board_therm_group.add(self.row_therm_pmic_chg)
+            board_therm_group.add(self.row_therm_pmic_sec)
+            board_therm_group.add(self.row_therm_mem)
+            board_therm_group.add(self.row_therm_wlan)
+            board_therm_group.add(self.row_therm_modem)
+            board_therm_group.add(self.row_therm_aoss)
+
+            # Group 4: Hardware State Sensors
+            hw_sensor_group = Adw.PreferencesGroup(title="Hardware State &amp; Switch Sensors")
+            page.add(hw_sensor_group)
+
+            self.row_sensor_orient = make_row("Tablet Physical Orientation", "Reading...", "input-tablet-symbolic")
+            self.row_sensor_light = make_row("Ambient Light &amp; Proximity", "Reading...", "display-brightness-symbolic")
+            self.row_sensor_tablet = make_row("Tablet Mode Sensor", "Reading...", "input-tablet-symbolic")
+            self.row_sensor_jack = make_row("3.5mm Headset Jack", "Reading...", "audio-headset-symbolic")
+            self.row_sensor_adc = make_row("PMIC ADC Precision Channels", "Reading...", "view-refresh-symbolic")
+
+            hw_sensor_group.add(self.row_sensor_orient)
+            hw_sensor_group.add(self.row_sensor_light)
+            hw_sensor_group.add(self.row_sensor_tablet)
+            hw_sensor_group.add(self.row_sensor_jack)
+            hw_sensor_group.add(self.row_sensor_adc)
+
+        else:
+            # Generic Linux Sensor View
+            gen_group = Adw.PreferencesGroup(title="Hardware Thermal Zones &amp; Monitors")
+            page.add(gen_group)
+            self.gen_sensor_rows = {}
+            for name in sorted(self.thermal_zones.keys()):
+                r = make_row(name, "Reading...", "weather-clear-symbolic")
+                gen_group.add(r)
+                self.gen_sensor_rows[name] = r
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Sensor Diagnostics", "Save all thermal zones and hardware sensor readings to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("sensors"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "sensors", "Sensors", "org.gnome.Settings-device-diagnostics-symbolic")
+
+    # ==========================================
+    # 6. DEVICE PAGE (Storage & Network)
+    # ==========================================
+    def build_device_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_dev_hero, self.lbl_dev_hero_val, self.badge_dev_hero, self.lbl_dev_hero_sub, self.progress_dev_hero = create_hero_card(
+            "drive-harddisk-symbolic", "Reading...", "Storage & Network Telemetry", "Device", "pill-accent"
+        )
+        hero_group.add(self.card_dev_hero)
+        page.add(hero_group)
+
+        # Storage
+        stor_group = Adw.PreferencesGroup(title="Storage Subsystem")
+        page.add(stor_group)
+
+        self.row_disk_usage = make_row("Root Storage (/)", "Reading...", "drive-harddisk-symbolic")
+        self.progress_disk = Gtk.ProgressBar()
+        self.progress_disk.set_valign(Gtk.Align.CENTER)
+        self.progress_disk.set_size_request(160, -1)
+        self.row_disk_usage.add_suffix(self.progress_disk)
+        stor_group.add(self.row_disk_usage)
+
+        self.row_disk_boot = make_row("EFI System Partition (/boot/efi)", "Reading...", "drive-harddisk-symbolic")
+        stor_group.add(self.row_disk_boot)
+
+        # Network
+        net_group = Adw.PreferencesGroup(title=f"Network ({self.hw['net_iface']})")
+        page.add(net_group)
+
+        self.row_net_status = make_row("Interface Status", "Reading...", "network-wireless-symbolic")
+        self.row_net_speed = make_row("Transfer Rates", "Reading...", "network-transmit-receive-symbolic")
+        net_group.add(self.row_net_status)
+        net_group.add(self.row_net_speed)
+
+        # Display Subsystem
+        disp_group = Adw.PreferencesGroup(title="Display &amp; Visual Output")
+        page.add(disp_group)
+
+        self.row_disp_mode = make_row("Active Display Mode", "Detecting...", "video-display-symbolic")
+        panel_model = "CSOT NT36523 DSI Panel (2560×1600)" if self.hw['is_nabu'] else "Internal DRM Panel"
+        self.row_disp_panel = make_row("Display Hardware Panel", panel_model, "preferences-desktop-display-symbolic")
+        disp_group.add(self.row_disp_mode)
+        disp_group.add(self.row_disp_panel)
+
+        # Input & Peripherals
+        input_group = Adw.PreferencesGroup(title="Input Devices &amp; Chassis Peripherals")
+        page.add(input_group)
+        self.row_dev_touch = make_row("Touchscreen &amp; Stylus", "Detecting...", "input-tablet-symbolic")
+        self.row_dev_kbd = make_row("Keyboard &amp; Pogo Dock", "Detecting...", "input-keyboard-symbolic")
+        input_group.add(self.row_dev_touch)
+        input_group.add(self.row_dev_kbd)
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Device Diagnostics", "Save storage, network and peripheral telemetry to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Log")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("device"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "device", "Device", "preferences-system-devices-symbolic")
+
+    # ==========================================
+    # 7. SYSTEM INFO PAGE
+    # ==========================================
+    def build_sysinfo_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero KPI Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_sys_hero, self.lbl_sys_hero_val, self.badge_sys_hero, self.lbl_sys_hero_sub, self.progress_sys_hero = create_hero_card(
+            "computer-symbolic", self.hw['model'], "Linux Kernel & Platform Architecture", "System", "pill-success"
+        )
+        self.progress_sys_hero.set_visible(False)
+        hero_group.add(self.card_sys_hero)
+        page.add(hero_group)
+
+        hw_group = Adw.PreferencesGroup(title="Hardware &amp; Board Platform")
+        page.add(hw_group)
+
+        row_model = make_row("Device Model", f"{self.hw['model']} • {os.uname().machine}", "computer-symbolic")
+        soc_name = "Qualcomm Snapdragon 855/860 (SM8150)" if self.hw['is_nabu'] else f"{self.hw['cpu_count']}-Core Processor"
+        row_soc = make_row("SoC / Processor", soc_name, "applications-engineering-symbolic")
+        row_gpu_arch = make_row("GPU Hardware", self.hw['gpu_model'], "video-display-symbolic")
+
+        hw_group.add(row_model)
+        hw_group.add(row_soc)
+        hw_group.add(row_gpu_arch)
+
+        sw_group = Adw.PreferencesGroup(title="Software &amp; OS Stack")
+        page.add(sw_group)
+
+        os_str = "Linux"
+        if os.path.exists('/etc/os-release'):
+            try:
+                with open('/etc/os-release') as f:
+                    for l in f:
+                        if l.startswith('PRETTY_NAME='):
+                            os_str = l.split('=', 1)[1].strip().strip('"')
+            except Exception:
+                pass
+
+        row_os = make_row("Operating System", os_str, "system-run-symbolic")
+        row_de = make_row("Desktop Environment", f"{get_desktop_environment()}", "preferences-desktop-display-symbolic")
+        row_kernel = make_row("Kernel Release", os.uname().release, "applications-system-symbolic")
+
+        sw_group.add(row_os)
+        sw_group.add(row_de)
+        sw_group.add(row_kernel)
+
+        rt_group = Adw.PreferencesGroup(title="Runtime &amp; Host Status")
+        page.add(rt_group)
+
+        self.row_hostname = make_row("Hostname", "localhost", "network-server-symbolic")
+        self.row_uptime_info = make_row("System Uptime", "Reading...", "alarm-symbolic")
+        self.row_load_info = make_row("Load Averages", "Reading...", "utilities-terminal-symbolic")
+        self.row_tasks_info = make_row("Active Tasks &amp; Threads", "Reading...", "view-list-bullet-symbolic")
+
+        rt_group.add(self.row_hostname)
+        rt_group.add(self.row_uptime_info)
+        rt_group.add(self.row_load_info)
+        rt_group.add(self.row_tasks_info)
+
+        log_group = Adw.PreferencesGroup(title="Diagnostics")
+        page.add(log_group)
+        row_log = make_row("Export Complete Diagnostic Report", "Save all hardware, firmware and system stats to file", "document-save-symbolic")
+        btn_save = Gtk.Button(label="Export Full Report")
+        btn_save.set_valign(Gtk.Align.CENTER)
+        btn_save.connect("clicked", lambda b: self.export_log("all"))
+        row_log.add_suffix(btn_save)
+        log_group.add(row_log)
+
+        self.stack.add_titled_with_icon(page, "sysinfo", "System", "dialog-information-symbolic")
+
+    # ==========================================
+    # 8. ABOUT & CREDITS PAGE (Dedicated Section in Navigation)
+    # ==========================================
+    def build_about_page(self):
+        page = Adw.PreferencesPage()
+
+        # Hero Branding Card
+        hero_group = Adw.PreferencesGroup()
+        self.card_about_hero, self.lbl_about_hero_val, self.badge_about_hero, self.lbl_about_hero_sub, self.progress_about_hero = create_hero_card(
+            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.3.0", "pill-accent"
+        )
+        self.progress_about_hero.set_visible(False)
+        hero_group.add(self.card_about_hero)
+        page.add(hero_group)
+
+        # Developer & Maintainer Group
+        dev_group = Adw.PreferencesGroup(title="Developer &amp; Maintainer")
+        page.add(dev_group)
+
+        row_dev = make_row("Lead Developer", "Kumar-Jy (@Kumar-Jy)", "system-monitor")
+        btn_gh_profile = Gtk.LinkButton(uri="https://github.com/Kumar-Jy", label="@Kumar-Jy")
+        btn_gh_profile.set_valign(Gtk.Align.CENTER)
+        row_dev.add_suffix(btn_gh_profile)
+        dev_group.add(row_dev)
+
+        # Project & Source Code Group
+        proj_group = Adw.PreferencesGroup(title="Project Information &amp; Repository")
+        page.add(proj_group)
+
+        row_repo = make_row("Source Repository", "https://github.com/Kumar-Jy/nabu-pkgs", "system-run-symbolic")
+        btn_repo = Gtk.LinkButton(uri="https://github.com/Kumar-Jy/nabu-pkgs", label="GitHub Repo")
+        btn_repo.set_valign(Gtk.Align.CENTER)
+        row_repo.add_suffix(btn_repo)
+        proj_group.add(row_repo)
+
+        row_issues = make_row("Bug Tracker &amp; Issues", "Submit telemetry issues or hardware requests", "dialog-warning-symbolic")
+        btn_issues = Gtk.LinkButton(uri="https://github.com/Kumar-Jy/nabu-pkgs/issues", label="Report Issue")
+        btn_issues.set_valign(Gtk.Align.CENTER)
+        row_issues.add_suffix(btn_issues)
+        proj_group.add(row_issues)
+
+        # Legal & System Dialog Group
+        legal_group = Adw.PreferencesGroup(title="Legal &amp; System Information")
+        page.add(legal_group)
+
+        row_license = make_row("License", "MIT License • Copyright (c) 2026 Kumar-Jy", "emblem-important-symbolic")
+        legal_group.add(row_license)
+
+        row_dialog = make_row("Full Credits Dialog", "Open native Adw.AboutDialog with system details", "help-about-symbolic")
+        btn_open_dialog = Gtk.Button(label="Open About Dialog")
+        btn_open_dialog.set_valign(Gtk.Align.CENTER)
+        btn_open_dialog.connect("clicked", self.on_about_clicked)
+        row_dialog.add_suffix(btn_open_dialog)
+        legal_group.add(row_dialog)
+
+        self.stack.add_titled_with_icon(page, "about", "About", "help-about-symbolic")
+
+    # ==========================================
+    # DATA REFRESH LOGIC
+    # ==========================================
+    def refresh_all_stats(self):
+        if self.paused:
+            return True
+        self.refresh_gpu_stats()
+        self.refresh_cpu_stats()
+        self.refresh_memory_stats()
+        self.refresh_apps_stats()
+        self.refresh_power_stats()
+        self.refresh_sensors_stats()
+        self.refresh_device_stats()
+        self.refresh_sysinfo_stats()
+        return True
+
+    def refresh_gpu_stats(self):
+        # 1. Devfreq / Frequency
+        freq_mhz = 0.0
+        gov = "DRM Scheduling"
+        if self.hw['gpu_devfreq'] and os.path.exists(f"{self.hw['gpu_devfreq']}/cur_freq"):
+            try:
+                freq_hz = int(open(f"{self.hw['gpu_devfreq']}/cur_freq").read().strip())
+                freq_mhz = freq_hz / 1_000_000
+                min_mhz, max_mhz = "N/A", "N/A"
+                if os.path.exists(f"{self.hw['gpu_devfreq']}/min_freq"):
+                    min_mhz = f"{int(open(f'{self.hw['gpu_devfreq']}/min_freq').read().strip()) / 1e6:.1f}"
+                if os.path.exists(f"{self.hw['gpu_devfreq']}/max_freq"):
+                    max_mhz = f"{int(open(f'{self.hw['gpu_devfreq']}/max_freq').read().strip()) / 1e6:.1f}"
+                self.row_gpu_freq.set_subtitle(f"{freq_mhz:.1f} MHz (Min: {min_mhz} MHz • Max: {max_mhz} MHz)")
+                gov = open(f"{self.hw['gpu_devfreq']}/governor").read().strip()
+                self.row_gpu_gov.set_subtitle(f"Governor: {gov}")
+            except Exception:
+                self.row_gpu_freq.set_subtitle("Dynamic Clocking")
+        else:
+            self.row_gpu_freq.set_subtitle("Dynamic GPU Frequency")
+            self.row_gpu_gov.set_subtitle("DRM Engine Scheduling")
+
+        # 2. GPU Temp
+        gpu_temp_c = None
+        gpu_temp_str = "N/A"
+        for name, path in self.thermal_zones.items():
+            if 'gpu' in name.lower():
+                try:
+                    gpu_temp_c = int(open(path).read().strip()) / 1000.0
+                    gpu_temp_str = f"{gpu_temp_c:.1f} °C"
+                    self.row_gpu_temp.set_subtitle(format_temp(gpu_temp_c))
+                    break
+                except Exception:
+                    pass
+        if gpu_temp_c is None:
+            self.row_gpu_temp.set_subtitle("Sensor not exposed")
+
+        # 3. DRM Per-Process Engine & Memory
+        now = time.time()
+        dt = max(now - self.last_time, 0.001)
+        self.last_time = now
+
+        curr_engine = {}
+        curr_mem = {}
+        app_names = {}
+
+        for path in glob.glob('/proc/[0-9]*/fdinfo/*'):
+            try:
+                with open(path, 'r') as f:
+                    content = f.read()
+                if 'drm-driver:' in content:
+                    pid = int(path.split('/')[2])
+                    for line in content.splitlines():
+                        if line.startswith(('drm-engine-gpu:', 'drm-engine-render:', 'drm-engine-3d:')):
+                            curr_engine[pid] = curr_engine.get(pid, 0) + int(line.split()[1])
+                        elif line.startswith(('drm-resident-memory:', 'drm-total-memory:')):
+                            curr_mem[pid] = curr_mem.get(pid, 0) + int(line.split()[1])
+                    if pid not in app_names:
+                        with open(f'/proc/{pid}/comm') as f:
+                            app_names[pid] = f.read().strip()
+            except Exception:
+                continue
+
+        total_resident_kib = sum(curr_mem.values())
+        self.row_gpu_mem.set_subtitle(f"{total_resident_kib / 1024:.1f} MB in use across active clients")
+
+        total_active_ns = 0
+        proc_stats = []
+        for pid, comm in app_names.items():
+            prev_ns = self.last_engine.get(pid, 0)
+            cur_ns = curr_engine.get(pid, 0)
+            diff_ns = max(cur_ns - prev_ns, 0) if prev_ns > 0 else 0
+            total_active_ns += diff_ns
+            pct = (diff_ns / (dt * 1e9)) * 100.0
+            mem_mb = curr_mem.get(pid, 0) / 1024.0
+            proc_stats.append((pid, comm, pct, mem_mb))
+
+        total_gpu_pct = min((total_active_ns / (dt * 1e9)) * 100.0, 100.0)
+
+        # Update GPU Hero Card
+        self.lbl_gpu_hero_val.set_label(f"{total_gpu_pct:.1f}%")
+        self.progress_gpu_hero.set_fraction(total_gpu_pct / 100.0)
+        set_badge_text_and_class(self.badge_gpu_hero, gov, "pill-accent" if total_gpu_pct < 60 else "pill-warning")
+        freq_info = f"{freq_mhz:.0f} MHz" if freq_mhz > 0 else "Dynamic"
+        self.lbl_gpu_hero_sub.set_label(f"{self.hw['gpu_model']} • {freq_info} • Temp: {gpu_temp_str} • VRAM: {total_resident_kib / 1024:.1f} MB")
+
+        proc_stats.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        self.cached_gpu_proc = {
+            pid: {'pct': pct, 'mem_mb': mem_mb}
+            for pid, comm, pct, mem_mb in proc_stats
+        }
+        current_pids = set()
+        for pid, comm, pct, mem_mb in proc_stats:
+            if pct < 0.1 and mem_mb < 2.0:
+                continue
+            current_pids.add(pid)
+            sub_text = f"GPU: {pct:4.1f}%  •  VRAM: {mem_mb:5.1f} MB  •  PID: {pid}"
+            if pid not in self.proc_rows:
+                row = make_row(comm, sub_text, "application-x-executable-symbolic")
+                self.proc_group.add(row)
+                self.proc_rows[pid] = row
+            else:
+                row = self.proc_rows[pid]
+                row.set_title(comm)
+                row.set_subtitle(sub_text)
+
+        for pid in list(self.proc_rows.keys()):
+            if pid not in current_pids:
+                self.proc_group.remove(self.proc_rows[pid])
+                del self.proc_rows[pid]
+
+        self.last_engine = curr_engine
+
+    def refresh_cpu_stats(self):
+        curr_cpu = {}
+        try:
+            with open('/proc/stat') as f:
+                for line in f:
+                    parts = line.split()
+                    if parts[0].startswith('cpu'):
+                        name = parts[0]
+                        values = [int(x) for x in parts[1:]]
+                        idle = values[3] + values[4]
+                        total = sum(values)
+                        curr_cpu[name] = (total, idle)
+        except Exception:
+            return
+
+        if not self.last_cpu_stats:
+            self.last_cpu_stats = curr_cpu
+            return
+
+        tot_pct = 0.0
+        if 'cpu' in curr_cpu and 'cpu' in self.last_cpu_stats:
+            t_diff = curr_cpu['cpu'][0] - self.last_cpu_stats['cpu'][0]
+            i_diff = curr_cpu['cpu'][1] - self.last_cpu_stats['cpu'][1]
+            tot_pct = ((t_diff - i_diff) / t_diff) * 100.0 if t_diff > 0 else 0.0
+
+        # Update CPU Hero Card
+        self.lbl_cpu_hero_val.set_label(f"{tot_pct:.1f}%")
+        self.progress_cpu_hero.set_fraction(min(tot_pct / 100.0, 1.0))
+        badge_cls = "pill-accent" if tot_pct < 60.0 else ("pill-warning" if tot_pct < 85.0 else "pill-error")
+        set_badge_text_and_class(self.badge_cpu_hero, f"{tot_pct:.1f}% Load", badge_cls)
+
+        temp_keys = [
+            'cpu0-thermal', 'cpu1-thermal', 'cpu2-thermal', 'cpu3-thermal',
+            'cpu4-top-thermal', 'cpu5-top-thermal', 'cpu6-top-thermal', 'cpu7-top-thermal'
+        ]
+
+        freq_samples = []
+        for i in range(self.hw['cpu_count']):
+            core_name = f"cpu{i}"
+            pct = 0.0
+            if core_name in curr_cpu and core_name in self.last_cpu_stats:
+                dt = curr_cpu[core_name][0] - self.last_cpu_stats[core_name][0]
+                di = curr_cpu[core_name][1] - self.last_cpu_stats[core_name][1]
+                pct = ((dt - di) / dt) * 100.0 if dt > 0 else 0.0
+
+            freq_str = "N/A"
+            freq_path = f"/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq"
+            if os.path.exists(freq_path):
+                try:
+                    with open(freq_path) as f:
+                        freq_khz = int(f.read().strip())
+                    freq_mhz = freq_khz / 1000
+                    freq_str = f"{freq_mhz:.0f} MHz"
+                    freq_samples.append(freq_mhz)
+                except Exception:
+                    pass
+
+            temp_str = "N/A"
+            if i < len(temp_keys):
+                t_zone = self.thermal_zones.get(temp_keys[i])
+                if t_zone and os.path.exists(t_zone):
+                    try:
+                        with open(t_zone) as f:
+                            temp_str = f"{int(f.read().strip()) / 1000.0:.1f} °C"
+                    except Exception:
+                        pass
+
+            if self.hw['is_nabu']:
+                tier = "Silver (Little)" if i < 4 else ("Gold (Big)" if i < 7 else "Gold Prime (Super)")
+                sub = f"{tier}  •  Freq: {freq_str}  •  Temp: {temp_str}"
+            else:
+                sub = f"Freq: {freq_str}" + (f"  •  Temp: {temp_str}" if temp_str != "N/A" else "")
+
+            if i < len(self.core_rows):
+                self.core_rows[i].set_title(f"Core {i}  [{pct:4.1f}%]")
+                self.core_rows[i].set_subtitle(sub)
+                self.core_bars[i].set_fraction(min(max(pct / 100.0, 0.0), 1.0))
+
+        avg_freq = sum(freq_samples) / len(freq_samples) if freq_samples else 0
+        freq_summary = f" • Avg Freq: {avg_freq:.0f} MHz" if avg_freq > 0 else ""
+        title_suffix = "Snapdragon 855/860 Kryo 485" if self.hw['is_nabu'] else f"{self.hw['cpu_count']}-Core"
+        self.lbl_cpu_hero_sub.set_label(f"{title_suffix} • {self.hw['cpu_count']} Logical Cores Active{freq_summary}")
+
+        self.last_cpu_stats = curr_cpu
+
+    def refresh_memory_stats(self):
+        mem = {}
+        try:
+            with open('/proc/meminfo') as f:
+                for line in f:
+                    p = line.split(':')
+                    if len(p) == 2:
+                        mem[p[0].strip()] = int(p[1].split()[0])
+        except Exception:
+            return
+
+        total_kib = mem.get('MemTotal', 1)
+        avail_kib = mem.get('MemAvailable', 0)
+        used_kib = total_kib - avail_kib
+        buffers_kib = mem.get('Buffers', 0)
+        cached_kib = mem.get('Cached', 0)
+        ram_pct = (used_kib / total_kib) * 100.0
+
+        # Update RAM Hero Card
+        self.lbl_ram_hero_val.set_label(f"{used_kib/1024/1024:.2f} GiB")
+        self.progress_ram_hero.set_fraction(min(ram_pct / 100.0, 1.0))
+        badge_cls = "pill-accent" if ram_pct < 75.0 else ("pill-warning" if ram_pct < 90.0 else "pill-error")
+        set_badge_text_and_class(self.badge_ram_hero, f"{ram_pct:.1f}% Used", badge_cls)
+        self.lbl_ram_hero_sub.set_label(
+            f"{total_kib/1024/1024:.2f} GiB Total RAM • Free/Available: {avail_kib/1024/1024:.2f} GiB • Cache: {(buffers_kib+cached_kib)/1024:.0f} MB"
+        )
+
+        self.row_ram_usage.set_subtitle(f"{used_kib/1024/1024:.2f} GiB used of {total_kib/1024/1024:.2f} GiB ({ram_pct:.1f}%)")
+        self.progress_ram.set_fraction(min(ram_pct / 100.0, 1.0))
+        self.row_ram_breakdown.set_subtitle(f"Available: {avail_kib/1024:.0f} MB • Buffers/Cache: {(buffers_kib+cached_kib)/1024:.0f} MB")
+
+        swap_total = mem.get('SwapTotal', 0)
+        swap_free = mem.get('SwapFree', 0)
+        swap_used = swap_total - swap_free
+        swap_pct = (swap_used / swap_total * 100.0) if swap_total > 0 else 0.0
+
+        self.row_swap_usage.set_subtitle(f"{swap_used/1024/1024:.2f} GiB used of {swap_total/1024/1024:.2f} GiB ({swap_pct:.1f}%)")
+        self.progress_swap.set_fraction(min(swap_pct / 100.0, 1.0))
+        self.row_swap_detail.set_subtitle(f"Free Swap: {swap_free/1024:.0f} MB • ZRAM Compressed")
+
+        proc_mem = []
+        for path in glob.glob('/proc/[0-9]*/status'):
+            try:
+                pid = int(path.split('/')[2])
+                rss_kb = 0
+                comm = ""
+                with open(path) as f:
+                    for l in f:
+                        if l.startswith('Name:'):
+                            comm = l.split()[1]
+                        elif l.startswith('VmRSS:'):
+                            rss_kb = int(l.split()[1])
+                if rss_kb > 10240:
+                    proc_mem.append((pid, comm, rss_kb))
+            except Exception:
+                continue
+
+        proc_mem.sort(key=lambda x: x[2], reverse=True)
+        for i, row in enumerate(self.mem_app_rows):
+            if i < len(proc_mem):
+                pid, comm, rss = proc_mem[i]
+                row.set_title(comm)
+                row.set_subtitle(f"Resident Memory: {rss/1024:.1f} MB  •  PID: {pid}")
+                row.set_visible(True)
+            else:
+                row.set_visible(False)
+
+    def refresh_power_stats(self):
+        # 1. Probe Charger & Wall Input
+        cpath = self.hw['charger_path']
+        c_online = False
+        c_stat = "Disconnected"
+        usb_type = "Unknown"
+        v_in = 0.0
+        c_in = 0.0
+        c_limit = 0.0
+        p_in = 0.0
+
+        if cpath and os.path.exists(cpath):
+            try:
+                c_online = open(f"{cpath}/online").read().strip() == '1'
+                if os.path.exists(f"{cpath}/status"):
+                    c_stat = open(f"{cpath}/status").read().strip()
+                if os.path.exists(f"{cpath}/usb_type"):
+                    usb_type = open(f"{cpath}/usb_type").read().strip()
+                if os.path.exists(f"{cpath}/voltage_now"):
+                    v_in = int(open(f"{cpath}/voltage_now").read().strip()) / 1e6
+                if os.path.exists(f"{cpath}/current_now"):
+                    c_in = int(open(f"{cpath}/current_now").read().strip()) / 1e6
+                p_in = v_in * c_in
+                if os.path.exists(f"{cpath}/input_current_limit"):
+                    c_limit = int(open(f"{cpath}/input_current_limit").read().strip()) / 1e6
+                elif os.path.exists(f"{cpath}/current_max"):
+                    c_limit = int(open(f"{cpath}/current_max").read().strip()) / 1e6
+            except Exception:
+                pass
+
+        # 2. Battery Telemetry
+        bpath = self.hw['battery_path']
+        if bpath and os.path.exists(bpath):
+            try:
+                cap = int(open(f"{bpath}/capacity").read().strip())
+                status = open(f"{bpath}/status").read().strip()
+                tech = open(f"{bpath}/technology").read().strip() if os.path.exists(f"{bpath}/technology") else "Li-ion"
+                
+                v_u = int(open(f"{bpath}/voltage_now").read().strip()) if os.path.exists(f"{bpath}/voltage_now") else 0
+                c_u = abs(int(open(f"{bpath}/current_now").read().strip())) if os.path.exists(f"{bpath}/current_now") else 0
+                v_v = v_u / 1e6
+                c_a = c_u / 1e6
+                p_w = v_v * c_a
+
+                # Hero Card Update
+                self.lbl_bat_hero_val.set_label(f"{cap}%")
+                self.progress_bat_hero.set_fraction(min(max(cap / 100.0, 0.0), 1.0))
+                
+                direction = "+" if status.lower() == "charging" else "-"
+                is_charging = status.lower() == "charging"
+                direct_idle = is_charging and c_online and (p_in > 0 and p_in < p_w)
+
+                if is_charging:
+                    badge_cls = "pill-success"
+                    if p_in >= p_w:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W Net / {p_in:.1f}W Wall)"
+                    elif direct_idle:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W Net • PMIC Active)"
+                    else:
+                        badge_str = f"⚡ Charging (+{p_w:.1f}W)"
+                else:
+                    if cap <= 10:
+                        badge_cls = "pill-error"
+                    elif cap <= 20:
+                        badge_cls = "pill-warning"
+                    else:
+                        badge_cls = "pill-accent"
+                    badge_str = f"🔋 Discharging ({direction}{p_w:.1f}W)"
+                set_badge_text_and_class(self.badge_bat_hero, badge_str, badge_cls)
+
+                # Hero row & Progress
+                status_icon = "⚡ Charging" if is_charging else ("🔋 Discharging" if status.lower() == "discharging" else f"🔌 {status}")
+                self.row_bat_hero.set_title(f"Battery Level: {cap}%")
+                self.row_bat_hero.set_subtitle(f"{status_icon} • State of Charge")
+                self.progress_bat_main.set_fraction(min(max(cap / 100.0, 0.0), 1.0))
+
+                # Flow rate
+                if is_charging and p_in >= p_w:
+                    self.row_bat_rate.set_subtitle(f"+{p_w:.2f} Watts into Battery (Wall Input: {p_in:.2f} W)")
+                elif is_charging:
+                    self.row_bat_rate.set_subtitle(f"+{p_w:.2f} Watts into Battery (PM8150B Buck-Boost Charger)")
+                else:
+                    self.row_bat_rate.set_subtitle(f"{direction}{p_w:.2f} Watts ({status})")
+
+                # Voltage
+                v_min = int(open(f"{bpath}/voltage_min_design").read().strip()) / 1e6 if os.path.exists(f"{bpath}/voltage_min_design") else 3.4
+                v_max = int(open(f"{bpath}/voltage_max_design").read().strip()) / 1e6 if os.path.exists(f"{bpath}/voltage_max_design") else 4.48
+                self.row_bat_volts.set_subtitle(f"{v_v:.3f} Volts (Operating Range: {v_min:.2f} V – {v_max:.2f} V)")
+
+                # Current
+                self.row_bat_current.set_subtitle(f"{c_a * 1000:.0f} mA  ({c_a:.3f} Amperes)")
+
+                # Capacity & Energy
+                full_mah = int(open(f"{bpath}/charge_full_design").read().strip()) / 1000.0 if os.path.exists(f"{bpath}/charge_full_design") else 8720
+                energy_wh = int(open(f"{bpath}/energy_full_design").read().strip()) / 1e6 if os.path.exists(f"{bpath}/energy_full_design") else 33.6
+                self.row_bat_cap.set_subtitle(f"{full_mah:,.0f} mAh Design Capacity • {energy_wh:.1f} Wh Energy")
+
+                # Temp
+                temp_str = "N/A"
+                if os.path.exists(f"{bpath}/temp"):
+                    temp_c = int(open(f"{bpath}/temp").read().strip()) / 10.0
+                    temp_str = f"{temp_c:.1f} °C"
+                    self.row_bat_temp.set_subtitle(format_temp(temp_c))
+                else:
+                    self.row_bat_temp.set_subtitle("Temperature sensor unexposed")
+
+                # Health
+                self.row_bat_health.set_subtitle(f"Health: Good  •  Chemistry: {tech}")
+
+                # Runtime Estimate
+                est_str = "Calculating..."
+                if c_a > 0.05:
+                    if status.lower() == "discharging":
+                        rem_hours = (cap / 100.0) * (full_mah / (c_a * 1000.0))
+                        rh = int(rem_hours)
+                        rm = int((rem_hours - rh) * 60)
+                        est_str = f"~{rh}h {rm:02d}m on battery"
+                        self.row_bat_est.set_subtitle(f"Estimated {est_str} remaining")
+                    elif status.lower() == "charging":
+                        rem_hours = ((100 - cap) / 100.0) * (full_mah / (c_a * 1000.0))
+                        rh = int(rem_hours)
+                        rm = int((rem_hours - rh) * 60)
+                        est_str = f"~{rh}h {rm:02d}m until full"
+                        self.row_bat_est.set_subtitle(f"Estimated {est_str}")
+                    else:
+                        est_str = f"Fully Charged"
+                        self.row_bat_est.set_subtitle(f"Fully Charged ({status})")
+                else:
+                    self.row_bat_est.set_subtitle("Calculating runtime estimate...")
+
+                chg_info = f" • Wall: {p_in:.1f}W" if p_in > 0.1 else ""
+                self.lbl_bat_hero_sub.set_label(f"{est_str} • Voltage: {v_v:.2f}V{chg_info} • Cell Temp: {temp_str} • Health: Good")
+
+            except Exception as e:
+                self.row_bat_hero.set_subtitle(f"Battery Telemetry Error: {e}")
+        else:
+            self.lbl_bat_hero_val.set_label("100%")
+            self.progress_bat_hero.set_fraction(1.0)
+            set_badge_text_and_class(self.badge_bat_hero, "🔌 AC Mains Power", "pill-success")
+            self.lbl_bat_hero_sub.set_label("Stationary Wall Power • No Internal Battery Drain")
+
+            self.row_bat_hero.set_title("AC Mains Connected")
+            self.row_bat_hero.set_subtitle("Direct Wall Power (No Internal Battery Detected)")
+            self.progress_bat_main.set_fraction(1.0)
+            self.row_bat_rate.set_subtitle("Direct Stationary AC Power")
+            self.row_bat_volts.set_subtitle("Mains Power Supply")
+            self.row_bat_current.set_subtitle("N/A")
+            self.row_bat_cap.set_subtitle("Desktop/Server Form Factor")
+            self.row_bat_temp.set_subtitle("N/A")
+            self.row_bat_health.set_subtitle("AC Mains")
+            self.row_bat_est.set_subtitle("Continuous Wall Power")
+
+        # 3. Charger Rows Update
+        if cpath and os.path.exists(cpath):
+            try:
+                if c_online:
+                    self.row_chg_status.set_subtitle(f"🟢 Plugged In (Power Source Active • {c_stat})")
+                    self.row_chg_proto.set_subtitle(f"Fast / Standard Protocol: {usb_type}")
+                    if p_in >= p_w and p_in > 0.05:
+                        self.row_chg_power.set_subtitle(f"{p_in:.2f} Watts (Wall Input Draw)")
+                    elif is_charging:
+                        est_wall = (p_w / 0.88) + 3.5
+                        self.row_chg_power.set_subtitle(f"PM8150B Active (~{est_wall:.1f}W Wall Draw) • Direct IC (LN8000): {p_in:.2f}W Standby")
+                    elif p_in > 0.05:
+                        self.row_chg_power.set_subtitle(f"{p_in:.2f} Watts (Standby / Trickle Flow)")
+                    else:
+                        self.row_chg_power.set_subtitle("Standby / Trickle Flow")
+                else:
+                    self.row_chg_status.set_subtitle("⚪ Disconnected (Running on Battery)")
+                    self.row_chg_proto.set_subtitle("Unplugged")
+                    self.row_chg_power.set_subtitle("0.00 Watts (Unplugged)")
+
+                self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (PM8150B Charger IC)")
+
+                if v_in > 0 or c_in > 0:
+                    lim_str = f" (Limit: {c_limit*1000:.0f} mA)" if c_limit > 0 else ""
+                    self.row_chg_input.set_subtitle(f"Input: {v_in:.2f} V • Current: {c_in*1000:.0f} mA ({c_in:.2f} A){lim_str}")
+                else:
+                    self.row_chg_input.set_subtitle(f"Standby / Inactive (Online: {c_online})")
+            except Exception:
+                self.row_chg_status.set_subtitle("Charger status unavailable")
+        else:
+            self.row_chg_status.set_subtitle("Standard AC/DC Supply")
+            self.row_chg_power.set_subtitle("Mains Line Power")
+            self.row_chg_proto.set_subtitle("Direct Power")
+            self.row_chg_ctrl.set_subtitle("AC Adapter")
+            self.row_chg_input.set_subtitle("AC Line Voltage")
+
+        # Charger Temp
+        tz_chg = self.thermal_zones.get('pm8150b-thermal')
+        if tz_chg and os.path.exists(tz_chg):
+            try:
+                tc = int(open(tz_chg).read().strip()) / 1000.0
+                self.row_chg_temp.set_subtitle(format_temp(tc))
+            except Exception:
+                self.row_chg_temp.set_subtitle("Sensor unreadable")
+        else:
+            self.row_chg_temp.set_subtitle("Sensor not exposed")
+
+        # Type-C / TCPM
+        tpath = self.hw['typec_path']
+        if tpath and os.path.exists(tpath):
+            try:
+                t_online = open(f"{tpath}/online").read().strip()
+                t_usb_type = open(f"{tpath}/usb_type").read().strip() if os.path.exists(f"{tpath}/usb_type") else "N/A"
+                t_v = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6 if os.path.exists(f"{tpath}/voltage_now") else 0.0
+                t_c = int(open(f"{tpath}/current_max").read().strip()) / 1e6 if os.path.exists(f"{tpath}/current_max") else 0.0
+                contract_str = ""
+                if t_v > 0 and t_c > 0:
+                    contract_str = f" • PD Contract: {t_v*t_c:.1f}W ({t_v:.1f}V @ {t_c:.1f}A)"
+                self.row_chg_typec.set_subtitle(f"Port Online: {t_online} • Protocol: {t_usb_type}{contract_str}")
+            except Exception:
+                self.row_chg_typec.set_subtitle("TCPM port active")
+        else:
+            self.row_chg_typec.set_subtitle("Standard USB / Power Port")
+
+        # Wireless Pen Charger
+        pen_path = self.hw.get('pen_charger_path')
+        if pen_path and hasattr(self, 'row_chg_pen') and os.path.exists(pen_path):
+            try:
+                pen_online = open(f"{pen_path}/online").read().strip() == '1'
+                if pen_online:
+                    self.row_chg_pen.set_subtitle("🟢 Stylus Attached & Charging on Top Rail")
+                else:
+                    self.row_chg_pen.set_subtitle("⚪ Standby / No Stylus on Magnetic Rail")
+            except Exception:
+                self.row_chg_pen.set_subtitle("Wireless Charging IC Ready")
+
+    def refresh_sensors_stats(self):
+        zones = {}
+        for name, path in self.thermal_zones.items():
+            try:
+                if os.path.exists(path):
+                    zones[name] = int(open(path).read().strip()) / 1000.0
+            except Exception:
+                pass
+
+        # Update Sensor Hero Card
+        if zones:
+            max_zone_val = max(zones.values())
+            self.lbl_sensor_hero_val.set_label(f"{max_zone_val:.1f} °C")
+            self.progress_sensor_hero.set_fraction(min(max_zone_val / 100.0, 1.0))
+            if max_zone_val < 50.0:
+                set_badge_text_and_class(self.badge_sensor_hero, "Optimal Thermals", "pill-success")
+            elif max_zone_val < 72.0:
+                set_badge_text_and_class(self.badge_sensor_hero, "Normal Thermals", "pill-accent")
+            elif max_zone_val < 85.0:
+                set_badge_text_and_class(self.badge_sensor_hero, "Elevated Thermals", "pill-warning")
+            else:
+                set_badge_text_and_class(self.badge_sensor_hero, "Thermal Throttling", "pill-error")
+        else:
+            self.lbl_sensor_hero_val.set_label("N/A")
+            set_badge_text_and_class(self.badge_sensor_hero, "Standard Sensors", "pill-accent")
+
+        if self.hw['is_nabu']:
+            # 1. CPU Silver Little Cores (0-3)
+            s_temps = [zones.get(f"cpu{i}-thermal") for i in range(4) if f"cpu{i}-thermal" in zones]
+            avg_s_str = "N/A"
+            if s_temps:
+                avg_s = sum(s_temps) / len(s_temps)
+                avg_s_str = f"{avg_s:.0f}°C"
+                s_details = "  •  ".join([f"C{i}: {t:.0f}°C" for i, t in enumerate(s_temps)])
+                self.row_therm_silver.set_subtitle(f"{format_temp(avg_s)}  [{s_details}]")
+            else:
+                self.row_therm_silver.set_subtitle("Sensors unexposed")
+
+            # 2. Gold Cluster (Cores 4-6 Big) Top & Bottom
+            g_top = [zones.get(f"cpu{i}-top-thermal") for i in range(4, 7) if f"cpu{i}-top-thermal" in zones]
+            g_bot = [zones.get(f"cpu{i}-bottom-thermal") for i in range(4, 7) if f"cpu{i}-bottom-thermal" in zones]
+            avg_g_str = "N/A"
+            if g_top:
+                avg_top = sum(g_top) / len(g_top)
+                avg_g_str = f"{avg_top:.0f}°C"
+                t_str = "  •  ".join([f"C{i}: {t:.0f}°C" for i, t in zip(range(4, 7), g_top)])
+                self.row_therm_gold_top.set_subtitle(f"{format_temp(avg_top)}  [{t_str}]")
+            if g_bot:
+                avg_bot = sum(g_bot) / len(g_bot)
+                b_str = "  •  ".join([f"C{i}: {t:.0f}°C" for i, t in zip(range(4, 7), g_bot)])
+                self.row_therm_gold_bot.set_subtitle(f"{format_temp(avg_bot)}  [{b_str}]")
+
+            # 3. Gold Prime Core 7 (Super)
+            p_top = zones.get("cpu7-top-thermal")
+            p_bot = zones.get("cpu7-bottom-thermal")
+            if p_top is not None and p_bot is not None:
+                p_avg = (p_top + p_bot) / 2.0
+                self.row_therm_prime.set_subtitle(f"{format_temp(p_avg)}  [Top: {p_top:.1f}°C  •  Bottom: {p_bot:.1f}°C]")
+            elif p_top is not None:
+                self.row_therm_prime.set_subtitle(format_temp(p_top))
+            else:
+                self.row_therm_prime.set_subtitle("Sensors unexposed")
+
+            # 4. Silicon Clusters Average
+            c0 = zones.get("cluster0-thermal")
+            c1 = zones.get("cluster1-thermal")
+            c0_str = f"{c0:.1f} °C" if c0 else "N/A"
+            c1_str = f"{c1:.1f} °C" if c1 else "N/A"
+            self.row_therm_clusters.set_subtitle(f"Cluster 0 (Little): {c0_str}  •  Cluster 1 (Big): {c1_str}")
+
+            # 5. Compute DSP & Hexagon HVX
+            d_comp = zones.get("compute-thermal")
+            d_hvx = zones.get("q6-hvx-thermal")
+            comp_str = f"{d_comp:.1f} °C" if d_comp else "N/A"
+            hvx_str = f"{d_hvx:.1f} °C" if d_hvx else "N/A"
+            self.row_therm_compute.set_subtitle(f"Compute DSP: {comp_str}  •  Hexagon HVX: {hvx_str}")
+
+            # 6. Multimedia Thermals
+            gpu_t = zones.get("gpu-top-thermal")
+            vpu_t = zones.get("video-thermal")
+            cam_t = zones.get("camera-thermal")
+            gpu_str = f"{gpu_t:.0f}°C" if gpu_t else "N/A"
+            self.row_therm_gpu.set_subtitle(format_temp(gpu_t))
+            self.row_therm_vpu.set_subtitle(format_temp(vpu_t))
+            self.row_therm_cam.set_subtitle(format_temp(cam_t))
+
+            # 7. PMIC & Board Thermals
+            pmic_t = zones.get("pm8150-thermal")
+            pmic_str = f"{pmic_t:.0f}°C" if pmic_t else "N/A"
+            self.row_therm_pmic_main.set_subtitle(format_temp(pmic_t))
+            self.row_therm_pmic_chg.set_subtitle(format_temp(zones.get("pm8150b-thermal")))
+            self.row_therm_pmic_sec.set_subtitle(format_temp(zones.get("pm8150l-thermal")))
+            self.row_therm_mem.set_subtitle(format_temp(zones.get("mem-thermal")))
+            self.row_therm_wlan.set_subtitle(format_temp(zones.get("wlan-thermal")))
+            self.row_therm_modem.set_subtitle(format_temp(zones.get("modem-thermal")))
+            a0 = zones.get("aoss0-thermal")
+            a1 = zones.get("aoss1-thermal")
+            a0_s = f"{a0:.1f}°C" if a0 else "N/A"
+            a1_s = f"{a1:.1f}°C" if a1 else "N/A"
+            self.row_therm_aoss.set_subtitle(f"Zone 0: {a0_s}  •  Zone 1: {a1_s}")
+
+            # Subtitle summary on hero card
+            self.lbl_sensor_hero_sub.set_label(f"CPU Silver: {avg_s_str} • Gold: {avg_g_str} • GPU: {gpu_str} • PMIC: {pmic_str}")
+
+            # 8. Switch, Position & Motion Sensors
+            try:
+                if not hasattr(self, 'sensor_proxy'):
+                    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+                    self.sensor_proxy = Gio.DBusProxy.new_sync(
+                        bus, Gio.DBusProxyFlags.NONE, None,
+                        'net.hadess.SensorProxy', '/net/hadess/SensorProxy', 'net.hadess.SensorProxy', None
+                    )
+                if self.sensor_proxy:
+                    orient_val = self.sensor_proxy.get_cached_property('AccelerometerOrientation')
+                    tilt_val = self.sensor_proxy.get_cached_property('AccelerometerTilt')
+                    orient = orient_val.unpack() if orient_val else "normal"
+                    tilt = tilt_val.unpack() if tilt_val else ""
+                    tilt_str = f" • Tilt: {tilt}" if tilt else ""
+                    orient_friendly = {
+                        'normal': 'Portrait (Upright)',
+                        'bottom-up': 'Portrait (Inverted)',
+                        'left-up': 'Landscape (Left Side Up)',
+                        'right-up': 'Landscape (Right Side Up)',
+                    }.get(orient, orient.capitalize())
+                    self.row_sensor_orient.set_subtitle(f"{orient_friendly}{tilt_str}")
+
+                    light_val = self.sensor_proxy.get_cached_property('LightLevel')
+                    has_light = self.sensor_proxy.get_cached_property('HasAmbientLight')
+                    if light_val and light_val.unpack() is not None:
+                        lux = light_val.unpack()
+                        self.row_sensor_light.set_subtitle(f"Ambient Illuminance: {lux:.1f} lux")
+                    elif has_light and has_light.unpack():
+                        self.row_sensor_light.set_subtitle("Light Sensor Active (Automatic Brightness)")
+                    else:
+                        self.row_sensor_light.set_subtitle("Ambient Light Sensor Calibrated")
+            except Exception:
+                if hasattr(self, 'row_sensor_orient'):
+                    self.row_sensor_orient.set_subtitle("SensorProxy unavailable")
+
+            tablet_found = False
+            for p in glob.glob('/sys/class/input/input*/name'):
+                try:
+                    name = open(p).read().strip()
+                    if 'tablet mode' in name.lower():
+                        self.row_sensor_tablet.set_subtitle(f"Hardware Switch Active ({name})")
+                        tablet_found = True
+                    elif 'headset' in name.lower() or 'jack' in name.lower():
+                        self.row_sensor_jack.set_subtitle(f"Jack Available ({name})")
+                except Exception:
+                    pass
+            if not tablet_found:
+                self.row_sensor_tablet.set_subtitle("Tablet Switch: Standard Mode")
+
+            # PMIC ADC Telemetry
+            adc_dev = "/sys/bus/iio/devices/iio:device1"
+            if os.path.exists(adc_dev):
+                try:
+                    chg_t = int(open(f"{adc_dev}/in_temp_chg_temp_input").read().strip()) / 10000.0 if os.path.exists(f"{adc_dev}/in_temp_chg_temp_input") else 0.0
+                    self.row_sensor_adc.set_subtitle(f"Charger Die Temp: {chg_t:.1f} °C  •  ADC Calibrated")
+                except Exception:
+                    self.row_sensor_adc.set_subtitle("ADC Channels Online")
+            else:
+                self.row_sensor_adc.set_subtitle("ADC Hardware Calibrated")
+
+        else:
+            # Generic Linux Refresh
+            for name, row in getattr(self, 'gen_sensor_rows', {}).items():
+                temp_c = zones.get(name)
+                row.set_subtitle(format_temp(temp_c))
+            self.lbl_sensor_hero_sub.set_label(f"{len(zones)} Thermal Zones Polled Dynamically")
+
+    def refresh_device_stats(self):
+        # 1. Root Storage
+        try:
+            st = os.statvfs('/')
+            total_gb = (st.f_blocks * st.f_frsize) / (1024**3)
+            free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+            used_gb = total_gb - free_gb
+            pct = (used_gb / total_gb) * 100.0
+            self.row_disk_usage.set_subtitle(f"{used_gb:.1f} GB used of {total_gb:.1f} GB ({pct:.1f}%) • Free: {free_gb:.1f} GB")
+            self.progress_disk.set_fraction(pct / 100.0)
+
+            # Hero Card
+            self.lbl_dev_hero_val.set_label(f"{used_gb:.1f} GB")
+            self.progress_dev_hero.set_fraction(pct / 100.0)
+            self.lbl_dev_hero_sub.set_label(f"Root Storage: {used_gb:.1f} / {total_gb:.1f} GB ({pct:.1f}%) • Free: {free_gb:.1f} GB")
+        except Exception:
+            self.row_disk_usage.set_subtitle("Storage info unavailable")
+
+        # 2. EFI Partition
+        if os.path.exists('/boot/efi'):
+            try:
+                st_boot = os.statvfs('/boot/efi')
+                tot_mb = (st_boot.f_blocks * st_boot.f_frsize) / (1024**2)
+                free_mb = (st_boot.f_bavail * st_boot.f_frsize) / (1024**2)
+                used_mb = tot_mb - free_mb
+                self.row_disk_boot.set_subtitle(f"{used_mb:.1f} MB used of {tot_mb:.1f} MB ({free_mb:.1f} MB free)")
+            except Exception:
+                self.row_disk_boot.set_subtitle("Active ESP Partition")
+        else:
+            self.row_disk_boot.set_subtitle("Standard Bootloader")
+
+        # 3. Network
+        try:
+            rx_bytes = 0
+            tx_bytes = 0
+            target_if = self.hw['net_iface']
+            with open('/proc/net/dev') as f:
+                for line in f:
+                    if f"{target_if}:" in line:
+                        parts = line.split(':')[1].split()
+                        rx_bytes = int(parts[0])
+                        tx_bytes = int(parts[8])
+                        break
+            prev_rx, prev_tx = self.last_net_bytes
+            rx_speed_kb = (rx_bytes - prev_rx) / 1024.0 if prev_rx > 0 else 0.0
+            tx_speed_kb = (tx_bytes - prev_tx) / 1024.0 if prev_tx > 0 else 0.0
+            self.last_net_bytes = (rx_bytes, tx_bytes)
+
+            self.row_net_status.set_subtitle(f"Interface: {target_if} (Active Link)")
+            self.row_net_speed.set_subtitle(f"↓ {rx_speed_kb:.1f} KB/s  •  ↑ {tx_speed_kb:.1f} KB/s")
+            set_badge_text_and_class(self.badge_dev_hero, f"↓ {rx_speed_kb:.0f} KB/s • ↑ {tx_speed_kb:.0f} KB/s", "pill-accent")
+        except Exception:
+            self.row_net_speed.set_subtitle("Network stats unavailable")
+
+        # 4. Input devices
+        touch_devices = []
+        kbd_devices = []
+        for p in glob.glob('/sys/class/input/input*/name'):
+            try:
+                name = open(p).read().strip()
+                n_low = name.lower()
+                if 'touch' in n_low or 'pen' in n_low or 'stylus' in n_low:
+                    touch_devices.append(name)
+                elif 'keyboard' in n_low or 'mouse' in n_low:
+                    kbd_devices.append(name)
+            except Exception:
+                pass
+        
+        if touch_devices:
+            self.row_dev_touch.set_subtitle(" • ".join(touch_devices))
+        else:
+            self.row_dev_touch.set_subtitle("Standard HID Pointer")
+
+        if kbd_devices:
+            self.row_dev_kbd.set_subtitle(" • ".join(kbd_devices))
+        else:
+            self.row_dev_kbd.set_subtitle("Standard Keyboard / Dock")
+
+        # 5. Display & Visual Output
+        try:
+            display = Gdk.Display.get_default()
+            if display:
+                monitors = display.get_monitors()
+                if monitors.get_n_items() > 0:
+                    m = monitors.get_item(0)
+                    geom = m.get_geometry()
+                    rr = m.get_refresh_rate() / 1000.0
+                    model = m.get_model() or "Internal Panel"
+                    self.row_disp_mode.set_subtitle(f"{geom.width} × {geom.height} @ {rr:.1f} Hz ({model})")
+        except Exception:
+            pass
+
+    def refresh_sysinfo_stats(self):
+        try:
+            with open('/proc/sys/kernel/hostname') as f:
+                self.row_hostname.set_subtitle(f.read().strip())
+        except Exception:
+            pass
+
+        up_str = "0m"
+        try:
+            with open('/proc/uptime') as f:
+                up_sec = float(f.read().split()[0])
+            d = int(up_sec // 86400)
+            h = int((up_sec % 86400) // 3600)
+            m = int((up_sec % 3600) // 60)
+            s = int(up_sec % 60)
+            up_str = f"{d}d {h}h {m}m {s}s" if d > 0 else f"{h}h {m}m {s}s"
+            self.row_uptime_info.set_subtitle(up_str)
+        except Exception:
+            pass
+
+        l1, l5, l15 = "0.00", "0.00", "0.00"
+        try:
+            with open('/proc/loadavg') as f:
+                l1, l5, l15 = f.read().split()[:3]
+            self.row_load_info.set_subtitle(f"{l1} (1 min) • {l5} (5 min) • {l15} (15 min)")
+        except Exception:
+            pass
+
+        tasks = 0
+        try:
+            tasks = len(glob.glob('/proc/[0-9]*'))
+            self.row_tasks_info.set_subtitle(f"{tasks} active processes")
+        except Exception:
+            pass
+
+        self.lbl_sys_hero_sub.set_label(f"Uptime: {up_str} • Load: {l1}, {l5}, {l15} • {tasks} Active Processes")
+
+
+class NabuSystemMonitorApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id='org.local.system_monitor',
+                         flags=0)
+
+    def do_activate(self):
+        win = self.get_active_window()
+        if not win:
+            win = NabuSystemMonitorWindow(self)
+        win.present()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
+        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("https://github.com/Kumar-Jy/nabu-pkgs")
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h'):
+        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("Usage:")
+        print("  system-monitor              Launch GTK4/Libadwaita GUI")
+        print("  system-monitor --log [CAT]  Print diagnostic log to stdout")
+        print("  system-monitor --version    Show version and author information")
+        print()
+        print("Categories for --log:")
+        print("  all, gpu, cpu, memory, apps, power, sensors, device, sysinfo")
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] in ('--log', '-l'):
+        cat = sys.argv[2] if len(sys.argv) > 2 else 'all'
+        print(build_diagnostic_report(cat))
+        sys.exit(0)
+    app = NabuSystemMonitorApp()
+    sys.exit(app.run(sys.argv))
