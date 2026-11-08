@@ -2,8 +2,8 @@
 
 Add-on package for **Plasma Keyboard** that installs
 
-* full-size, two-page keyboard layouts for `en_US` and 16 other languages, plus
-  full-size **Hindi** layouts, and
+* full-size, two-page keyboard layouts for `en_US` and 30 other locales
+  (including **Thai** and both full-size **Hindi** layouts), and
 * a patched Plasma Keyboard binary that sends **real modifier chords**
   (`Ctrl+V`, `Ctrl+Shift+V`, `Ctrl+C`, ...) to the focused application.
 
@@ -54,6 +54,13 @@ and the clipboard content is actually pasted.
 - `fr_FR`, `de_DE`, `es_ES`, `it_IT`, `pt_BR`, `nl_NL`, `sv_SE`, `da_DK`, `fi_FI`,
   `pl_PL`, `cs_CZ`, `el_GR`, `hu_HU`, `tr_TR`, `ru_RU`, `uk_UA` - full-size,
   two-page layouts generated from each language's character set
+- `th_TH` - full-size, two-page **Thai Kedmanee** layout (Thai characters on
+  page 1, with the stock Thai shifted layer)
+- `en_GB`, `id_ID`, `ms_MY` - US-style layout (their stock layouts fall back to
+  the default layout)
+- `eo`, `et_EE`, `hr_HR`, `nb_NO`, `sq_AL`, `bg_BG`, `es_MX`, `pt_PT` -
+  full-size layouts using each language's stock letter placement; extra
+  characters defined by the stock layout are available on long-press
 - `hi_IN` - full-size, two-page **Hindi phonetic** layout. Latin keys produce
   Devanagari: consonants accumulate into a syllable, a following consonant gets
   a halant, and a vowel becomes a matra, so typing `namaste` produces `नमस्ते`.

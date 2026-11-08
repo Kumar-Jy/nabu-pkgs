@@ -1,8 +1,8 @@
 # Maintainer: local user
 #
 # Add-on package for Plasma Keyboard that installs
-#   * full-size, two-page layouts for en_US and 16 other languages under
-#     /usr/local/share, and
+#   * full-size, two-page layouts for en_US and 30 other locales (including
+#     Thai and two Hindi layouts) under /usr/local/share, and
 #   * a patched Plasma Keyboard binary that can send real modifier chords
 #     (Ctrl+V, Ctrl+Shift+V, Ctrl+C, ...) to the focused application.
 #
@@ -17,7 +17,7 @@
 
 pkgname=plasma-keyboard-full-layout
 pkgver=1.3.0
-pkgrel=1
+pkgrel=3
 pkgdesc='Full-size two-page Plasma Keyboard layouts with working modifier chords'
 arch=('aarch64')
 url='https://invent.kde.org/plasma/plasma-keyboard'
@@ -52,10 +52,34 @@ source=('main.qml'
         'uk_UA.qml'
         'hi_IN.qml'
         'hi_IN_inscript.qml'
+        'th_TH.qml'
+        'en_GB.qml'
+        'eo.qml'
+        'et_EE.qml'
+        'hr_HR.qml'
+        'id_ID.qml'
+        'ms_MY.qml'
+        'nb_NO.qml'
+        'sq_AL.qml'
+        'bg_BG.qml'
+        'es_MX.qml'
+        'pt_PT.qml'
         'plasma-keyboard-chords.patch'
         'org.kde.plasma.keyboard.nabu.desktop'
         "plasma-keyboard-$_pkver.tar.gz::https://invent.kde.org/plasma/plasma-keyboard/-/archive/v$_pkver/plasma-keyboard-v$_pkver.tar.gz")
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -102,7 +126,9 @@ package() {
     # Install the full-size language layouts (real directories first, so the
     # stock-symlink loop below cannot write through them).
     for locale in fr_FR de_DE es_ES it_IT pt_BR nl_NL sv_SE da_DK fi_FI pl_PL \
-                  cs_CZ el_GR hu_HU tr_TR ru_RU uk_UA hi_IN hi_IN_inscript; do
+                  cs_CZ el_GR hu_HU tr_TR ru_RU uk_UA th_TH \
+                  en_GB eo et_EE hr_HR id_ID ms_MY nb_NO sq_AL bg_BG es_MX pt_PT \
+                  hi_IN hi_IN_inscript; do
         install -d "$layoutdir/$locale"
         install -m644 "$srcdir/$locale.qml" "$layoutdir/$locale/main.qml"
         install -m644 "$srcdir/FullKey.qml" "$layoutdir/$locale/FullKey.qml"
@@ -120,7 +146,7 @@ package() {
         if [ "$name" = "en_US" ]; then
             continue
         fi
-        case " fr_FR de_DE es_ES it_IT pt_BR nl_NL sv_SE da_DK fi_FI pl_PL cs_CZ el_GR hu_HU tr_TR ru_RU uk_UA hi_IN hi_IN_inscript " in
+        case " fr_FR de_DE es_ES it_IT pt_BR nl_NL sv_SE da_DK fi_FI pl_PL cs_CZ el_GR hu_HU tr_TR ru_RU uk_UA th_TH en_GB eo et_EE hr_HR id_ID ms_MY nb_NO sq_AL bg_BG es_MX pt_PT hi_IN hi_IN_inscript " in
             *" $name "*)
                 continue
                 ;;
