@@ -133,8 +133,16 @@ def download_candidate(cand, dest_zip, branch="", repo="Kumar-Jy/linux"):
     print(f"Downloading from: {download_url}")
 
     if cand["type"] == "release":
-        # Release assets: use curl without auth header to avoid S3/Azure redirect authentication errors
-        res = subprocess.run(["curl", "-fSL", "-o", dest_zip, download_url], capture_output=True, text=True)
+        tag = cand.get("tag")
+        asset_name = cand.get("asset_name")
+        if tag and asset_name:
+            res = subprocess.run(["gh", "release", "download", tag, "--repo", repo, "-p", asset_name, "-O", dest_zip], capture_output=True, text=True)
+            if res.returncode == 0 and os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
+                print(f"Downloaded {os.path.getsize(dest_zip)} bytes via gh release download.")
+                return True
+
+        # Fallback to curl
+        res = subprocess.run(["curl", "-fSL", "--retry", "5", "--retry-delay", "2", "-o", dest_zip, download_url], capture_output=True, text=True)
         if res.returncode == 0 and os.path.exists(dest_zip) and os.path.getsize(dest_zip) > 0:
             print(f"Downloaded {os.path.getsize(dest_zip)} bytes via curl.")
             return True
