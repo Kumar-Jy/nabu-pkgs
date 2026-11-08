@@ -456,6 +456,11 @@ def build_diagnostic_report(category="all"):
                             v_in = 5.0
                     else:
                         v_in = 5.0
+
+                # Sanity check: LN8000 2:1 charge pump in direct charge mode (9V PPS)
+                # Unpatched driver returns 2 * iin (battery side) instead of USB input current (iin).
+                if v_in > 7.0 and c_in > 3.1:
+                    c_in /= 2.0
                 lines.append("")
                 lines.append("  [Charger Controller]")
                 lines.append(f"    • Controller Device:  {os.path.basename(cpath)}")
@@ -2153,6 +2158,14 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                     else:
                         v_in = 5.0
 
+                # 3. Direct Charge (LN8000 2:1 charge pump):
+                # In direct charge mode (v_in > 7.0V from 9V PPS), unpatched ln8000_charger returns
+                # battery-side current (iin * 2) instead of input current (iin).
+                # Since the charger's negotiated max current is 3.0A (or c_limit ~3.05A),
+                # an input current reading > 3.1A on a 9V rail is physically impossible and represents 2 * iin.
+                if v_in > 7.0 and c_in > 3.1:
+                    c_in /= 2.0
+
                 p_in = v_in * c_in
             except Exception:
                 pass
@@ -2299,7 +2312,10 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                     self.row_chg_proto.set_subtitle("Unplugged")
                     self.row_chg_power.set_subtitle("0.00 Watts (Unplugged)")
 
-                self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (PM8150B Charger IC)")
+                if v_in > 7.0:
+                    self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (LN8000 Direct Fast Charger)")
+                else:
+                    self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (PM8150B Charger IC)")
 
                 if c_online and (v_in > 0 or c_in > 0):
                     lim_str = f" (Limit: {c_limit*1000:.0f} mA)" if c_limit > 0 else ""
