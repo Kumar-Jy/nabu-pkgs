@@ -440,6 +440,22 @@ def build_diagnostic_report(category="all"):
                 usb_type = open(f"{cpath}/usb_type").read().strip() if os.path.exists(f"{cpath}/usb_type") else "Standard"
                 v_in_u = int(open(f"{cpath}/voltage_now").read().strip()) if os.path.exists(f"{cpath}/voltage_now") else 0
                 c_in_u = int(open(f"{cpath}/current_now").read().strip()) if os.path.exists(f"{cpath}/current_now") else 0
+                v_in = v_in_u / 1e6
+                c_in = c_in_u / 1e6
+                # Sanity check: Fix kernel 16x overscale and unscaled sense current
+                if v_in >= 40.0:
+                    v_in /= 16.0
+                    if c_in > 0:
+                        c_in *= 5.0
+                elif v_in > 25.0:
+                    tpath = hw.get('typec_path')
+                    if tpath and os.path.exists(f"{tpath}/voltage_now"):
+                        try:
+                            v_in = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6
+                        except Exception:
+                            v_in = 5.0
+                    else:
+                        v_in = 5.0
                 lines.append("")
                 lines.append("  [Charger Controller]")
                 lines.append(f"    • Controller Device:  {os.path.basename(cpath)}")
@@ -447,9 +463,9 @@ def build_diagnostic_report(category="all"):
                 lines.append(f"    • Charging Status:    {c_stat}")
                 lines.append(f"    • Hardware Type:      {c_type}")
                 lines.append(f"    • USB Protocol:       {usb_type}")
-                if v_in_u > 0 or c_in_u > 0:
-                    p_in_w = (v_in_u / 1e6) * (c_in_u / 1e6)
-                    lines.append(f"    • Wall Power Draw:    {p_in_w:.2f} W ({v_in_u/1e6:.2f} V @ {c_in_u/1000:.0f} mA)")
+                if v_in > 0 or c_in > 0:
+                    p_in_w = v_in * c_in
+                    lines.append(f"    • Wall Power Draw:    {p_in_w:.2f} W ({v_in:.2f} V @ {c_in*1000:.0f} mA)")
             except Exception as e:
                 lines.append(f"    • Charger Error:      {e}")
 
@@ -943,7 +959,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         about = Adw.AboutDialog(
             application_name="System Monitor",
             application_icon="system-monitor",
-            version="1.3.0",
+            version="1.3.1",
             developer_name="Kumar-Jy",
             developers=["Kumar-Jy (@Kumar-Jy) <https://github.com/Kumar-Jy>"],
             website="https://github.com/Kumar-Jy/nabu-pkgs",
@@ -1761,7 +1777,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
         # Hero Branding Card
         hero_group = Adw.PreferencesGroup()
         self.card_about_hero, self.lbl_about_hero_val, self.badge_about_hero, self.lbl_about_hero_sub, self.progress_about_hero = create_hero_card(
-            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.3.0", "pill-accent"
+            "help-about-symbolic", "System Monitor", "Universal Hardware &amp; System Monitor for Linux", "v1.3.1", "pill-accent"
         )
         self.progress_about_hero.set_visible(False)
         hero_group.add(self.card_about_hero)
@@ -2112,11 +2128,32 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                     v_in = int(open(f"{cpath}/voltage_now").read().strip()) / 1e6
                 if os.path.exists(f"{cpath}/current_now"):
                     c_in = int(open(f"{cpath}/current_now").read().strip()) / 1e6
-                p_in = v_in * c_in
                 if os.path.exists(f"{cpath}/input_current_limit"):
                     c_limit = int(open(f"{cpath}/input_current_limit").read().strip()) / 1e6
                 elif os.path.exists(f"{cpath}/current_max"):
                     c_limit = int(open(f"{cpath}/current_max").read().strip()) / 1e6
+
+                # Sanity check voltage & current scaling:
+                # 1. USB-PD maximum voltage is 20V (or 21V for PPS).
+                # PM8150B kernel driver bug in smb_get_voltage_now multiplies ADC processed uV by 16x.
+                # In that same unpatched driver, usbin_i channel is raw sense voltage (0.2 V/A in buck charging mode -> 5x).
+                if v_in >= 40.0:
+                    v_in /= 16.0
+                    if c_in > 0:
+                        c_in *= 5.0
+                        if c_limit > 0 and c_in > c_limit * 1.05:
+                            c_in = c_limit
+                elif v_in > 25.0:
+                    tpath = self.hw.get('typec_path')
+                    if tpath and os.path.exists(f"{tpath}/voltage_now"):
+                        try:
+                            v_in = int(open(f"{tpath}/voltage_now").read().strip()) / 1e6
+                        except Exception:
+                            v_in = 5.0
+                    else:
+                        v_in = 5.0
+
+                p_in = v_in * c_in
             except Exception:
                 pass
 
@@ -2264,11 +2301,11 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
 
                 self.row_chg_ctrl.set_subtitle(f"{os.path.basename(cpath)} (PM8150B Charger IC)")
 
-                if v_in > 0 or c_in > 0:
+                if c_online and (v_in > 0 or c_in > 0):
                     lim_str = f" (Limit: {c_limit*1000:.0f} mA)" if c_limit > 0 else ""
                     self.row_chg_input.set_subtitle(f"Input: {v_in:.2f} V • Current: {c_in*1000:.0f} mA ({c_in:.2f} A){lim_str}")
                 else:
-                    self.row_chg_input.set_subtitle(f"Standby / Inactive (Online: {c_online})")
+                    self.row_chg_input.set_subtitle("Standby / Inactive (Disconnected)")
             except Exception:
                 self.row_chg_status.set_subtitle("Charger status unavailable")
         else:
@@ -2300,7 +2337,18 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
                 contract_str = ""
                 if t_v > 0 and t_c > 0:
                     contract_str = f" • PD Contract: {t_v*t_c:.1f}W ({t_v:.1f}V @ {t_c:.1f}A)"
-                self.row_chg_typec.set_subtitle(f"Port Online: {t_online} • Protocol: {t_usb_type}{contract_str}")
+                clean_proto = t_usb_type
+                if "[" in t_usb_type and "]" in t_usb_type:
+                    active_mode = t_usb_type[t_usb_type.find("[")+1:t_usb_type.find("]")]
+                    if active_mode == "C":
+                        clean_proto = "Type-C Standard (5V)"
+                    elif active_mode == "PD":
+                        clean_proto = "USB Power Delivery (PD)"
+                    elif "PPS" in active_mode:
+                        clean_proto = "USB-PD PPS Fast Charge"
+                    else:
+                        clean_proto = f"Type-C ({active_mode})"
+                self.row_chg_typec.set_subtitle(f"Port Active: {'Yes' if t_online == '1' else 'No'} • Protocol: {clean_proto}{contract_str}")
             except Exception:
                 self.row_chg_typec.set_subtitle("TCPM port active")
         else:
@@ -2475,7 +2523,7 @@ class NabuSystemMonitorWindow(Adw.ApplicationWindow):
             adc_dev = "/sys/bus/iio/devices/iio:device1"
             if os.path.exists(adc_dev):
                 try:
-                    chg_t = int(open(f"{adc_dev}/in_temp_chg_temp_input").read().strip()) / 10000.0 if os.path.exists(f"{adc_dev}/in_temp_chg_temp_input") else 0.0
+                    chg_t = int(open(f"{adc_dev}/in_temp_chg_temp_input").read().strip()) / 1000.0 if os.path.exists(f"{adc_dev}/in_temp_chg_temp_input") else 0.0
                     self.row_sensor_adc.set_subtitle(f"Charger Die Temp: {chg_t:.1f} °C  •  ADC Calibrated")
                 except Exception:
                     self.row_sensor_adc.set_subtitle("ADC Channels Online")
@@ -2633,11 +2681,11 @@ class NabuSystemMonitorApp(Adw.Application):
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
-        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.3.1 — Built by Kumar-Jy (@Kumar-Jy)")
         print("https://github.com/Kumar-Jy/nabu-pkgs")
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h'):
-        print("System Monitor 1.3.0 — Built by Kumar-Jy (@Kumar-Jy)")
+        print("System Monitor 1.3.1 — Built by Kumar-Jy (@Kumar-Jy)")
         print("Usage:")
         print("  system-monitor              Launch GTK4/Libadwaita GUI")
         print("  system-monitor --log [CAT]  Print diagnostic log to stdout")
