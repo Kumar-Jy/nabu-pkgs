@@ -2,7 +2,7 @@
 
 pkgname=google-chrome
 pkgver=153.0.8010.36
-pkgrel=1
+pkgrel=2
 pkgdesc="The popular web browser by Google (Stable Channel)"
 arch=('aarch64')
 url="https://www.google.com/chrome"
@@ -52,7 +52,7 @@ package() {
   # Prefer Wayland (Ozone) and enable VA-API hardware video decode via the
   # Qualcomm SM8150 iris driver.  Without these the GPU process always falls
   # back to the FFmpeg software decoder.
-  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks|' \
+  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport|' \
     "${pkgdir}/usr/share/applications/google-chrome.desktop" \
     "${pkgdir}/usr/share/applications/com.google.Chrome.desktop"
 

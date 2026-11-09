@@ -8,6 +8,12 @@ if
 	test -f "${CONF_FILE}"
 then
 	mapfile -t CONF_LIST < "${CONF_FILE}"
+else
+	FLAG_LIST=(
+		"--ozone-platform-hint=auto"
+		"--ignore-gpu-blocklist"
+		"--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport"
+	)
 fi
 
 for CONF_LINE in "${CONF_LIST[@]}"

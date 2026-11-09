@@ -4,7 +4,7 @@
 
 pkgname=brave-bin
 pkgver=1.94.121
-pkgrel=1
+pkgrel=2
 pkgdesc='Web browser that blocks ads and trackers by default (binary release)'
 arch=('x86_64' 'aarch64')
 url=https://brave.com

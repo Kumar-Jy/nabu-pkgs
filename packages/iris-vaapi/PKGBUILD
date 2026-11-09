@@ -3,7 +3,7 @@
 
 pkgname=iris-vaapi
 pkgver=0.2.0
-pkgrel=2
+pkgrel=3
 pkgdesc="VA-API driver for the Qualcomm SM8150 Iris1 decoder"
 arch=('aarch64')
 url="https://github.com/CFM880/iris-vaapi"
@@ -44,6 +44,14 @@ package() {
   # Cacheable CAPTURE buffers keep 4K60 decode fast enough for Chrome.
   install -Dm644 "$srcdir/99-iris-vaapi.conf" \
     "$pkgdir/usr/lib/modprobe.d/99-iris-vaapi.conf"
+
+  # Enable VA-API and HEVC hardware decode in Firefox system-wide
+  install -Dm644 /dev/stdin "$pkgdir/usr/lib/firefox/defaults/pref/iris-vaapi.js" <<'EOF'
+pref("media.ffmpeg.vaapi.enabled", true);
+pref("media.hevc.enabled", true);
+pref("media.rdd-ffmpeg.enabled", true);
+pref("widget.dmabuf.vaapi.enabled", true);
+EOF
 
   # Upstream builds the driver as vpu_drv_video.so and auto-detects the
   # "qcom-iris-decoder" node natively.  Provide the legacy iris name (the
