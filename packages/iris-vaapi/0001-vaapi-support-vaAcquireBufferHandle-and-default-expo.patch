@@ -1,0 +1,169 @@
+--- a/src/vaapi.c
++++ b/src/vaapi.c
+@@ -8,6 +8,7 @@
+ #include <limits.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include <va/va.h>
+ #include <va/va_backend.h>
+@@ -114,6 +115,8 @@
+ 	/* Derived images (vaDeriveImage) map a VABufferID to a CAPTURE buffer. */
+ 	VABufferID derived_ids[256];
+ 	void *derived_mem[256];
++	VASurfaceID derived_surfs[256];
++	int derived_fds[256];
+ 	int derived_n;
+ 
+ 	/* vaCreateImage/vaGetImage CPU transfer buffers. */
+@@ -235,6 +238,10 @@
+ 		for (i = 0; i < dd->img_n; i++)
+ 			free(dd->img_data[i]);
+ 		dd->img_n = 0;
++		for (i = 0; i < dd->derived_n; i++) {
++			if (dd->derived_fds[i] >= 0)
++				close(dd->derived_fds[i]);
++		}
+ 		dd->derived_n = 0;
+ 		for (i = 0; i < dd->n_engines; i++)
+ 			vpu_decode_destroy(dd->engines[i].dec);
+@@ -991,7 +998,95 @@
+ vpu_vaBufferInfo(VADriverContextP ctx, VABufferID buf_id,
+ 		  VABufferType *type, unsigned int *size, unsigned int *num_elements)
+ {
+-	return VA_STATUS_ERROR_UNIMPLEMENTED;
++	struct vpu_drv_data *dd = ctx->pDriverData;
++	int i;
++
++	if (!dd)
++		return VA_STATUS_ERROR_INVALID_PARAMETER;
++
++	for (i = 0; i < dd->n_bufs; i++) {
++		if (dd->buf_ids[i] == buf_id) {
++			if (type)
++				*type = dd->buf_types[i];
++			if (size)
++				*size = dd->buf_sizes[i];
++			if (num_elements)
++				*num_elements = dd->buf_num_elements[i];
++			return VA_STATUS_SUCCESS;
++		}
++	}
++	for (i = 0; i < dd->derived_n; i++) {
++		if (dd->derived_ids[i] == buf_id) {
++			VASurfaceID surf = dd->derived_surfs[i];
++			void *mem;
++			unsigned int pitch, bsize, w, h, fourcc;
++			if (vpu_surfaces_buffer(dd->surfs, surf, &mem, &pitch, &bsize, &w, &h, &fourcc))
++				return VA_STATUS_ERROR_INVALID_SURFACE;
++			if (type)
++				*type = VAImageBufferType;
++			if (size)
++				*size = bsize;
++			if (num_elements)
++				*num_elements = 1;
++			return VA_STATUS_SUCCESS;
++		}
++	}
++	return VA_STATUS_ERROR_INVALID_BUFFER;
++}
++
++static VAStatus
++vpu_vaAcquireBufferHandle(VADriverContextP ctx, VABufferID buf_id,
++			  VABufferInfo *buf_info)
++{
++	struct vpu_drv_data *dd = ctx->pDriverData;
++	int i;
++
++	if (!dd || !buf_info)
++		return VA_STATUS_ERROR_INVALID_PARAMETER;
++
++	for (i = 0; i < dd->derived_n; i++) {
++		if (dd->derived_ids[i] == buf_id) {
++			VASurfaceID surf = dd->derived_surfs[i];
++			int fd = -1;
++			unsigned int pitch, size, w, h, fourcc;
++
++			if (vpu_surfaces_export(dd->surfs, surf, &fd, &pitch, &size,
++						&w, &h, &fourcc))
++				return VA_STATUS_ERROR_INVALID_SURFACE;
++
++			if (dd->derived_fds[i] >= 0)
++				close(dd->derived_fds[i]);
++			dd->derived_fds[i] = fd;
++
++			buf_info->handle = (uintptr_t)fd;
++			buf_info->type = VAImageBufferType;
++			buf_info->mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME;
++			buf_info->mem_size = size;
++			return VA_STATUS_SUCCESS;
++		}
++	}
++	return VA_STATUS_ERROR_INVALID_BUFFER;
++}
++
++static VAStatus
++vpu_vaReleaseBufferHandle(VADriverContextP ctx, VABufferID buf_id)
++{
++	struct vpu_drv_data *dd = ctx->pDriverData;
++	int i;
++
++	if (!dd)
++		return VA_STATUS_ERROR_INVALID_PARAMETER;
++
++	for (i = 0; i < dd->derived_n; i++) {
++		if (dd->derived_ids[i] == buf_id) {
++			if (dd->derived_fds[i] >= 0) {
++				close(dd->derived_fds[i]);
++				dd->derived_fds[i] = -1;
++			}
++			return VA_STATUS_SUCCESS;
++		}
++	}
++	return VA_STATUS_SUCCESS;
+ }
+ 
+ /* Image/subpicture entries are required non-NULL by libva's validation. */
+@@ -1061,6 +1156,8 @@
+ 	bid = ++dd->buffer_id;
+ 	dd->derived_ids[dd->derived_n] = bid;
+ 	dd->derived_mem[dd->derived_n] = mem;
++	dd->derived_surfs[dd->derived_n] = surface;
++	dd->derived_fds[dd->derived_n] = -1;
+ 	dd->derived_n++;
+ 
+ 	memset(image, 0, sizeof(*image));
+@@ -1091,8 +1188,12 @@
+ 	for (i = 0; i < dd->derived_n; i++) {
+ 		if (dd->derived_ids[i] != image)
+ 			continue;
++		if (dd->derived_fds[i] >= 0)
++			close(dd->derived_fds[i]);
+ 		dd->derived_ids[i] = dd->derived_ids[dd->derived_n - 1];
+ 		dd->derived_mem[i] = dd->derived_mem[dd->derived_n - 1];
++		dd->derived_surfs[i] = dd->derived_surfs[dd->derived_n - 1];
++		dd->derived_fds[i] = dd->derived_fds[dd->derived_n - 1];
+ 		dd->derived_n--;
+ 		return VA_STATUS_SUCCESS;
+ 	}
+@@ -1283,7 +1384,9 @@
+ 		return VA_STATUS_ERROR_INVALID_PARAMETER;
+ 	layer_flags = flags & (VA_EXPORT_SURFACE_SEPARATE_LAYERS |
+ 			       VA_EXPORT_SURFACE_COMPOSED_LAYERS);
+-	if (layer_flags != VA_EXPORT_SURFACE_SEPARATE_LAYERS &&
++	if (layer_flags == 0)
++		layer_flags = VA_EXPORT_SURFACE_SEPARATE_LAYERS;
++	else if (layer_flags != VA_EXPORT_SURFACE_SEPARATE_LAYERS &&
+ 	    layer_flags != VA_EXPORT_SURFACE_COMPOSED_LAYERS)
+ 		return VA_STATUS_ERROR_INVALID_PARAMETER;
+ 
+@@ -1375,6 +1478,8 @@
+ 	.vaCreateSurfaces2 = vpu_vaCreateSurfaces2,
+ 	.vaQuerySurfaceAttributes = vpu_vaQuerySurfaceAttributes,
+ 	.vaExportSurfaceHandle = vpu_vaExportSurfaceHandle,
++	.vaAcquireBufferHandle = vpu_vaAcquireBufferHandle,
++	.vaReleaseBufferHandle = vpu_vaReleaseBufferHandle,
+ };
+ 
+ VPU_PUBLIC VAStatus

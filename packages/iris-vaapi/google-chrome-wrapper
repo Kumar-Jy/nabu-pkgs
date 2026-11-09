@@ -1,0 +1,20 @@
+#!/bin/sh
+export LIBVA_DRIVER_NAME="${LIBVA_DRIVER_NAME:-iris}"
+
+# Search for the real Google Chrome executable outside /usr/local/bin
+REAL_BIN=""
+for candidate in /usr/bin/google-chrome-stable /usr/bin/google-chrome /opt/google/chrome/google-chrome; do
+    if [ -x "$candidate" ] && [ "$candidate" != "$0" ]; then
+        REAL_BIN="$candidate"
+        break
+    fi
+done
+
+FLAGS="--ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport"
+
+if [ -n "$REAL_BIN" ]; then
+    exec "$REAL_BIN" $FLAGS "$@"
+else
+    echo "google-chrome-stable is not installed in /usr/bin or /opt/google/chrome" >&2
+    exit 1
+fi

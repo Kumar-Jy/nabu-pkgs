@@ -38,6 +38,14 @@ This document lists all packages available in the **`nabu-pkgs` Ubuntu repositor
 
 ---
 
+## 🎬 Video & Browser Hardware Acceleration
+
+| Package | Description |
+| :--- | :--- |
+| **`iris-vaapi`** | Qualcomm SM8150 Iris VPU VA-API hardware video decode driver with out-of-the-box hardware acceleration configuration for Google Chrome, Brave, and Mozilla Firefox (supports H.264, VP9, and HEVC codecs). |
+
+---
+
 ## 🛠️ Installation Commands
 
 Once the repository is configured in `/etc/apt/sources.list.d/nabu.sources`:
@@ -50,6 +58,7 @@ sudo apt update
 sudo apt install -y \
   xiaomi-nabu-alsa \
   xiaomi-nabu-firmware \
+  iris-vaapi \
   nabu-tablet-mode \
   nabu-autobrightness \
   nabu-torch \

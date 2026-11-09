@@ -1,0 +1,22 @@
+{
+  "policies": {
+    "Preferences": {
+      "media.ffmpeg.vaapi.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "media.hevc.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "media.rdd-ffmpeg.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "widget.dmabuf.vaapi.enabled": {
+        "Value": true,
+        "Status": "default"
+      }
+    }
+  }
+}

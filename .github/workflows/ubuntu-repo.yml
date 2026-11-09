@@ -37,7 +37,8 @@ jobs:
             build-essential gcc meson ninja-build pkgconf \
             libglib2.0-dev libqmi-glib-dev libmbim-glib-dev libqrtr-glib-dev libprotobuf-c-dev \
             protobuf-compiler protobuf-c-compiler \
-            libgudev-1.0-dev libpolkit-gobject-1-dev
+            libgudev-1.0-dev libpolkit-gobject-1-dev \
+            libva-dev libdrm-dev libvulkan-dev
           sudo pip3 install --break-system-packages --upgrade meson || true
 
       - name: Create Repo Staging Directory
@@ -108,6 +109,7 @@ jobs:
           ## 📦 Available Packages
 
           - **Kernel:** \`linux-image-*\`, \`linux-headers-*\`, \`linux-libc-dev\` (currently \`${KERNEL_VER}\`, built from \`Kumar-Jy/linux\`)
+          - **Video & Browsers:** \`iris-vaapi\` (Qualcomm SM8150 Iris VA-API hardware video decode driver with out-of-the-box Chrome, Brave, and Firefox acceleration)
           - **Audio:** \`xiaomi-nabu-alsa\` (ALSA UCM2 quad-speaker profiles & mic capture)
           - **Firmware:** \`xiaomi-nabu-firmware\` (DSP, sensor, Ath10k & Cirrus calibration blobs)
           - **Sensors & Daemons:** \`hexagonrpcd\`, \`iio-sensor-proxy\`, \`libssc\`

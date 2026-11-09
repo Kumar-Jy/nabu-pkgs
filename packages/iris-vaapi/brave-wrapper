@@ -1,0 +1,20 @@
+#!/bin/sh
+export LIBVA_DRIVER_NAME="${LIBVA_DRIVER_NAME:-iris}"
+
+# Search for the real Brave executable outside /usr/local/bin
+REAL_BIN=""
+for candidate in /usr/bin/brave-browser /usr/bin/brave /opt/brave.com/brave/brave-browser /opt/brave-bin/brave; do
+    if [ -x "$candidate" ] && [ "$candidate" != "$0" ]; then
+        REAL_BIN="$candidate"
+        break
+    fi
+done
+
+FLAGS="--ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport"
+
+if [ -n "$REAL_BIN" ]; then
+    exec "$REAL_BIN" $FLAGS "$@"
+else
+    echo "brave-browser is not installed in /usr/bin or /opt" >&2
+    exit 1
+fi
