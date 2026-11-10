@@ -16,6 +16,10 @@ case "$1" in
             chown -R fastrpc:fastrpc /lib/firmware/hexagonfs 2>/dev/null || true
         fi
 
+        # Mask userspace pd-mapper to prevent QRTR locator race with in-kernel QCOM_PD_MAPPER
+        systemctl disable --now pd-mapper.service 2>/dev/null || true
+        systemctl mask pd-mapper.service 2>/dev/null || true
+
         udevadm trigger --subsystem-match=misc --action=change 2>/dev/null || true
         systemctl daemon-reload
         systemctl enable hexagonrpcd.service hexagonrpcd-suspend.service hexagonrpcd-resume.service 2>/dev/null || true
