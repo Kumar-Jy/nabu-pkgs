@@ -183,6 +183,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman git curl unzip libarchive-tools xz-utils zstd
 
+      - name: Sync kernel package definitions from upstream
+        if: matrix.pkg == 'linux-nabu-73'
+        run: |
+          mkdir -p packages/linux-nabu-73
+          echo "Syncing PKGBUILD and ChangeLog from Kumar-Jy/linux (nabu/7.3.y)..."
+          curl -sSL "https://raw.githubusercontent.com/Kumar-Jy/linux/nabu/7.3.y/packages/linux-nabu-73/PKGBUILD" -o packages/linux-nabu-73/PKGBUILD || true
+          curl -sSL "https://raw.githubusercontent.com/Kumar-Jy/linux/nabu/7.3.y/packages/linux-nabu-73/ChangeLog" -o packages/linux-nabu-73/ChangeLog || true
+
       - name: Compute source signature
         id: sig
         run: |
@@ -508,3 +516,19 @@ jobs:
             --title "Pacman Repository" \
             --notes "Automated build of the nabu pacman repository" \
             "${ASSETS[@]}"
+
+      - name: Sync and commit kernel definitions to repository
+        if: steps.check-pkgs.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p packages/linux-nabu-73
+          curl -sSL "https://raw.githubusercontent.com/Kumar-Jy/linux/nabu/7.3.y/packages/linux-nabu-73/PKGBUILD" -o packages/linux-nabu-73/PKGBUILD || true
+          curl -sSL "https://raw.githubusercontent.com/Kumar-Jy/linux/nabu/7.3.y/packages/linux-nabu-73/ChangeLog" -o packages/linux-nabu-73/ChangeLog || true
+          git add packages/linux-nabu-73/
+          if ! git diff --staged --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(kernel): auto-sync PKGBUILD & ChangeLog from Kumar-Jy/linux"
+            git push origin refs/heads/arch:refs/heads/arch || true
+          fi
