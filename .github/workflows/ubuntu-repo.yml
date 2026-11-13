@@ -11,10 +11,10 @@ on:
         type: string
         default: "latest"
         description: "Target kernel version ('latest', '7.3', '7.2', etc.)"
-      clean_old_kernels:
+      clean_stale_assets:
         type: boolean
         default: true
-        description: "Remove superseded kernel .debs from release assets"
+        description: "Remove release assets not rebuilt in this run (superseded kernels, renamed .debs, stale signatures)"
   push:
     branches:
       - ubuntu
@@ -119,13 +119,20 @@ jobs:
 
           cd apt-repo
 
-          # Prune superseded remote kernel deb assets if requested
-          if [ "${{ github.event.inputs.clean_old_kernels != 'false' }}" = "true" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            remote_debs=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | select(.name | startswith("linux-") and endswith(".deb")) | .name' 2>/dev/null || true)
+          # Prune stale release assets if requested: any .deb that was not
+          # rebuilt in this run (superseded kernels, renamed package files) and
+          # stale repository signatures that are no longer generated.
+          if [ "${{ github.event.inputs.clean_stale_assets != 'false' }}" = "true" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            remote_debs=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name | select(endswith(".deb"))' 2>/dev/null || true)
             for rdeb in $remote_debs; do
               if [ ! -f "$rdeb" ]; then
-                echo "Removing superseded kernel deb from release: $rdeb"
+                echo "Removing stale deb from release: $rdeb"
                 gh release delete-asset "$TAG" "$rdeb" --repo "$REPO" --yes 2>/dev/null || true
+              fi
+            done
+            for stale in Release.gpg InRelease; do
+              if [ ! -f "$stale" ]; then
+                gh release delete-asset "$TAG" "$stale" --repo "$REPO" --yes 2>/dev/null || true
               fi
             done
           fi

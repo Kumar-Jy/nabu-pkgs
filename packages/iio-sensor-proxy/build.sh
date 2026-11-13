@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR=$(mktemp -d)
 PKG_DIR="$WORK_DIR/pkg"
 
+PKG_NAME=$(sed -n 's/^Package:[[:space:]]*//p' "$SCRIPT_DIR/DEBIAN/control")
+PKG_VER=$(sed -n 's/^Version:[[:space:]]*//p' "$SCRIPT_DIR/DEBIAN/control")
+PKG_ARCH=$(sed -n 's/^Architecture:[[:space:]]*//p' "$SCRIPT_DIR/DEBIAN/control")
+
 mkdir -p "$PKG_DIR/DEBIAN"
 cp "$SCRIPT_DIR/DEBIAN/control" "$PKG_DIR/DEBIAN/control"
 
@@ -37,8 +41,9 @@ if [ -f "$PKG_DIR/usr/lib/udev/rules.d/80-iio-sensor-proxy.rules" ]; then
 fi
 
 OUTPUT_DIR="${1:-$SCRIPT_DIR}"
+OUTPUT_DEB="$OUTPUT_DIR/${PKG_NAME}_${PKG_VER}_${PKG_ARCH}.deb"
 mkdir -p "$OUTPUT_DIR"
-dpkg-deb --build --root-owner-group "$PKG_DIR" "$OUTPUT_DIR/iio-sensor-proxy_3.9-1nabu1_arm64.deb"
+dpkg-deb --build --root-owner-group "$PKG_DIR" "$OUTPUT_DEB"
 
 rm -rf "$WORK_DIR"
-echo "==> Built: $OUTPUT_DIR/iio-sensor-proxy_3.9-1nabu1_arm64.deb"
+echo "==> Built: $OUTPUT_DEB"

@@ -17,6 +17,26 @@ build_pkg() {
         bash "$pkg/build.sh" "$OUTPUT_DIR"
     elif [ -f "$pkg/DEBIAN/control" ]; then
         dpkg-deb --build --root-owner-group "$pkg" "$OUTPUT_DIR/"
+    else
+        return 0
+    fi
+
+    # Refuse to publish a .deb whose filename disagrees with DEBIAN/control.
+    # This is how hexagonrpcd 0.4.0-2 ended up published as
+    # hexagonrpcd_0.4.0-1_arm64.deb.
+    local name ver arch deb deb_ver
+    name=$(sed -n 's/^Package:[[:space:]]*//p' "$pkg/DEBIAN/control")
+    ver=$(sed -n 's/^Version:[[:space:]]*//p' "$pkg/DEBIAN/control")
+    arch=$(sed -n 's/^Architecture:[[:space:]]*//p' "$pkg/DEBIAN/control")
+    deb="$OUTPUT_DIR/${name}_${ver}_${arch}.deb"
+    if [ ! -f "$deb" ]; then
+        echo "ERROR: $pkg_name did not produce $deb" >&2
+        return 1
+    fi
+    deb_ver=$(dpkg-deb -f "$deb" Version)
+    if [ "$deb_ver" != "$ver" ]; then
+        echo "ERROR: $deb reports Version $deb_ver but control says $ver" >&2
+        return 1
     fi
 }
 
