@@ -77,7 +77,8 @@ jobs:
 
           KERNEL_VER="${{ steps.import_kernel.outputs.kernel_version }}"
           if [ -z "$KERNEL_VER" ]; then
-            KERNEL_VER=$(ls apt-repo/linux-image-*.deb 2>/dev/null | head -n1 | sed -n 's/.*linux-image-\([0-9]\+\.[0-9]\+[^_]*\).*/\1/p' || echo "latest")
+            KERNEL_VER=$(ls apt-repo/linux-image-*.deb 2>/dev/null | head -n1 | sed -n 's/.*linux-image-\([0-9]\+\.[0-9]\+[^_]*\).*/\1/p')
+            [ -n "$KERNEL_VER" ] || KERNEL_VER="latest"
           fi
 
           cat > release-notes.md << EOF
@@ -124,11 +125,24 @@ jobs:
           # stale repository signatures that are no longer generated.
           if [ "${{ github.event.inputs.clean_stale_assets != 'false' }}" = "true" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             remote_debs=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name | select(endswith(".deb"))' 2>/dev/null || true)
+            # Never prune kernel assets when this run did not import a kernel
+            # (workflow_dispatch with import_kernel=false, or a failed import).
+            have_kernel=false
+            compgen -G "linux-image-*.deb" >/dev/null && have_kernel=true
             for rdeb in $remote_debs; do
-              if [ ! -f "$rdeb" ]; then
-                echo "Removing stale deb from release: $rdeb"
-                gh release delete-asset "$TAG" "$rdeb" --repo "$REPO" --yes 2>/dev/null || true
+              if [ -f "$rdeb" ]; then
+                continue
               fi
+              case "$rdeb" in
+                linux-*)
+                  if [ "$have_kernel" != true ]; then
+                    echo "Keeping $rdeb (no kernel built in this run)"
+                    continue
+                  fi
+                  ;;
+              esac
+              echo "Removing stale deb from release: $rdeb"
+              gh release delete-asset "$TAG" "$rdeb" --repo "$REPO" --yes 2>/dev/null || true
             done
             for stale in Release.gpg InRelease; do
               if [ ! -f "$stale" ]; then
