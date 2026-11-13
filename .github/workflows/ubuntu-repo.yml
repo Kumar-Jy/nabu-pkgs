@@ -58,6 +58,26 @@ jobs:
             --pkgver "$version_filter" \
             --output-dir apt-repo || echo "Kernel import failed or not found, continuing."
 
+      - name: Reuse Published Kernel Packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The index below is regenerated from apt-repo/ only. If no kernel was
+          # imported (import_kernel=false, or the tolerated import failure), the
+          # kernel would silently disappear from Packages even though its assets
+          # are kept on the release. Re-stage the published kernel debs instead.
+          if compgen -G "apt-repo/linux-image-*.deb" >/dev/null; then
+            echo "Kernel packages already staged"
+            exit 0
+          fi
+          echo "::warning::No kernel imported; reusing the kernel assets already published"
+          gh release download ubuntu \
+            --repo "${{ github.repository }}" \
+            --pattern 'linux-*.deb' \
+            --dir apt-repo \
+            --clobber \
+            || echo "::warning::No published kernel assets to reuse"
+
       - name: Build Device Debian Packages
         run: |
           chmod +x .github/scripts/*.sh .github/scripts/*.py packages/*/build.sh 2>/dev/null || true
