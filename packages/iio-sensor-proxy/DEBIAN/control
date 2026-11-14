@@ -1,5 +1,5 @@
 Package: iio-sensor-proxy
-Version: 3.9-1nabu1
+Version: 3.9-1nabu2
 Section: utils
 Priority: optional
 Architecture: arm64

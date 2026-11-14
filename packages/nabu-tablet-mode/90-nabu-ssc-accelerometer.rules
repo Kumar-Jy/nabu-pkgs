@@ -2,4 +2,8 @@
 # accelerometers experimental, so opt in only on the SDSP FastRPC device.
 ACTION=="remove", GOTO="nabu_ssc_accelerometer_end"
 SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel", ENV{ACCEL_MOUNT_MATRIX}="-1,0,0;0,-1,0;0,0,1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="iio-sensor-proxy.service"
+# The ADSP exposes the same SSC sensors but reports no mount matrix, so
+# iio-sensor-proxy falls back to identity and GNOME rotates the desktop 180
+# degrees. Keep the ADSP for proximity only; the accelerometer lives on SDSP.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}="ssc-proximity"
 LABEL="nabu_ssc_accelerometer_end"
