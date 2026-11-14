@@ -180,10 +180,13 @@ def disable_gnome_ambient():
     (~50 Hz visible flicker), so this daemon takes over while it is enabled.
     """
     try:
-        settings = Gio.Settings.new("org.gnome.settings-daemon.plugins.power")
-        if "ambient-enabled" in settings.list_keys() and settings.get_boolean("ambient-enabled"):
-            settings.set_boolean("ambient-enabled", False)
-            logging.info("Disabled GNOME ambient auto-brightness to avoid a brightness feedback loop.")
+        source = Gio.SettingsSchemaSource.get_default()
+        schema = source.lookup("org.gnome.settings-daemon.plugins.power", False)
+        if schema is not None and schema.has_key("ambient-enabled"):
+            settings = Gio.Settings.new_full(schema, None, None)
+            if settings.get_boolean("ambient-enabled"):
+                settings.set_boolean("ambient-enabled", False)
+                logging.info("Disabled GNOME ambient auto-brightness to avoid a brightness feedback loop.")
     except Exception as e:
         logging.debug(f"GNOME ambient auto-brightness not adjusted: {e}")
 
