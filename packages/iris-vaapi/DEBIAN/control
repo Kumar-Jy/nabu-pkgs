@@ -1,10 +1,10 @@
 Package: iris-vaapi
-Version: 0.2.0-3
+Version: 0.2.0-4
 Section: video
 Priority: optional
 Architecture: arm64
 Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
-Depends: libc6 (>= 2.34), libva2, libdrm2
+Depends: libc6 (>= 2.34), libva2, libdrm2, libvulkan1
 Description: Qualcomm SM8150 Iris VA-API hardware video decode driver & browser config
  Hardware VA-API video decode acceleration for Qualcomm SM8150 Iris VPU on
  Xiaomi Pad 5 (nabu), supporting H.264, VP9, and HEVC codecs.
