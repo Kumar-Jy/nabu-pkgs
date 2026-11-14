@@ -1,0 +1,13 @@
+Package: mpv-iris
+Version: 8.0.1-1
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: video
+Priority: optional
+Depends: ffmpeg-iris, mpv
+Description: mpv launcher wired to the IRIS-patched FFmpeg hardware-decode path
+ Provides /usr/bin/mpv-iris, an mpv launcher that loads the IRIS-patched FFmpeg
+ libraries from ffmpeg-iris and forces the P010 DRM-Prime / v4l2-mem2mem
+ hardware-decode profile on the Qualcomm SM8150 VPU of the Xiaomi Pad 5 (nabu).
+ .
+ The system mpv is left untouched; only this launcher uses the patched tree.

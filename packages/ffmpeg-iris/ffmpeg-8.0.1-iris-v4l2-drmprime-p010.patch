@@ -1,0 +1,467 @@
+diff --git a/libavcodec/v4l2_buffers.c b/libavcodec/v4l2_buffers.c
+index 7f597a4..56f2f0f 100644
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -269,6 +269,94 @@ static int v4l2_buf_increase_ref(V4L2Buffer *in)
+     return 0;
+ }
+ 
++static int v4l2_buffer_export_drm(V4L2Buffer *avbuf)
++{
++    AVDRMFrameDescriptor *desc = &avbuf->drm_frame;
++    AVDRMLayerDescriptor *layer = &desc->layers[0];
++    struct v4l2_exportbuffer expbuf;
++    int i, ret;
++
++    if (avbuf->context->av_pix_fmt != AV_PIX_FMT_NV12 &&
++        avbuf->context->av_pix_fmt != AV_PIX_FMT_P010)
++        return AVERROR(ENOSYS);
++
++    memset(desc, 0, sizeof(*desc));
++    for (i = 0; i < AV_DRM_MAX_PLANES; i++)
++        desc->objects[i].fd = -1;
++
++    for (i = 0; i < avbuf->num_planes; i++) {
++        memset(&expbuf, 0, sizeof(expbuf));
++        expbuf.type = avbuf->buf.type;
++        expbuf.index = avbuf->buf.index;
++        expbuf.plane = i;
++        expbuf.flags = 0;
++
++        ret = ioctl(buf_to_m2mctx(avbuf)->fd, VIDIOC_EXPBUF, &expbuf);
++        if (ret < 0) {
++            ret = AVERROR(errno);
++            goto fail;
++        }
++
++        if (fcntl(expbuf.fd, F_SETFD, FD_CLOEXEC) < 0) {
++            ret = AVERROR(errno);
++            close(expbuf.fd);
++            goto fail;
++        }
++
++        desc->objects[i].fd = expbuf.fd;
++        desc->objects[i].size = avbuf->plane_info[i].length;
++        desc->objects[i].format_modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++        desc->nb_objects++;
++    }
++
++    desc->nb_layers = 1;
++    layer->format = avbuf->context->av_pix_fmt == AV_PIX_FMT_P010 ?
++                    V4L2_PIX_FMT_P010 : V4L2_PIX_FMT_NV12;
++    /* V4L2 and DRM use the same fourcc values for NV12 and P010. */
++    layer->nb_planes = 2;
++    layer->planes[0].object_index = 0;
++    layer->planes[0].offset = 0;
++    layer->planes[0].pitch = avbuf->plane_info[0].bytesperline;
++
++    if (avbuf->num_planes > 1) {
++        layer->planes[1].object_index = 1;
++        layer->planes[1].offset = 0;
++        layer->planes[1].pitch = avbuf->plane_info[1].bytesperline;
++    } else {
++        layer->planes[1].object_index = 0;
++        layer->planes[1].offset = avbuf->plane_info[0].bytesperline *
++                                  avbuf->context->format.fmt.pix_mp.height;
++        layer->planes[1].pitch = avbuf->plane_info[0].bytesperline;
++    }
++
++    return 0;
++
++fail:
++    for (i = 0; i < desc->nb_objects; i++) {
++        close(desc->objects[i].fd);
++        desc->objects[i].fd = -1;
++    }
++    desc->nb_objects = 0;
++    return ret;
++}
++
++static int v4l2_buf_to_bufref_drm(V4L2Buffer *in, AVBufferRef **buf)
++{
++    int ret;
++
++    *buf = av_buffer_create((uint8_t *)&in->drm_frame,
++                            sizeof(in->drm_frame), v4l2_free_buffer, in,
++                            AV_BUFFER_FLAG_READONLY);
++    if (!*buf)
++        return AVERROR(ENOMEM);
++
++    ret = v4l2_buf_increase_ref(in);
++    if (ret)
++        av_buffer_unref(buf);
++
++    return ret;
++}
++
+ static int v4l2_buf_to_bufref(V4L2Buffer *in, int plane, AVBufferRef **buf)
+ {
+     int ret;
+@@ -329,6 +417,7 @@ static int v4l2_buffer_buf_to_swframe(AVFrame *frame, V4L2Buffer *avbuf)
+ 
+     /* fixup special cases */
+     switch (avbuf->context->av_pix_fmt) {
++    case AV_PIX_FMT_P010:
+     case AV_PIX_FMT_NV12:
+     case AV_PIX_FMT_NV21:
+         if (avbuf->num_planes > 1)
+@@ -433,12 +522,30 @@ int ff_v4l2_buffer_avframe_to_buf(const AVFrame *frame, V4L2Buffer *out)
+ 
+ int ff_v4l2_buffer_buf_to_avframe(AVFrame *frame, V4L2Buffer *avbuf)
+ {
++    V4L2m2mContext *s = buf_to_m2mctx(avbuf);
+     int ret;
+ 
+     av_frame_unref(frame);
+ 
+     /* 1. get references to the actual data */
+-    ret = v4l2_buffer_buf_to_swframe(frame, avbuf);
++    if (s->output_drm) {
++        ret = v4l2_buf_to_bufref_drm(avbuf, &frame->buf[0]);
++        if (!ret) {
++            frame->data[0] = frame->buf[0]->data;
++            frame->format = AV_PIX_FMT_DRM_PRIME;
++            if (!s->frames_ref) {
++                av_frame_unref(frame);
++                return AVERROR(EINVAL);
++            }
++            frame->hw_frames_ctx = av_buffer_ref(s->frames_ref);
++            if (!frame->hw_frames_ctx) {
++                av_frame_unref(frame);
++                return AVERROR(ENOMEM);
++            }
++        }
++    } else {
++        ret = v4l2_buffer_buf_to_swframe(frame, avbuf);
++    }
+     if (ret)
+         return ret;
+ 
+@@ -572,6 +679,12 @@ int ff_v4l2_buffer_initialize(V4L2Buffer* avbuf, int index)
+         avbuf->buf.length    = avbuf->planes[0].length;
+     }
+ 
++    if (buf_to_m2mctx(avbuf)->output_drm) {
++        ret = v4l2_buffer_export_drm(avbuf);
++        if (ret < 0)
++            return ret;
++    }
++
+     return ff_v4l2_buffer_enqueue(avbuf);
+ }
+ 
+diff --git a/libavcodec/v4l2_buffers.h b/libavcodec/v4l2_buffers.h
+index e35b161..0bb5d75 100644
+--- a/libavcodec/v4l2_buffers.h
++++ b/libavcodec/v4l2_buffers.h
+@@ -29,6 +29,7 @@
+ #include <linux/videodev2.h>
+ 
+ #include "libavutil/frame.h"
++#include "libavutil/hwcontext_drm.h"
+ #include "packet.h"
+ 
+ enum V4L2Buffer_status {
+@@ -44,6 +45,9 @@ typedef struct V4L2Buffer {
+     /* each buffer needs to have a reference to its context */
+     struct V4L2Context *context;
+ 
++    /* Descriptor for an exported decoder capture buffer. */
++    AVDRMFrameDescriptor drm_frame;
++
+     /* This object is refcounted per-plane, so we need to keep track
+      * of how many context-refs we are holding.
+      * This pointer is a RefStruct reference. */
+diff --git a/libavcodec/v4l2_context.c b/libavcodec/v4l2_context.c
+index be1df37..55fc748 100644
+--- a/libavcodec/v4l2_context.c
++++ b/libavcodec/v4l2_context.c
+@@ -459,6 +459,13 @@ static int v4l2_release_buffers(V4L2Context* ctx)
+                 if (munmap(p->mm_addr, p->length) < 0)
+                     av_log(logger(ctx), AV_LOG_ERROR, "%s unmap plane (%s))\n", ctx->name, av_err2str(AVERROR(errno)));
+         }
++
++        for (j = 0; j < buffer->drm_frame.nb_objects; j++) {
++            if (buffer->drm_frame.objects[j].fd >= 0)
++                close(buffer->drm_frame.objects[j].fd);
++            buffer->drm_frame.objects[j].fd = -1;
++        }
++        buffer->drm_frame.nb_objects = 0;
+     }
+ 
+     return ioctl(ctx_to_m2mctx(ctx)->fd, VIDIOC_REQBUFS, &req);
+diff --git a/libavcodec/v4l2_fmt.c b/libavcodec/v4l2_fmt.c
+index 6df47e3..2c792d8 100644
+--- a/libavcodec/v4l2_fmt.c
++++ b/libavcodec/v4l2_fmt.c
+@@ -51,6 +51,9 @@ static const struct fmt_conversion {
+     { AV_FMT(YUV410P),     AV_CODEC(RAWVIDEO),    V4L2_FMT(YUV410) },
+     { AV_FMT(YUV410P),     AV_CODEC(RAWVIDEO),    V4L2_FMT(YVU410) },
+     { AV_FMT(NV12),        AV_CODEC(RAWVIDEO),    V4L2_FMT(NV12) },
++#ifdef V4L2_PIX_FMT_P010
++    { AV_FMT(P010),        AV_CODEC(RAWVIDEO),    V4L2_FMT(P010) },
++#endif
+     { AV_FMT(NONE),        AV_CODEC(MJPEG),       V4L2_FMT(MJPEG) },
+     { AV_FMT(NONE),        AV_CODEC(MJPEG),       V4L2_FMT(JPEG) },
+ #ifdef V4L2_PIX_FMT_SRGGB8
+diff --git a/libavcodec/v4l2_m2m.c b/libavcodec/v4l2_m2m.c
+index 8f633e2..e48c28b 100644
+--- a/libavcodec/v4l2_m2m.c
++++ b/libavcodec/v4l2_m2m.c
+@@ -257,6 +257,8 @@ static void v4l2_m2m_destroy_context(AVRefStructOpaque unused, void *context)
+ 
+     if (s->fd >= 0)
+         close(s->fd);
++    av_buffer_unref(&s->frames_ref);
++    av_buffer_unref(&s->device_ref);
+     av_frame_free(&s->frame);
+     av_packet_unref(&s->buf_pkt);
+ }
+diff --git a/libavcodec/v4l2_m2m.h b/libavcodec/v4l2_m2m.h
+index 4ba33dc..6ef94ac 100644
+--- a/libavcodec/v4l2_m2m.h
++++ b/libavcodec/v4l2_m2m.h
+@@ -54,6 +54,11 @@ typedef struct V4L2m2mContext {
+     atomic_uint refcount;
+     int reinit;
+ 
++    /* Export decoder capture buffers as DRM PRIME frames. */
++    int output_drm;
++    AVBufferRef *device_ref;
++    AVBufferRef *frames_ref;
++
+     /* null frame/packet received */
+     int draining;
+     AVPacket buf_pkt;
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index ba1fe76..3d78371 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -23,17 +23,108 @@
+ 
+ #include <linux/videodev2.h>
+ #include <sys/ioctl.h>
++#include "libavutil/hwcontext.h"
+ #include "libavutil/pixfmt.h"
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/opt.h"
+ #include "libavcodec/avcodec.h"
+ #include "codec_internal.h"
+ #include "libavcodec/decode.h"
++#include "libavcodec/hwconfig.h"
+ 
+ #include "v4l2_context.h"
+ #include "v4l2_m2m.h"
+ #include "v4l2_fmt.h"
+ 
++static int v4l2_init_drm_frames(AVCodecContext *avctx, V4L2m2mContext *s,
++                                enum AVPixelFormat sw_format,
++                                int width, int height)
++{
++    AVHWFramesContext *frames;
++    AVBufferRef *frames_ref;
++    int ret;
++
++    if (!s->device_ref) {
++        s->device_ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_DRM);
++        if (!s->device_ref)
++            return AVERROR(ENOMEM);
++
++        ret = av_hwdevice_ctx_init(s->device_ref);
++        if (ret < 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "Failed to initialize DRM PRIME device context: %s\n",
++                   av_err2str(ret));
++            av_buffer_unref(&s->device_ref);
++            return ret;
++        }
++    }
++
++    frames_ref = av_hwframe_ctx_alloc(s->device_ref);
++    if (!frames_ref)
++        return AVERROR(ENOMEM);
++
++    frames = (AVHWFramesContext *)frames_ref->data;
++    frames->format = AV_PIX_FMT_DRM_PRIME;
++    frames->sw_format = sw_format;
++    frames->width = width;
++    frames->height = height;
++
++    ret = av_hwframe_ctx_init(frames_ref);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR,
++               "Failed to initialize DRM PRIME frame context: %s\n",
++               av_err2str(ret));
++        av_buffer_unref(&frames_ref);
++        return ret;
++    }
++
++    av_buffer_unref(&s->frames_ref);
++    s->frames_ref = frames_ref;
++    return 0;
++}
++
++static enum AVPixelFormat v4l2_capture_pix_fmt(const AVCodecContext *avctx)
++{
++    if (avctx->pix_fmt == AV_PIX_FMT_P010 ||
++        avctx->pix_fmt == AV_PIX_FMT_YUV420P10 ||
++        avctx->sw_pix_fmt == AV_PIX_FMT_P010 ||
++        avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10)
++        return AV_PIX_FMT_P010;
++
++    if (avctx->bits_per_raw_sample > 8)
++        return AV_PIX_FMT_P010;
++
++    if (avctx->pix_fmt == AV_PIX_FMT_NV12 ||
++        avctx->pix_fmt == AV_PIX_FMT_YUV420P ||
++        avctx->sw_pix_fmt == AV_PIX_FMT_NV12 ||
++        avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P)
++        return AV_PIX_FMT_NV12;
++
++    if (avctx->codec_id == AV_CODEC_ID_HEVC &&
++        avctx->profile == AV_PROFILE_HEVC_MAIN_10)
++        return AV_PIX_FMT_P010;
++
++    if (avctx->codec_id == AV_CODEC_ID_VP9 &&
++        (avctx->profile == AV_PROFILE_VP9_2 ||
++         avctx->profile == AV_PROFILE_VP9_3))
++        return AV_PIX_FMT_P010;
++
++    if (avctx->codec_id == AV_CODEC_ID_HEVC &&
++        avctx->extradata_size >= 19 && avctx->extradata[0] == 1)
++        return (avctx->extradata[17] & 7) ? AV_PIX_FMT_P010 :
++                                            AV_PIX_FMT_NV12;
++
++    /* mpv opens these decoders before probing a software pixel format or
++     * profile. Prefer the high-bit-depth capture format in that case; it can
++     * also represent 8-bit 4:2:0 output without discarding precision. */
++    if ((avctx->codec_id == AV_CODEC_ID_HEVC ||
++         avctx->codec_id == AV_CODEC_ID_VP9) &&
++        avctx->profile == AV_PROFILE_UNKNOWN)
++        return AV_PIX_FMT_P010;
++
++    return AV_PIX_FMT_NV12;
++}
++
+ static int v4l2_try_start(AVCodecContext *avctx)
+ {
+     V4L2m2mContext *s = ((V4L2m2mPriv*)avctx->priv_data)->context;
+@@ -63,8 +154,23 @@ static int v4l2_try_start(AVCodecContext *avctx)
+     }
+ 
+     /* 2.1 update the AVCodecContext */
+-    avctx->pix_fmt = ff_v4l2_format_v4l2_to_avfmt(capture->format.fmt.pix_mp.pixelformat, AV_CODEC_ID_RAWVIDEO);
+-    capture->av_pix_fmt = avctx->pix_fmt;
++    capture->av_pix_fmt = ff_v4l2_format_v4l2_to_avfmt(
++        capture->format.fmt.pix_mp.pixelformat, AV_CODEC_ID_RAWVIDEO);
++    if (capture->av_pix_fmt == AV_PIX_FMT_NONE)
++        return AVERROR(ENOSYS);
++
++    avctx->sw_pix_fmt = capture->av_pix_fmt;
++    if (s->output_drm) {
++        if (capture->av_pix_fmt != AV_PIX_FMT_NV12 &&
++            capture->av_pix_fmt != AV_PIX_FMT_P010) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "DRM PRIME output only supports NV12/P010 capture buffers\n");
++            return AVERROR(ENOSYS);
++        }
++        avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
++    } else {
++        avctx->pix_fmt = capture->av_pix_fmt;
++    }
+ 
+     /* 3. set the crop parameters */
+     selection.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+@@ -83,6 +189,13 @@ static int v4l2_try_start(AVCodecContext *avctx)
+         }
+     }
+ 
++    if (s->output_drm) {
++        ret = v4l2_init_drm_frames(avctx, s, capture->av_pix_fmt,
++                                   capture->width, capture->height);
++        if (ret < 0)
++            return ret;
++    }
++
+     /* 4. init the capture context now that we have the capture format */
+     if (!capture->buffers) {
+         ret = ff_v4l2_context_init(capture);
+@@ -180,8 +293,15 @@ fail:
+ 
+ static av_cold int v4l2_decode_init(AVCodecContext *avctx)
+ {
++    static const enum AVPixelFormat pix_fmts[] = {
++        AV_PIX_FMT_DRM_PRIME,
++        AV_PIX_FMT_P010,
++        AV_PIX_FMT_NV12,
++        AV_PIX_FMT_NONE,
++    };
+     V4L2Context *capture, *output;
+     V4L2m2mContext *s;
++    enum AVPixelFormat pix_fmt, capture_pix_fmt;
+     V4L2m2mPriv *priv = avctx->priv_data;
+     int ret;
+ 
+@@ -192,6 +312,21 @@ static av_cold int v4l2_decode_init(AVCodecContext *avctx)
+     capture = &s->capture;
+     output = &s->output;
+ 
++    av_log(avctx, AV_LOG_DEBUG,
++           "V4L2 input metadata: pix_fmt=%s sw_pix_fmt=%s profile=%d bits=%d extradata=%d\n",
++           av_get_pix_fmt_name(avctx->pix_fmt) ?: "none",
++           av_get_pix_fmt_name(avctx->sw_pix_fmt) ?: "none",
++           avctx->profile, avctx->bits_per_raw_sample, avctx->extradata_size);
++    capture_pix_fmt = v4l2_capture_pix_fmt(avctx);
++
++    pix_fmt = ff_get_format(avctx, pix_fmts);
++    if (pix_fmt == AV_PIX_FMT_NONE)
++        return AVERROR(EINVAL);
++    s->output_drm = pix_fmt == AV_PIX_FMT_DRM_PRIME;
++    av_log(avctx, AV_LOG_INFO, "V4L2 decoder output: %s\n",
++           s->output_drm ? "DRM PRIME (exported DMA-BUF)" :
++           av_get_pix_fmt_name(pix_fmt));
++
+     /* if these dimensions are invalid (ie, 0 or too small) an event will be raised
+      * by the v4l2 driver; this event will trigger a full pipeline reconfig and
+      * the proper values will be retrieved from the kernel driver.
+@@ -203,7 +338,7 @@ static av_cold int v4l2_decode_init(AVCodecContext *avctx)
+     output->av_pix_fmt  = AV_PIX_FMT_NONE;
+ 
+     capture->av_codec_id = AV_CODEC_ID_RAWVIDEO;
+-    capture->av_pix_fmt = avctx->pix_fmt;
++    capture->av_pix_fmt = capture_pix_fmt;
+ 
+     s->avctx = avctx;
+     ret = ff_v4l2_m2m_codec_init(priv);
+@@ -230,6 +365,18 @@ static const AVOption options[] = {
+     { NULL},
+ };
+ 
++static const enum AVPixelFormat v4l2_m2m_decoder_pix_fmts[] = {
++    AV_PIX_FMT_DRM_PRIME,
++    AV_PIX_FMT_P010,
++    AV_PIX_FMT_NV12,
++    AV_PIX_FMT_NONE,
++};
++
++static const AVCodecHWConfigInternal *const v4l2_m2m_hw_configs[] = {
++    HW_CONFIG_INTERNAL(DRM_PRIME),
++    NULL,
++};
++
+ #define M2MDEC_CLASS(NAME) \
+     static const AVClass v4l2_m2m_ ## NAME ## _dec_class = { \
+         .class_name = #NAME "_v4l2m2m_decoder", \
+@@ -247,10 +394,12 @@ static const AVOption options[] = {
+         .p.id           = CODEC , \
+         .priv_data_size = sizeof(V4L2m2mPriv), \
+         .p.priv_class   = &v4l2_m2m_ ## NAME ## _dec_class, \
++        .p.pix_fmts     = v4l2_m2m_decoder_pix_fmts, \
+         .init           = v4l2_decode_init, \
+         FF_CODEC_RECEIVE_FRAME_CB(v4l2_receive_frame), \
+         .close          = v4l2_decode_close, \
+         .bsfs           = bsf_name, \
++        .hw_configs     = v4l2_m2m_hw_configs, \
+         .p.capabilities = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING, \
+         .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | \
+                           FF_CODEC_CAP_INIT_CLEANUP, \

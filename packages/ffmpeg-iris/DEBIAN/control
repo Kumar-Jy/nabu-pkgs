@@ -1,0 +1,15 @@
+Package: ffmpeg-iris
+Version: 8.0.1-1
+Architecture: arm64
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: video
+Priority: optional
+Depends: libc6, libdrm2, libva2, libva-drm2, zlib1g
+Description: IRIS-patched FFmpeg 8.0.1 (v4l2-mem2mem + DRM-Prime P010) for Xiaomi Pad 5
+ Self-contained companion build of FFmpeg 8.0.1 carrying the IRIS
+ v4l2-mem2mem + DRM-Prime P010 (10-bit) hardware-decode patch for the Qualcomm
+ SM8150 VPU on the Xiaomi Pad 5 (nabu).
+ .
+ It installs a private tree under /usr/lib/iris-ffmpeg and exposes the companion
+ commands ffmpeg-iris and ffprobe-iris, which point only their own process at
+ that tree. The system /usr/bin/ffmpeg is deliberately left untouched.

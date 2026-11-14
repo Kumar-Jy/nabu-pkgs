@@ -33,7 +33,7 @@ jobs:
       - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev apt-utils curl python3 python3-pip jq xz-utils unzip \
+          sudo apt-get install -y dpkg-dev apt-utils curl python3 python3-pip jq xz-utils unzip p7zip-full \
             build-essential gcc meson ninja-build pkgconf \
             libglib2.0-dev libqmi-glib-dev libmbim-glib-dev libqrtr-glib-dev libprotobuf-c-dev \
             protobuf-compiler protobuf-c-compiler \
@@ -131,6 +131,7 @@ jobs:
 
           - **Kernel:** \`linux-image-*\`, \`linux-headers-*\`, \`linux-libc-dev\` (currently \`${KERNEL_VER}\`, built from \`Kumar-Jy/linux\`)
           - **Video & Browsers:** \`iris-vaapi\` (Qualcomm SM8150 Iris VA-API hardware video decode driver with out-of-the-box Chrome, Brave, and Firefox acceleration)
+          - **Media (optional):** \`ffmpeg-iris\` (IRIS-patched FFmpeg 8.0.1 with v4l2-mem2mem + DRM-Prime P010 10-bit decode), \`mpv-iris\` (mpv launcher wired to the patched FFmpeg tree)
           - **Browsers (optional):** \`google-chrome-stable\` (official Google Chrome arm64 build), \`brave-bin\` (prebuilt Brave arm64 release) — install on demand with \`sudo apt install google-chrome-stable brave-bin\`; both are hardware-accelerated by \`iris-vaapi\`
           - **Audio:** \`xiaomi-nabu-alsa\` (ALSA UCM2 quad-speaker profiles & mic capture)
           - **Firmware:** \`xiaomi-nabu-firmware\` (DSP, sensor, Ath10k & Cirrus calibration blobs)
