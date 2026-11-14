@@ -1,0 +1,51 @@
+[Desktop Entry]
+Version=1.0
+Name=Brave
+GenericName=Web Browser
+GenericName[ar]=متصفح الشبكة
+GenericName[bg]=Уеб браузър
+GenericName[ca]=Navegador web
+GenericName[cs]=WWW prohlížeč
+GenericName[da]=Browser
+GenericName[de]=Web-Browser
+GenericName[el]=Περιηγητής ιστού
+GenericName[en_GB]=Web Browser
+GenericName[es]=Navegador web
+GenericName[et]=Veebirauser
+GenericName[fi]=WWW-selain
+GenericName[fr]=Navigateur Web
+GenericName[he]=דפדפן אינטרנט
+GenericName[hi]=वेब ब्राउज़र
+GenericName[hu]=Webböngésző
+GenericName[it]=Browser Web
+GenericName[ja]=ウェブブラウザ
+GenericName[ko]=웹 브라우저
+GenericName[nl]=Webbrowser
+GenericName[pl]=Przeglądarka WWW
+GenericName[pt]=Navegador Web
+GenericName[pt_BR]=Navegador da Internet
+GenericName[ru]=Веб-браузер
+GenericName[sv]=Webbläsare
+GenericName[tr]=Web Tarayıcı
+GenericName[uk]=Навігатор Тенет
+GenericName[zh_CN]=网页浏览器
+GenericName[zh_TW]=網頁瀏覽器
+Comment=Access the Internet
+Exec=brave --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport %U
+TryExec=brave
+StartupNotify=true
+StartupWMClass=brave-browser
+Terminal=false
+Icon=brave-desktop
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=application/pdf;application/rdf+xml;application/rss+xml;application/xhtml+xml;application/xhtml_xml;application/xml;image/gif;image/jpeg;image/png;image/webp;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ipfs;x-scheme-handler/ipns;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=brave --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport
+
+[Desktop Action new-private-window]
+Name=New Incognito Window
+Exec=brave --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport --incognito

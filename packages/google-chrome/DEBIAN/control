@@ -1,0 +1,15 @@
+Package: google-chrome-stable
+Version: 157.0.8103.78-1
+Architecture: arm64
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: web
+Priority: optional
+Provides: google-chrome
+Description: The popular web browser by Google (Stable Channel, official arm64 build)
+ Google Chrome is a fast, secure web browser. This package republishes Google's
+ official arm64 Debian build unchanged, so its maintainer scripts (icons,
+ AppArmor profile, update-alternatives and the Google APT repository/signing
+ key setup) all keep working.
+ .
+ Hardware video decode is enabled automatically when the iris-vaapi package is
+ installed, which wraps the browser with the required VA-API flags.
