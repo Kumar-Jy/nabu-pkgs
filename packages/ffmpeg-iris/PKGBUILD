@@ -33,6 +33,11 @@ package() {
   cp -a "$srcdir/ffmpeg-iris-8.0.1/bin" "$pkgdir$_imroot/"
   cp -a "$srcdir/ffmpeg-iris-8.0.1/share" "$pkgdir$_imroot/"
 
+  # The upstream tree ships the front-ends as patched_ffmpeg / patched_ffprobe.
+  # Provide the conventional names so the companion wrappers below resolve.
+  ln -s patched_ffmpeg "$pkgdir$_imroot/bin/ffmpeg"
+  ln -s patched_ffprobe "$pkgdir$_imroot/bin/ffprobe"
+
   install -d "$pkgdir/usr/bin"
   # LD-savvy companion bins (never /usr/bin/ffmpeg — mirror owns that)
   for pair in "ffmpeg:ffmpeg-iris" "ffprobe:ffprobe-iris"; do
