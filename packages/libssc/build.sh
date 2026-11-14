@@ -17,6 +17,15 @@ SRC_DIR="$WORK_DIR/src"
 mkdir -p "$SRC_DIR"
 git clone --depth 1 --branch v0.4.4 https://codeberg.org/DylanVanAssche/libssc.git "$SRC_DIR"
 
+# A tag can be moved upstream. Pin the commit this package was tested against
+# so a retagged release cannot silently change the contents of the .deb.
+EXPECTED_COMMIT="0cf77b93b55752da34dca2dcecc06fca8665184b"
+ACTUAL_COMMIT=$(git -C "$SRC_DIR" rev-parse HEAD)
+if [ "$ACTUAL_COMMIT" != "$EXPECTED_COMMIT" ]; then
+    echo "ERROR: libssc tag v0.4.4 now points to $ACTUAL_COMMIT (expected $EXPECTED_COMMIT)" >&2
+    exit 1
+fi
+
 cd "$SRC_DIR"
 sed -i "/subdir('mocking')/d; /subdir('tests')/d" meson.build
 sed -i "s/>= 1.4.0/>= 1.3.0/" meson.build

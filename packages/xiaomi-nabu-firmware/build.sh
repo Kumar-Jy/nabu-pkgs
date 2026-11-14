@@ -15,10 +15,14 @@ mkdir -p "$PKG_DIR/usr/lib"
 cp "$SCRIPT_DIR/DEBIAN/control" "$PKG_DIR/DEBIAN/control"
 
 echo "==> Downloading Xiaomi Pad 5 firmware archive..."
-if ! gh release download repo -R Kumar-Jy/nabu-pkgs -p "linux-firmware-xiaomi-nabu-*.pkg.tar.xz" -O "$WORK_DIR/fw.pkg.tar.xz" 2>/dev/null; then
-    FW_URL="https://github.com/rodriguezst/arch-repo/releases/download/aarch64/linux-firmware-xiaomi-nabu-25.04.26-1-any.pkg.tar.xz"
-    curl -fSL --retry 3 "$FW_URL" -o "$WORK_DIR/fw.pkg.tar.xz"
-fi
+# Pin both the upstream archive and its SHA-256. The old code accepted any
+# asset matching a wildcard (and silently fell through to an unverified URL),
+# so a changed or truncated download would have been packaged unnoticed.
+FW_VERSION="25.04.26-1"
+FW_SHA256="bef43c32029902bc4c3c1b7c7007c6e5d954fe673933087a836b5a41b567bac9"
+FW_URL="https://github.com/rodriguezst/arch-repo/releases/download/aarch64/linux-firmware-xiaomi-nabu-${FW_VERSION}-any.pkg.tar.xz"
+curl -fSL --retry 3 --retry-delay 5 "$FW_URL" -o "$WORK_DIR/fw.pkg.tar.xz"
+echo "$FW_SHA256  $WORK_DIR/fw.pkg.tar.xz" | sha256sum -c -
 
 echo "==> Extracting firmware..."
 tar -xf "$WORK_DIR/fw.pkg.tar.xz" -C "$WORK_DIR"

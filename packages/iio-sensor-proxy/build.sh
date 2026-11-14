@@ -17,6 +17,15 @@ SRC_DIR="$WORK_DIR/src"
 mkdir -p "$SRC_DIR"
 git clone --depth 1 --branch 3.9 https://gitlab.freedesktop.org/hadess/iio-sensor-proxy.git "$SRC_DIR"
 
+# A tag can be moved upstream. Pin the commit this package was tested against
+# so a retagged release cannot silently change the contents of the .deb.
+EXPECTED_COMMIT="0085ddf8ecb173a1c5fcf2344aa40e561125354f"
+ACTUAL_COMMIT=$(git -C "$SRC_DIR" rev-parse HEAD)
+if [ "$ACTUAL_COMMIT" != "$EXPECTED_COMMIT" ]; then
+    echo "ERROR: iio-sensor-proxy tag 3.9 now points to $ACTUAL_COMMIT (expected $EXPECTED_COMMIT)" >&2
+    exit 1
+fi
+
 cd "$SRC_DIR"
 patch -Np1 -i "$SCRIPT_DIR/0001-fix-ssc-race-condition.patch"
 patch -Np1 -i "$SCRIPT_DIR/0002-ssc-proximity-nabu-sar-fallback.patch"
