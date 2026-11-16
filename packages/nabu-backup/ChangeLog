@@ -1,5 +1,13 @@
 2026-11-16 Kumar-Jy <kumrjy1@gmail.com>
 
+	* nabu-backup 1.0.2-1:
+	- Fix UI hanging and tab freeze issues by making all subprocesses and network calls asynchronous.
+	- Isolate rclone about, lsjson, and block device scans off the GTK main loop into background daemon threads.
+	- Implement in-memory caches for drives, cloud remotes, and backups for instantaneous 0ms tab switching.
+	- Add non-blocking background quota fetcher and background backup catalog loader.
+	- Lightweight mtime check for window activation to eliminate repetitive subprocess spawning.
+	- Add animated HeaderBar activity spinner for background tasks.
+
 	* nabu-backup 1.0.1-1:
 	- Compact and tablet-optimized default window dimensions (480x640).
 	- Real-time cloud storage dynamic reload across all tabs without app restart.

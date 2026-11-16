@@ -18,7 +18,7 @@ from pathlib import Path
 
 APP_ID = "org.nabu.backup"
 APP_NAME = "Nabu Backup & Restore"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 BACKUP_DIR_NAME = "NabuBackups"
 
 def get_current_user():
@@ -103,7 +103,6 @@ class StorageScanner:
             label = node.get('label') or kname
             ro = bool(node.get('ro'))
 
-            # Filter valid partitions >= 1 GB, non-root, non-ro
             if fstype in cls.VALID_FS and not ro and size >= 1024 * 1024 * 1024:
                 if mountpoint not in cls.EXCLUDE_MOUNTS:
                     free_bytes = None
@@ -136,13 +135,11 @@ class StorageScanner:
             is_parent_usb = (dev.get('tran') == 'usb' or dev.get('rm') or dev.get('hotplug'))
             inspect_node(dev, is_usb=is_parent_usb, model=dev.get('model') or '')
 
-        # Sort: USB external drives first, then by size descending
         candidates.sort(key=lambda x: (not x['is_usb'], -x['size']))
         return candidates
 
     @classmethod
     def mount_device(cls, device_path):
-        """Mount unmounted device using udisksctl (no root password needed)"""
         try:
             res = subprocess.run(['udisksctl', 'mount', '-b', device_path], capture_output=True, text=True)
             if res.returncode == 0:
@@ -155,7 +152,6 @@ class StorageScanner:
 
     @classmethod
     def find_local_backups(cls):
-        """Scans candidate drives for existing nabu-backup archives"""
         found = []
         drives = cls.scan_devices()
         for d in drives:
@@ -186,7 +182,7 @@ class StorageScanner:
         return found
 
 # ==============================================================================
-# Cloud Storage Manager (rclone integration)
+# Cloud Storage Manager
 # ==============================================================================
 class CloudManager:
     @classmethod
@@ -195,11 +191,10 @@ class CloudManager:
 
     @classmethod
     def list_remotes(cls):
-        """Returns list of dicts: [{'name': 'gdrive', 'type': 'drive', 'remote': 'gdrive:'}, ...]"""
         if not cls.is_available():
             return []
         try:
-            res = subprocess.run(rclone_cmd('listremotes', '--long'), capture_output=True, text=True, timeout=10)
+            res = subprocess.run(rclone_cmd('listremotes', '--long'), capture_output=True, text=True, timeout=8)
             remotes = []
             for line in res.stdout.splitlines():
                 parts = line.strip().split(':')
@@ -214,11 +209,9 @@ class CloudManager:
 
     @classmethod
     def get_remote_space(cls, remote_name):
-        """Gets space info for remote via rclone about"""
         try:
             res = subprocess.run(rclone_cmd('about', f"{remote_name}:", '--json'), capture_output=True, text=True, timeout=8)
             if res.returncode == 0:
-                # Filter out notices if present in stdout
                 raw = res.stdout.strip()
                 if "{" in raw:
                     json_str = raw[raw.find("{"):raw.rfind("}")+1]
@@ -234,15 +227,14 @@ class CloudManager:
 
     @classmethod
     def list_cloud_backups(cls, remote_name):
-        """Lists nabu-backup archives on cloud remote under NabuBackups/"""
         if not cls.is_available():
             return []
         try:
             target = f"{remote_name}:{BACKUP_DIR_NAME}"
-            res = subprocess.run(rclone_cmd('lsjson', target), capture_output=True, text=True, timeout=15)
+            res = subprocess.run(rclone_cmd('lsjson', target), capture_output=True, text=True, timeout=12)
             if res.returncode != 0:
                 target = f"{remote_name}:"
-                res = subprocess.run(rclone_cmd('lsjson', target), capture_output=True, text=True, timeout=15)
+                res = subprocess.run(rclone_cmd('lsjson', target), capture_output=True, text=True, timeout=12)
 
             if res.returncode == 0:
                 raw = res.stdout.strip()
@@ -268,20 +260,18 @@ class CloudManager:
 
     @classmethod
     def create_mega_remote(cls, name, email, password):
-        """Creates MEGA remote using rclone obscure and config create"""
         try:
             obs = subprocess.check_output(rclone_cmd('obscure', password), text=True).strip()
             cmd = rclone_cmd('config', 'create', name, 'mega', 'user', email, 'pass', obs)
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             return res.returncode == 0, res.stderr or res.stdout
         except Exception as e:
             return False, str(e)
 
     @classmethod
     def delete_remote(cls, name):
-        """Deletes a configured remote"""
         try:
-            res = subprocess.run(rclone_cmd('config', 'delete', name), capture_output=True, text=True)
+            res = subprocess.run(rclone_cmd('config', 'delete', name), capture_output=True, text=True, timeout=10)
             return res.returncode == 0
         except Exception:
             return False
@@ -347,7 +337,6 @@ class BackupEngine:
 
         components = []
 
-        # 1. Package Lists
         if options.get('include_packages', True):
             if log_cb:
                 log_cb("Exporting installed pacman package lists...")
@@ -374,7 +363,6 @@ class BackupEngine:
                 if log_cb:
                     log_cb(f"Warning exporting packages: {e}")
 
-        # 2. System Settings (WiFi, Bluetooth, Boot cmdlines)
         if options.get('include_system') or options.get('include_boot'):
             if log_cb:
                 log_cb("Staging system configurations (WiFi, Bluetooth, Tablet boot)...")
@@ -399,7 +387,6 @@ class BackupEngine:
                 cls._stage_system_files(sys_staging)
                 components.append("system")
 
-        # 3. User Home Directory Staging
         home_staging = os.path.join(staging_dir, "home", username)
         if options.get('include_home', True) or options.get('include_docs', True):
             if log_cb:
@@ -433,7 +420,6 @@ class BackupEngine:
                         cls._copy_tree_filtered(src, dst, excludes)
                 components.append("user_documents")
 
-        # 4. Generate Metadata
         metadata = {
             "app": APP_NAME,
             "version": APP_VERSION,
@@ -450,7 +436,6 @@ class BackupEngine:
         with open(os.path.join(meta_dir, "nabu-backup.json"), "w") as f:
             json.dump(metadata, f, indent=2)
 
-        # 5. Archive Creation (tar + zstd)
         if log_cb:
             log_cb(f"Compressing backup archive ({archive_name})...")
         if progress_cb:
@@ -480,7 +465,6 @@ class BackupEngine:
 
         shutil.rmtree(staging_dir, ignore_errors=True)
 
-        # 6. Cloud Upload
         if is_cloud:
             remote = options.get('cloud_remote')
             if log_cb:
@@ -610,7 +594,6 @@ class RestoreEngine:
             shutil.rmtree(staging_dir, ignore_errors=True)
             raise RuntimeError(f"Extraction failed: {e}")
 
-        # 2. Package Restoration (pacman -S --needed)
         if options.get('restore_packages', True):
             pkglist_native = os.path.join(staging_dir, "meta", "pkglist-native.txt")
             if os.path.exists(pkglist_native):
@@ -651,7 +634,6 @@ class RestoreEngine:
                 except Exception:
                     pass
 
-        # 3. User Home Restoration
         if options.get('restore_home', True):
             if log_cb:
                 log_cb("Restoring user files & desktop configurations...")
@@ -671,7 +653,6 @@ class RestoreEngine:
                             else:
                                 shutil.copy2(s, d)
 
-            # Permissions normalization: chown -R target_user:target_user
             if log_cb:
                 log_cb(f"Normalizing user file permissions for {username}...")
             try:
@@ -687,7 +668,6 @@ class RestoreEngine:
                 if log_cb:
                     log_cb(f"Permission fix note: {e}")
 
-        # 4. System Settings & Boot Restoration
         if options.get('restore_system', True) or options.get('restore_boot', True):
             sys_staged = os.path.join(staging_dir, "system")
             if os.path.exists(sys_staged):
@@ -754,7 +734,7 @@ class RestoreEngine:
                 shutil.copy2(os.path.join(cmd_staged, f), os.path.join(dest, f))
 
 # ==============================================================================
-# GTK4 & Libadwaita User Interface
+# GTK4 & Libadwaita User Interface (Fully Asynchronous & Non-Blocking)
 # ==============================================================================
 def launch_gui():
     import gi
@@ -762,7 +742,6 @@ def launch_gui():
     gi.require_version('Adw', '1')
     from gi.repository import Gtk, Adw, GLib, Gio, Pango, Gdk
 
-    # Custom CSS for compact & refined tablet styling
     CUSTOM_CSS = b"""
     .card-compact {
         padding: 6px 12px;
@@ -807,7 +786,6 @@ def launch_gui():
             super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
 
         def do_activate(self):
-            # Load custom styling
             css_provider = Gtk.CssProvider()
             css_provider.load_from_data(CUSTOM_CSS)
             Gtk.StyleContext.add_provider_for_display(
@@ -820,49 +798,46 @@ def launch_gui():
         def __init__(self, app):
             super().__init__(application=app)
             self.set_title(APP_NAME)
-            # Default window dimensions: compact and tablet-friendly (480x640)
             self.set_default_size(480, 640)
             self.set_size_request(380, 520)
 
-            # Selected targets state
+            # In-memory Caches for Instant UI Response (Zero Lag)
+            self.cached_drives = []
+            self.cached_remotes = []
+            self.cached_cloud_spaces = {} # remote_name -> space string
+            self.cached_cloud_backups = {} # remote_name -> list of backup dicts
+            self.cached_local_backups = []
+            self.last_rclone_mtime = 0
+
+            # State
             self.selected_drive = None
             self.selected_cloud_remote = None
             self.custom_folder_path = None
-            self.dest_mode = "drive"  # "drive", "cloud", "custom"
-
-            self.restore_source_mode = "local" # "local", "cloud", "file"
+            self.dest_mode = "drive"
+            self.restore_source_mode = "local"
             self.selected_restore_file = None
-            self.current_cloud_backups = []
 
             self._build_ui()
 
-            # Initial scan and load
-            self._refresh_drives()
-            self.refresh_all_cloud_data()
-            self._refresh_restore_list()
+            # Non-blocking async background initial loads
+            self._async_refresh_drives()
+            self._async_refresh_cloud_remotes()
+            self._async_refresh_local_backups()
 
-            # Window focus listener: reloads cloud data when returning from browser
+            # Window focus listener: lightweight mtime check
             self.connect("notify::is-active", lambda win, p: self._on_window_active() if win.get_is_active() else None)
 
         def _on_window_active(self):
-            """Called whenever the window regains focus"""
-            self.refresh_all_cloud_data(silent=True)
-
-        def refresh_all_cloud_data(self, silent=False):
-            """Instantly reloads registered cloud remotes across all tabs with zero app restart"""
-            remotes = CloudManager.list_remotes()
-            
-            # 1. Update Cloud Accounts Tab
-            self._refresh_cloud_accounts_ui(remotes)
-
-            # 2. Update Backup Tab Cloud Remote Combo
-            self._update_backup_cloud_combo(remotes)
-
-            # 3. Update Restore Tab Cloud Remote Combo & Backups
-            self._update_restore_cloud_combo(remotes)
-
-            if not silent and hasattr(self, 'cloud_auth_banner'):
-                self.cloud_auth_banner.set_revealed(False)
+            """Fast check: only refresh if rclone.conf was actually modified"""
+            conf = get_rclone_config_path()
+            if os.path.exists(conf):
+                try:
+                    mt = os.path.getmtime(conf)
+                    if mt > self.last_rclone_mtime:
+                        self.last_rclone_mtime = mt
+                        self._async_refresh_cloud_remotes()
+                except Exception:
+                    pass
 
         def _build_ui(self):
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -873,10 +848,14 @@ def launch_gui():
             header_title = Adw.WindowTitle(title="Nabu Backup", subtitle="Xiaomi Pad 5")
             header.set_title_widget(header_title)
 
-            # Top Refresh Button
-            btn_refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh Drives & Cloud Remotes")
+            # Spinner for background activity
+            self.header_spinner = Gtk.Spinner()
+            header.pack_end(self.header_spinner)
+
+            # Refresh Button
+            btn_refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh Drives & Cloud Accounts")
             btn_refresh.add_css_class("flat")
-            btn_refresh.connect("clicked", lambda b: self._on_global_refresh())
+            btn_refresh.connect("clicked", lambda b: self._on_manual_refresh())
             header.pack_end(btn_refresh)
 
             main_box.append(header)
@@ -898,159 +877,44 @@ def launch_gui():
             cloud_page = self._build_cloud_page()
             self.view_stack.add_titled_with_icon(cloud_page, "cloud", "Cloud", "folder-remote-symbolic")
 
-            # Tab Switch Listener
+            # Tab Switch Listener: ZERO blocking calls here!
             self.view_stack.connect("notify::visible-child-name", self._on_tab_switched)
 
             main_box.append(self.view_stack)
 
         def _on_tab_switched(self, stack, param):
+            """Instant tab switch - never blocks on subprocesses!"""
             tab = stack.get_visible_child_name()
-            if tab == "cloud":
-                self.refresh_all_cloud_data(silent=True)
-            elif tab == "backup":
-                self._update_backup_cloud_combo(CloudManager.list_remotes())
-                self._check_storage_warning()
-            elif tab == "restore":
-                self._refresh_restore_list()
-                if self.restore_source_mode == "cloud":
-                    self._load_cloud_backups()
+            if tab == "restore" and self.restore_source_mode == "cloud":
+                if self.cached_remotes:
+                    idx = self.cloud_restore_combo.get_selected()
+                    if idx < len(self.cached_remotes):
+                        cur_name = self.cached_remotes[idx]['name']
+                        if cur_name not in self.cached_cloud_backups:
+                            self._async_load_cloud_backups(cur_name)
 
-        def _on_global_refresh(self):
-            self._refresh_drives()
-            self.refresh_all_cloud_data()
-            self._refresh_restore_list()
+        def _on_manual_refresh(self):
+            self.header_spinner.start()
+            self._async_refresh_drives()
+            self._async_refresh_cloud_remotes(force_space=True)
+            self._async_refresh_local_backups()
 
         # ----------------------------------------------------------------------
-        # Backup Tab
+        # Asynchronous Background Data Loaders
         # ----------------------------------------------------------------------
-        def _build_backup_page(self):
-            scroll = Gtk.ScrolledWindow(vexpand=True)
-            clamp = Adw.Clamp(maximum_size=480, tightening_threshold=400)
-            scroll.set_child(clamp)
+        def _async_refresh_drives(self):
+            def worker():
+                drives = StorageScanner.scan_devices()
+                GLib.idle_add(lambda: self._apply_drives(drives))
+            threading.Thread(target=worker, daemon=True).start()
 
-            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=18, margin_start=12, margin_end=12)
-            clamp.set_child(vbox)
-
-            # Destination Mode Selector
-            mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=6)
-            mode_box.add_css_class("linked")
-            btn_drive = Gtk.ToggleButton(label="Storage Drives", active=True)
-            btn_cloud = Gtk.ToggleButton(label="Cloud Drive")
-            btn_custom = Gtk.ToggleButton(label="Custom")
-            btn_cloud.set_group(btn_drive)
-            btn_custom.set_group(btn_drive)
-
-            btn_drive.connect("toggled", lambda b: self._on_dest_mode_changed("drive") if b.get_active() else None)
-            btn_cloud.connect("toggled", lambda b: self._on_dest_mode_changed("cloud") if b.get_active() else None)
-            btn_custom.connect("toggled", lambda b: self._on_dest_mode_changed("custom") if b.get_active() else None)
-
-            mode_box.append(btn_drive)
-            mode_box.append(btn_cloud)
-            mode_box.append(btn_custom)
-            vbox.append(mode_box)
-
-            # Storage Warning Banner
-            self.storage_banner = Adw.Banner(title="No external USB drive or secondary partition with sufficient space detected. Please insert a USB-C drive or select a folder.")
-            self.storage_banner.set_revealed(False)
-            self.storage_banner.set_button_label("Refresh")
-            self.storage_banner.connect("button-clicked", lambda b: self._refresh_drives())
-            vbox.append(self.storage_banner)
-
-            # Section: Drive Selection Group
-            self.drive_group = Adw.PreferencesGroup(title="Target Storage Drive", description="Select internal data partition or external USB-C drive")
-            vbox.append(self.drive_group)
-            self.drive_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            self.drive_group.add(self.drive_rows_box)
-
-            # Section: Cloud Destination Group (Hidden by default)
-            self.cloud_dest_group = Adw.PreferencesGroup(title="Target Cloud Remote", description="Uploads directly to your linked cloud storage")
-            self.cloud_combo_row = Adw.ComboRow(title="Cloud Account")
-            self.cloud_dest_group.add(self.cloud_combo_row)
-
-            btn_goto_cloud = Gtk.Button(label="Manage or Add Cloud Accounts...", halign=Gtk.Align.CENTER, margin_top=4)
-            btn_goto_cloud.add_css_class("flat")
-            btn_goto_cloud.connect("clicked", lambda b: self.view_stack.set_visible_child_name("cloud"))
-            self.cloud_dest_group.add(btn_goto_cloud)
-
-            self.cloud_dest_group.set_visible(False)
-            vbox.append(self.cloud_dest_group)
-
-            # Section: Custom Folder Group (Hidden by default)
-            self.custom_dest_group = Adw.PreferencesGroup(title="Custom Directory")
-            self.custom_entry_row = Adw.ActionRow(title="Selected Folder", subtitle="None chosen")
-            btn_browse = Gtk.Button(label="Browse...", valign=Gtk.Align.CENTER)
-            btn_browse.connect("clicked", self._on_browse_custom_folder)
-            self.custom_entry_row.add_suffix(btn_browse)
-            self.custom_dest_group.add(self.custom_entry_row)
-            self.custom_dest_group.set_visible(False)
-            vbox.append(self.custom_dest_group)
-
-            # Section: Backup Scope Checkboxes
-            scope_group = Adw.PreferencesGroup(title="Backup Scope & Components")
-            vbox.append(scope_group)
-
-            self.sw_home = Adw.SwitchRow(title="Personal Files & Documents", subtitle="Documents, Pictures, Videos, Music, Desktop", active=True, icon_name="folder-documents-symbolic")
-            self.sw_config = Adw.SwitchRow(title="Desktop & App Configurations", subtitle="~/.config, ~/.local/share, shell dotfiles & themes", active=True, icon_name="preferences-system-symbolic")
-            self.sw_pkgs = Adw.SwitchRow(title="Installed Packages List", subtitle="Explicitly installed pacman & AUR package lists", active=True, icon_name="applications-system-symbolic")
-            self.sw_sys = Adw.SwitchRow(title="WiFi & Bluetooth Pairings", subtitle="Saved WiFi passwords & paired devices (Pen, keyboards)", active=True, icon_name="network-wireless-symbolic")
-            self.sw_boot = Adw.SwitchRow(title="Tablet Boot & Display Config", subtitle="/etc/cmdline.d/ rotation & kernel parameters", active=True, icon_name="system-run-symbolic")
-            self.sw_waydroid = Adw.SwitchRow(title="Waydroid Container Data", subtitle="Android apps & data (~2.2 GB) [Optional]", active=False, icon_name="phone-symbolic")
-
-            scope_group.add(self.sw_home)
-            scope_group.add(self.sw_config)
-            scope_group.add(self.sw_pkgs)
-            scope_group.add(self.sw_sys)
-            scope_group.add(self.sw_boot)
-            scope_group.add(self.sw_waydroid)
-
-            # Action Box
-            action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6)
-            self.btn_start_backup = Gtk.Button(label="Create Backup Archive")
-            self.btn_start_backup.add_css_class("suggested-action")
-            self.btn_start_backup.add_css_class("pill")
-            self.btn_start_backup.set_size_request(220, 46)
-            self.btn_start_backup.set_halign(Gtk.Align.CENTER)
-            self.btn_start_backup.connect("clicked", self._on_start_backup_clicked)
-            action_box.append(self.btn_start_backup)
-
-            # Progress Bar & Status
-            self.backup_progress = Gtk.ProgressBar(show_text=True, text="Ready", visible=False)
-            self.backup_log_label = Gtk.Label(label="", wrap=True, visible=False)
-            self.backup_log_label.add_css_class("subtext-compact")
-            action_box.append(self.backup_progress)
-            action_box.append(self.backup_log_label)
-
-            vbox.append(action_box)
-            return scroll
-
-        def _on_dest_mode_changed(self, mode):
-            self.dest_mode = mode
-            self.drive_group.set_visible(mode == "drive")
-            self.cloud_dest_group.set_visible(mode == "cloud")
-            self.custom_dest_group.set_visible(mode == "custom")
-            if mode == "drive":
-                self._check_storage_warning()
-            elif mode == "cloud":
-                self._update_backup_cloud_combo(CloudManager.list_remotes())
-
-        def _check_storage_warning(self):
-            if not self.selected_drive:
-                self.storage_banner.set_title("No drive selected. Please choose an internal partition or connect a USB drive.")
-                self.storage_banner.set_revealed(True)
-            elif self.selected_drive.get('free_bytes') is not None and self.selected_drive['free_bytes'] < 3 * 1024**3:
-                free_gb = self.selected_drive['free_bytes'] / (1024**3)
-                self.storage_banner.set_title(f"Warning: Selected drive has only {free_gb:.1f} GB free space. Backup may require more.")
-                self.storage_banner.set_revealed(True)
-            else:
-                self.storage_banner.set_revealed(False)
-
-        def _refresh_drives(self):
+        def _apply_drives(self, drives):
+            self.cached_drives = drives
             while self.drive_rows_box.get_first_child():
                 self.drive_rows_box.remove(self.drive_rows_box.get_first_child())
 
-            drives = StorageScanner.scan_devices()
             if not drives:
-                row = Adw.ActionRow(title="No suitable storage drives detected", subtitle="Connect a USB-C flash drive or OTG drive")
+                row = Adw.ActionRow(title="No suitable drives detected", subtitle="Connect a USB-C flash drive or OTG drive")
                 self.drive_rows_box.append(row)
                 self.selected_drive = None
                 self._check_storage_warning()
@@ -1063,25 +927,21 @@ def launch_gui():
                 row = Adw.ActionRow()
                 row.add_css_class("card-compact")
                 
-                # Header with badges
                 header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                 lbl_name = Gtk.Label(label=d['label'], halign=Gtk.Align.START)
                 lbl_name.add_css_class("heading")
                 header_box.append(lbl_name)
 
-                # Type badge
                 badge_type = Gtk.Label(label="USB-C" if d['is_usb'] else "Internal")
                 badge_type.add_css_class("badge-pill")
                 badge_type.add_css_class("badge-usb" if d['is_usb'] else "badge-internal")
                 header_box.append(badge_type)
 
-                # FS badge
                 badge_fs = Gtk.Label(label=d['fstype'].upper())
                 badge_fs.add_css_class("badge-pill")
                 badge_fs.add_css_class("badge-fs")
                 header_box.append(badge_fs)
 
-                # Visual Storage Level Meter
                 level_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                 level_box.append(header_box)
 
@@ -1105,7 +965,6 @@ def launch_gui():
 
                 row.set_child(level_box)
 
-                # Radio Selector
                 radio = Gtk.CheckButton()
                 if self.drive_radio_group:
                     radio.set_group(self.drive_radio_group)
@@ -1124,6 +983,303 @@ def launch_gui():
             self.selected_drive = first_valid
             self._check_storage_warning()
 
+        def _async_refresh_cloud_remotes(self, force_space=False):
+            conf = get_rclone_config_path()
+            if os.path.exists(conf):
+                try:
+                    self.last_rclone_mtime = os.path.getmtime(conf)
+                except Exception:
+                    pass
+
+            def worker():
+                remotes = CloudManager.list_remotes()
+                GLib.idle_add(lambda: self._apply_cloud_remotes(remotes, force_space))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _apply_cloud_remotes(self, remotes, fetch_space=False):
+            self.cached_remotes = remotes
+            self.header_spinner.stop()
+            if hasattr(self, 'cloud_auth_banner'):
+                self.cloud_auth_banner.set_revealed(False)
+
+            # 1. Update Cloud Accounts Tab UI instantly
+            self._render_cloud_accounts_list(remotes)
+
+            # 2. Update Backup Tab Cloud Remote Combo instantly
+            model = Gtk.StringList()
+            if not remotes:
+                model.append("No cloud accounts (Click below to add)")
+                self.selected_cloud_remote = None
+            else:
+                for r in remotes:
+                    model.append(f"{r['name']} ({r['type']})")
+                if not self.selected_cloud_remote or self.selected_cloud_remote not in [r['name'] for r in remotes]:
+                    self.selected_cloud_remote = remotes[0]['name']
+
+            self.cloud_combo_row.set_model(model)
+            if self.selected_cloud_remote and remotes:
+                names = [r['name'] for r in remotes]
+                if self.selected_cloud_remote in names:
+                    self.cloud_combo_row.set_selected(names.index(self.selected_cloud_remote))
+
+            # 3. Update Restore Tab Cloud Remote Combo
+            rm_model = Gtk.StringList()
+            if not remotes:
+                rm_model.append("No cloud remotes")
+            else:
+                for r in remotes:
+                    rm_model.append(f"{r['name']} ({r['type']})")
+            self.cloud_restore_combo.set_model(rm_model)
+
+            # 4. Async fetch space quota in background without blocking UI
+            for r in remotes:
+                r_name = r['name']
+                if fetch_space or r_name not in self.cached_cloud_spaces:
+                    self._async_fetch_remote_space(r_name)
+
+        def _async_fetch_remote_space(self, remote_name):
+            def space_worker():
+                info = CloudManager.get_remote_space(remote_name)
+                if info and info.get('total'):
+                    tot = format_bytes(info['total'])
+                    free = format_bytes(info['free'])
+                    desc = f"Cloud Storage: {free} free of {tot}"
+                else:
+                    desc = f"Remote: {remote_name}:"
+                GLib.idle_add(lambda: self._apply_remote_space(remote_name, desc))
+            threading.Thread(target=space_worker, daemon=True).start()
+
+        def _apply_remote_space(self, remote_name, desc):
+            self.cached_cloud_spaces[remote_name] = desc
+            if hasattr(self, 'cloud_subtitles_map') and remote_name in self.cloud_subtitles_map:
+                lbl = self.cloud_subtitles_map[remote_name]
+                lbl.set_text(desc)
+
+        def _render_cloud_accounts_list(self, remotes):
+            while self.cloud_acc_box.get_first_child():
+                self.cloud_acc_box.remove(self.cloud_acc_box.get_first_child())
+
+            self.cloud_subtitles_map = {}
+
+            if not remotes:
+                row = Adw.ActionRow(title="No Cloud Remotes Connected", subtitle="Connect Google Drive, MEGA, or other cloud storage below")
+                self.cloud_acc_box.append(row)
+                return
+
+            for r in remotes:
+                row = Adw.ActionRow()
+                row.add_css_class("card-compact")
+                row.set_icon_name("folder-remote-symbolic")
+
+                header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                lbl_name = Gtk.Label(label=r['name'], halign=Gtk.Align.START)
+                lbl_name.add_css_class("heading")
+                header_box.append(lbl_name)
+
+                badge = Gtk.Label(label=r['type'].upper())
+                badge.add_css_class("badge-pill")
+                badge.add_css_class("badge-cloud")
+                header_box.append(badge)
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                info_box.append(header_box)
+
+                # Use cached space if available
+                desc = self.cached_cloud_spaces.get(r['name'], f"Connected ({r['remote']})")
+                sub = Gtk.Label(label=desc, halign=Gtk.Align.START)
+                sub.add_css_class("subtext-compact")
+                info_box.append(sub)
+                self.cloud_subtitles_map[r['name']] = sub
+
+                row.set_child(info_box)
+
+                btn_remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+                btn_remove.add_css_class("flat")
+                btn_remove.set_tooltip_text("Remove this cloud remote")
+                def make_del(r_name):
+                    return lambda b: self._confirm_delete_remote(r_name)
+                btn_remove.connect("clicked", make_del(r['name']))
+                row.add_suffix(btn_remove)
+
+                self.cloud_acc_box.append(row)
+
+        def _async_load_cloud_backups(self, remote_name):
+            def worker():
+                backups = CloudManager.list_cloud_backups(remote_name)
+                GLib.idle_add(lambda: self._apply_cloud_backups(remote_name, backups))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _apply_cloud_backups(self, remote_name, backups):
+            self.cached_cloud_backups[remote_name] = backups
+            self.current_cloud_backups = backups
+            b_model = Gtk.StringList()
+            if not backups:
+                b_model.append("No backups found on this cloud remote")
+            else:
+                for b in backups:
+                    b_model.append(f"{b['filename']} ({format_bytes(b['size'])})")
+            self.cloud_backup_combo.set_model(b_model)
+
+        def _async_refresh_local_backups(self):
+            def worker():
+                backups = StorageScanner.find_local_backups()
+                GLib.idle_add(lambda: self._apply_local_backups(backups))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _apply_local_backups(self, backups):
+            self.cached_local_backups = backups
+            while self.restore_rows_box.get_first_child():
+                self.restore_rows_box.remove(self.restore_rows_box.get_first_child())
+
+            if not backups:
+                row = Adw.ActionRow(title="No backup archives found on mounted drives", subtitle="Select archive manually or check cloud storage")
+                self.restore_rows_box.append(row)
+                self.selected_restore_file = None
+                return
+
+            self.restore_radio_group = None
+            first_b = None
+
+            for b in backups:
+                row = Adw.ActionRow()
+                row.add_css_class("card-compact")
+                title = f"{b['filename']} ({format_bytes(b['size'])})"
+                row.set_title(title)
+                mtime_str = datetime.fromtimestamp(b['mtime']).strftime("%Y-%m-%d %H:%M")
+                row.set_subtitle(f"Location: {b['device_label']} | Date: {mtime_str}")
+
+                radio = Gtk.CheckButton()
+                if self.restore_radio_group:
+                    radio.set_group(self.restore_radio_group)
+                else:
+                    self.restore_radio_group = radio
+                    radio.set_active(True)
+                    first_b = b['path']
+
+                def make_toggle(path):
+                    return lambda btn: self._on_restore_file_selected(path) if btn.get_active() else None
+
+                radio.connect("toggled", make_toggle(b['path']))
+                row.add_prefix(radio)
+                self.restore_rows_box.append(row)
+
+            if first_b:
+                self._on_restore_file_selected(first_b)
+
+        # ----------------------------------------------------------------------
+        # Backup Page Layout
+        # ----------------------------------------------------------------------
+        def _build_backup_page(self):
+            scroll = Gtk.ScrolledWindow(vexpand=True)
+            clamp = Adw.Clamp(maximum_size=480, tightening_threshold=400)
+            scroll.set_child(clamp)
+
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=18, margin_start=12, margin_end=12)
+            clamp.set_child(vbox)
+
+            mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=6)
+            mode_box.add_css_class("linked")
+            btn_drive = Gtk.ToggleButton(label="Storage Drives", active=True)
+            btn_cloud = Gtk.ToggleButton(label="Cloud Drive")
+            btn_custom = Gtk.ToggleButton(label="Custom")
+            btn_cloud.set_group(btn_drive)
+            btn_custom.set_group(btn_drive)
+
+            btn_drive.connect("toggled", lambda b: self._on_dest_mode_changed("drive") if b.get_active() else None)
+            btn_cloud.connect("toggled", lambda b: self._on_dest_mode_changed("cloud") if b.get_active() else None)
+            btn_custom.connect("toggled", lambda b: self._on_dest_mode_changed("custom") if b.get_active() else None)
+
+            mode_box.append(btn_drive)
+            mode_box.append(btn_cloud)
+            mode_box.append(btn_custom)
+            vbox.append(mode_box)
+
+            self.storage_banner = Adw.Banner(title="No external USB drive or secondary partition with sufficient space detected. Please insert a USB-C drive or select a folder.")
+            self.storage_banner.set_revealed(False)
+            self.storage_banner.set_button_label("Refresh")
+            self.storage_banner.connect("button-clicked", lambda b: self._async_refresh_drives())
+            vbox.append(self.storage_banner)
+
+            self.drive_group = Adw.PreferencesGroup(title="Target Storage Drive", description="Select internal data partition or external USB-C drive")
+            vbox.append(self.drive_group)
+            self.drive_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.drive_group.add(self.drive_rows_box)
+
+            self.cloud_dest_group = Adw.PreferencesGroup(title="Target Cloud Remote", description="Uploads directly to your linked cloud storage")
+            self.cloud_combo_row = Adw.ComboRow(title="Cloud Account")
+            self.cloud_dest_group.add(self.cloud_combo_row)
+
+            btn_goto_cloud = Gtk.Button(label="Manage or Add Cloud Accounts...", halign=Gtk.Align.CENTER, margin_top=4)
+            btn_goto_cloud.add_css_class("flat")
+            btn_goto_cloud.connect("clicked", lambda b: self.view_stack.set_visible_child_name("cloud"))
+            self.cloud_dest_group.add(btn_goto_cloud)
+
+            self.cloud_dest_group.set_visible(False)
+            vbox.append(self.cloud_dest_group)
+
+            self.custom_dest_group = Adw.PreferencesGroup(title="Custom Directory")
+            self.custom_entry_row = Adw.ActionRow(title="Selected Folder", subtitle="None chosen")
+            btn_browse = Gtk.Button(label="Browse...", valign=Gtk.Align.CENTER)
+            btn_browse.connect("clicked", self._on_browse_custom_folder)
+            self.custom_entry_row.add_suffix(btn_browse)
+            self.custom_dest_group.add(self.custom_entry_row)
+            self.custom_dest_group.set_visible(False)
+            vbox.append(self.custom_dest_group)
+
+            scope_group = Adw.PreferencesGroup(title="Backup Scope & Components")
+            vbox.append(scope_group)
+
+            self.sw_home = Adw.SwitchRow(title="Personal Files & Documents", subtitle="Documents, Pictures, Videos, Music, Desktop", active=True, icon_name="folder-documents-symbolic")
+            self.sw_config = Adw.SwitchRow(title="Desktop & App Configurations", subtitle="~/.config, ~/.local/share, shell dotfiles & themes", active=True, icon_name="preferences-system-symbolic")
+            self.sw_pkgs = Adw.SwitchRow(title="Installed Packages List", subtitle="Explicitly installed pacman & AUR package lists", active=True, icon_name="applications-system-symbolic")
+            self.sw_sys = Adw.SwitchRow(title="WiFi & Bluetooth Pairings", subtitle="Saved WiFi passwords & paired devices (Pen, keyboards)", active=True, icon_name="network-wireless-symbolic")
+            self.sw_boot = Adw.SwitchRow(title="Tablet Boot & Display Config", subtitle="/etc/cmdline.d/ rotation & kernel parameters", active=True, icon_name="system-run-symbolic")
+            self.sw_waydroid = Adw.SwitchRow(title="Waydroid Container Data", subtitle="Android apps & data (~2.2 GB) [Optional]", active=False, icon_name="phone-symbolic")
+
+            scope_group.add(self.sw_home)
+            scope_group.add(self.sw_config)
+            scope_group.add(self.sw_pkgs)
+            scope_group.add(self.sw_sys)
+            scope_group.add(self.sw_boot)
+            scope_group.add(self.sw_waydroid)
+
+            action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6)
+            self.btn_start_backup = Gtk.Button(label="Create Backup Archive")
+            self.btn_start_backup.add_css_class("suggested-action")
+            self.btn_start_backup.add_css_class("pill")
+            self.btn_start_backup.set_size_request(220, 46)
+            self.btn_start_backup.set_halign(Gtk.Align.CENTER)
+            self.btn_start_backup.connect("clicked", self._on_start_backup_clicked)
+            action_box.append(self.btn_start_backup)
+
+            self.backup_progress = Gtk.ProgressBar(show_text=True, text="Ready", visible=False)
+            self.backup_log_label = Gtk.Label(label="", wrap=True, visible=False)
+            self.backup_log_label.add_css_class("subtext-compact")
+            action_box.append(self.backup_progress)
+            action_box.append(self.backup_log_label)
+
+            vbox.append(action_box)
+            return scroll
+
+        def _on_dest_mode_changed(self, mode):
+            self.dest_mode = mode
+            self.drive_group.set_visible(mode == "drive")
+            self.cloud_dest_group.set_visible(mode == "cloud")
+            self.custom_dest_group.set_visible(mode == "custom")
+            if mode == "drive":
+                self._check_storage_warning()
+
+        def _check_storage_warning(self):
+            if not self.selected_drive:
+                self.storage_banner.set_title("No drive selected. Please choose an internal partition or connect a USB drive.")
+                self.storage_banner.set_revealed(True)
+            elif self.selected_drive.get('free_bytes') is not None and self.selected_drive['free_bytes'] < 3 * 1024**3:
+                free_gb = self.selected_drive['free_bytes'] / (1024**3)
+                self.storage_banner.set_title(f"Warning: Selected drive has only {free_gb:.1f} GB free space. Backup may require more.")
+                self.storage_banner.set_revealed(True)
+            else:
+                self.storage_banner.set_revealed(False)
+
         def _on_drive_selected(self, drive_dict):
             if not drive_dict.get('mountpoint'):
                 mnt = StorageScanner.mount_device(drive_dict['device'])
@@ -1136,38 +1292,6 @@ def launch_gui():
                         pass
             self.selected_drive = drive_dict
             self._check_storage_warning()
-
-        def _update_backup_cloud_combo(self, remotes):
-            model = Gtk.StringList()
-            if not remotes:
-                model.append("No cloud accounts (Click below to add)")
-                self.selected_cloud_remote = None
-            else:
-                for r in remotes:
-                    model.append(f"{r['name']} ({r['type']})")
-                if not self.selected_cloud_remote or self.selected_cloud_remote not in [r['name'] for r in remotes]:
-                    self.selected_cloud_remote = remotes[0]['name']
-
-            self.cloud_combo_row.set_model(model)
-            
-            # Select active item safely
-            if self.selected_cloud_remote and remotes:
-                names = [r['name'] for r in remotes]
-                if self.selected_cloud_remote in names:
-                    self.cloud_combo_row.set_selected(names.index(self.selected_cloud_remote))
-
-            # Handler
-            try:
-                self.cloud_combo_row.disconnect_by_func(self._on_backup_cloud_selected)
-            except Exception:
-                pass
-            self.cloud_combo_row.connect("notify::selected", self._on_backup_cloud_selected)
-
-        def _on_backup_cloud_selected(self, row, param):
-            remotes = CloudManager.list_remotes()
-            idx = row.get_selected()
-            if remotes and idx < len(remotes):
-                self.selected_cloud_remote = remotes[idx]['name']
 
         def _on_browse_custom_folder(self, btn):
             dialog = Gtk.FileDialog(title="Choose Backup Destination Folder")
@@ -1245,13 +1369,13 @@ def launch_gui():
             if success:
                 self.backup_log_label.set_text(f"Backup Completed Successfully!\n{result_str}")
                 self._show_alert("Backup Complete", f"Backup archive created and saved:\n{result_str}")
-                self._refresh_restore_list()
+                self._async_refresh_local_backups()
             else:
                 self.backup_log_label.set_text(f"Backup Failed: {result_str}")
                 self._show_alert("Backup Failed", f"An error occurred:\n{result_str}")
 
         # ----------------------------------------------------------------------
-        # Restore Tab
+        # Restore Page Layout
         # ----------------------------------------------------------------------
         def _build_restore_page(self):
             scroll = Gtk.ScrolledWindow(vexpand=True)
@@ -1261,7 +1385,6 @@ def launch_gui():
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=18, margin_start=12, margin_end=12)
             clamp.set_child(vbox)
 
-            # Source Selector
             mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=6)
             mode_box.add_css_class("linked")
             btn_local = Gtk.ToggleButton(label="Local Drives", active=True)
@@ -1279,13 +1402,11 @@ def launch_gui():
             mode_box.append(btn_file)
             vbox.append(mode_box)
 
-            # Local Backups Group
             self.restore_local_group = Adw.PreferencesGroup(title="Discovered Local Backups", description="Scans detected internal and external drives")
             self.restore_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             self.restore_local_group.add(self.restore_rows_box)
             vbox.append(self.restore_local_group)
 
-            # Cloud Backups Group (Hidden by default)
             self.restore_cloud_group = Adw.PreferencesGroup(title="Cloud Backups", description="Download and restore from remote cloud storage")
             self.cloud_restore_combo = Adw.ComboRow(title="Remote Account")
             self.cloud_backup_combo = Adw.ComboRow(title="Cloud Archive")
@@ -1294,7 +1415,8 @@ def launch_gui():
             self.restore_cloud_group.set_visible(False)
             vbox.append(self.restore_cloud_group)
 
-            # File Chooser Group (Hidden by default)
+            self.cloud_restore_combo.connect("notify::selected", self._on_cloud_restore_combo_selected)
+
             self.restore_file_group = Adw.PreferencesGroup(title="Manual Archive File")
             self.restore_file_row = Adw.ActionRow(title="Selected File", subtitle="None")
             btn_browse_archive = Gtk.Button(label="Browse...", valign=Gtk.Align.CENTER)
@@ -1304,7 +1426,6 @@ def launch_gui():
             self.restore_file_group.set_visible(False)
             vbox.append(self.restore_file_group)
 
-            # Archive Inspection Card
             self.inspect_group = Adw.PreferencesGroup(title="Archive Inspection")
             self.lbl_inspect_date = Adw.ActionRow(title="Created On", subtitle="--")
             self.lbl_inspect_host = Adw.ActionRow(title="Host & Kernel", subtitle="--")
@@ -1316,7 +1437,6 @@ def launch_gui():
             self.inspect_group.add(self.lbl_inspect_comps)
             vbox.append(self.inspect_group)
 
-            # Restore Options Checkboxes
             restore_opts_group = Adw.PreferencesGroup(title="Restore Components")
             vbox.append(restore_opts_group)
 
@@ -1330,7 +1450,6 @@ def launch_gui():
             restore_opts_group.add(self.sw_rest_sys)
             restore_opts_group.add(self.sw_rest_boot)
 
-            # Start Restore Action
             rest_action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6)
             self.btn_start_restore = Gtk.Button(label="Start Restore Process")
             self.btn_start_restore.add_css_class("suggested-action")
@@ -1355,48 +1474,20 @@ def launch_gui():
             self.restore_cloud_group.set_visible(mode == "cloud")
             self.restore_file_group.set_visible(mode == "file")
 
-            if mode == "cloud":
-                self._load_cloud_backups()
+            if mode == "cloud" and self.cached_remotes:
+                idx = self.cloud_restore_combo.get_selected()
+                cur_name = self.cached_remotes[idx]['name'] if idx < len(self.cached_remotes) else self.cached_remotes[0]['name']
+                if cur_name not in self.cached_cloud_backups:
+                    self._async_load_cloud_backups(cur_name)
 
-        def _refresh_restore_list(self):
-            while self.restore_rows_box.get_first_child():
-                self.restore_rows_box.remove(self.restore_rows_box.get_first_child())
-
-            backups = StorageScanner.find_local_backups()
-            if not backups:
-                row = Adw.ActionRow(title="No backup archives found on mounted drives", subtitle="Select archive manually or check cloud storage")
-                self.restore_rows_box.append(row)
-                self.selected_restore_file = None
-                return
-
-            self.restore_radio_group = None
-            first_b = None
-
-            for b in backups:
-                row = Adw.ActionRow()
-                row.add_css_class("card-compact")
-                title = f"{b['filename']} ({format_bytes(b['size'])})"
-                row.set_title(title)
-                mtime_str = datetime.fromtimestamp(b['mtime']).strftime("%Y-%m-%d %H:%M")
-                row.set_subtitle(f"Location: {b['device_label']} | Date: {mtime_str}")
-
-                radio = Gtk.CheckButton()
-                if self.restore_radio_group:
-                    radio.set_group(self.restore_radio_group)
+        def _on_cloud_restore_combo_selected(self, row, param):
+            idx = row.get_selected()
+            if self.cached_remotes and idx < len(self.cached_remotes):
+                remote_name = self.cached_remotes[idx]['name']
+                if remote_name in self.cached_cloud_backups:
+                    self._apply_cloud_backups(remote_name, self.cached_cloud_backups[remote_name])
                 else:
-                    self.restore_radio_group = radio
-                    radio.set_active(True)
-                    first_b = b['path']
-
-                def make_toggle(path):
-                    return lambda btn: self._on_restore_file_selected(path) if btn.get_active() else None
-
-                radio.connect("toggled", make_toggle(b['path']))
-                row.add_prefix(radio)
-                self.restore_rows_box.append(row)
-
-            if first_b:
-                self._on_restore_file_selected(first_b)
+                    self._async_load_cloud_backups(remote_name)
 
         def _on_restore_file_selected(self, path):
             self.selected_restore_file = path
@@ -1420,45 +1511,6 @@ def launch_gui():
                     self._on_restore_file_selected(path)
             except Exception:
                 pass
-
-        def _update_restore_cloud_combo(self, remotes):
-            rm_model = Gtk.StringList()
-            if not remotes:
-                rm_model.append("No cloud remotes")
-            else:
-                for r in remotes:
-                    rm_model.append(f"{r['name']} ({r['type']})")
-            self.cloud_restore_combo.set_model(rm_model)
-
-            try:
-                self.cloud_restore_combo.disconnect_by_func(self._on_cloud_restore_remote_changed)
-            except Exception:
-                pass
-            self.cloud_restore_combo.connect("notify::selected", self._on_cloud_restore_remote_changed)
-
-        def _on_cloud_restore_remote_changed(self, row, param):
-            remotes = CloudManager.list_remotes()
-            idx = row.get_selected()
-            if remotes and idx < len(remotes):
-                self._populate_remote_backup_list(remotes[idx]['name'])
-
-        def _load_cloud_backups(self):
-            remotes = CloudManager.list_remotes()
-            self._update_restore_cloud_combo(remotes)
-            if remotes:
-                idx = self.cloud_restore_combo.get_selected()
-                cur_name = remotes[idx]['name'] if idx < len(remotes) else remotes[0]['name']
-                self._populate_remote_backup_list(cur_name)
-
-        def _populate_remote_backup_list(self, remote_name):
-            b_model = Gtk.StringList()
-            self.current_cloud_backups = CloudManager.list_cloud_backups(remote_name)
-            if not self.current_cloud_backups:
-                b_model.append("No backups found on this cloud remote")
-            else:
-                for b in self.current_cloud_backups:
-                    b_model.append(f"{b['filename']} ({format_bytes(b['size'])})")
-            self.cloud_backup_combo.set_model(b_model)
 
         def _on_start_restore_clicked(self, btn):
             archive_to_restore = self.selected_restore_file
@@ -1542,7 +1594,7 @@ def launch_gui():
                 self._show_alert("Restore Failed", f"Error during restore:\n{msg}")
 
         # ----------------------------------------------------------------------
-        # Cloud Accounts Tab
+        # Cloud Page Layout
         # ----------------------------------------------------------------------
         def _build_cloud_page(self):
             scroll = Gtk.ScrolledWindow(vexpand=True)
@@ -1552,20 +1604,17 @@ def launch_gui():
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=18, margin_start=12, margin_end=12)
             clamp.set_child(vbox)
 
-            # In-app notification banner for active authorization
             self.cloud_auth_banner = Adw.Banner(title="Cloud Authorization in Progress... Click 'Check Remotes' once sign-in is complete in browser.")
             self.cloud_auth_banner.set_button_label("Check Remotes")
             self.cloud_auth_banner.set_revealed(False)
-            self.cloud_auth_banner.connect("button-clicked", lambda b: self.refresh_all_cloud_data())
+            self.cloud_auth_banner.connect("button-clicked", lambda b: self._async_refresh_cloud_remotes(force_space=True))
             vbox.append(self.cloud_auth_banner)
 
-            # Configured Remotes Group
             self.cloud_accounts_group = Adw.PreferencesGroup(title="Connected Cloud Storage", description="Registered cloud accounts for remote backup and restore")
             self.cloud_acc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             self.cloud_accounts_group.add(self.cloud_acc_box)
             vbox.append(self.cloud_accounts_group)
 
-            # Actions Group
             add_group = Adw.PreferencesGroup(title="Connect New Cloud Storage")
             vbox.append(add_group)
 
@@ -1590,61 +1639,6 @@ def launch_gui():
 
             return scroll
 
-        def _refresh_cloud_accounts_ui(self, remotes=None):
-            if remotes is None:
-                remotes = CloudManager.list_remotes()
-
-            while self.cloud_acc_box.get_first_child():
-                self.cloud_acc_box.remove(self.cloud_acc_box.get_first_child())
-
-            if not remotes:
-                row = Adw.ActionRow(title="No Cloud Remotes Connected", subtitle="Connect Google Drive, MEGA, or other cloud storage below")
-                self.cloud_acc_box.append(row)
-                return
-
-            for r in remotes:
-                row = Adw.ActionRow()
-                row.add_css_class("card-compact")
-                row.set_icon_name("folder-remote-symbolic")
-
-                # Header with badge
-                header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                lbl_name = Gtk.Label(label=r['name'], halign=Gtk.Align.START)
-                lbl_name.add_css_class("heading")
-                header_box.append(lbl_name)
-
-                badge = Gtk.Label(label=r['type'].upper())
-                badge.add_css_class("badge-pill")
-                badge.add_css_class("badge-cloud")
-                header_box.append(badge)
-
-                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                info_box.append(header_box)
-
-                # Query space info async or lightweight
-                space_info = CloudManager.get_remote_space(r['name'])
-                if space_info and space_info.get('total'):
-                    tot = format_bytes(space_info['total'])
-                    free = format_bytes(space_info['free'])
-                    sub = Gtk.Label(label=f"Cloud Storage: {free} free of {tot}", halign=Gtk.Align.START)
-                else:
-                    sub = Gtk.Label(label=f"Remote path: {r['remote']}", halign=Gtk.Align.START)
-                sub.add_css_class("subtext-compact")
-                info_box.append(sub)
-
-                row.set_child(info_box)
-
-                # Delete button
-                btn_remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-                btn_remove.add_css_class("flat")
-                btn_remove.set_tooltip_text("Remove this cloud remote")
-                def make_del(r_name):
-                    return lambda b: self._confirm_delete_remote(r_name)
-                btn_remove.connect("clicked", make_del(r['name']))
-                row.add_suffix(btn_remove)
-
-                self.cloud_acc_box.append(row)
-
         def _confirm_delete_remote(self, r_name):
             dlg = Adw.AlertDialog(
                 heading=f"Remove Cloud Remote '{r_name}'?",
@@ -1657,7 +1651,11 @@ def launch_gui():
             def on_resp(d, resp):
                 if resp == "remove":
                     CloudManager.delete_remote(r_name)
-                    self.refresh_all_cloud_data()
+                    if r_name in self.cached_cloud_spaces:
+                        del self.cached_cloud_spaces[r_name]
+                    if r_name in self.cached_cloud_backups:
+                        del self.cached_cloud_backups[r_name]
+                    self._async_refresh_cloud_remotes()
 
             dlg.connect("response", on_resp)
             dlg.present(self)
@@ -1685,12 +1683,19 @@ def launch_gui():
                     if not email or not passwd:
                         self._show_alert("Error", "Email and password are required.")
                         return
-                    ok, msg = CloudManager.create_mega_remote(name, email, passwd)
-                    if ok:
-                        self._show_alert("Connected", f"MEGA account '{name}' connected successfully!")
-                        self.refresh_all_cloud_data()
-                    else:
-                        self._show_alert("Connection Failed", msg)
+                    
+                    self.header_spinner.start()
+                    def worker():
+                        ok, msg = CloudManager.create_mega_remote(name, email, passwd)
+                        def post_mega():
+                            self.header_spinner.stop()
+                            if ok:
+                                self._show_alert("Connected", f"MEGA account '{name}' connected successfully!")
+                                self._async_refresh_cloud_remotes(force_space=True)
+                            else:
+                                self._show_alert("Connection Failed", msg)
+                        GLib.idle_add(post_mega)
+                    threading.Thread(target=worker, daemon=True).start()
 
             dlg.connect("response", on_resp)
             dlg.present(self)
@@ -1718,10 +1723,9 @@ def launch_gui():
 
                     self.cloud_auth_banner.set_revealed(True)
 
-                    # Watcher thread: auto refreshes the app the moment authorization completes
                     def watch_auth():
                         proc.wait()
-                        GLib.idle_add(self.refresh_all_cloud_data)
+                        GLib.idle_add(lambda: self._async_refresh_cloud_remotes(force_space=True))
                     threading.Thread(target=watch_auth, daemon=True).start()
 
             dlg.connect("response", on_resp)
@@ -1734,7 +1738,7 @@ def launch_gui():
                 proc = subprocess.Popen([term, "-e", "rclone", "--config", conf_path, "config"])
                 def watch_wizard():
                     proc.wait()
-                    GLib.idle_add(self.refresh_all_cloud_data)
+                    GLib.idle_add(lambda: self._async_refresh_cloud_remotes(force_space=True))
                 threading.Thread(target=watch_wizard, daemon=True).start()
             else:
                 self._show_alert("Terminal Required", "Please run 'rclone config' in your terminal emulator.")
@@ -1868,11 +1872,9 @@ def main():
     parser.add_argument("--list-drives", action="store_true", help="List detected storage devices")
     parser.add_argument("--list-cloud", action="store_true", help="List configured cloud remotes")
 
-    # Internal Polkit Helper flags
     parser.add_argument("--helper-stage-system", metavar="DIR", help=argparse.SUPPRESS)
     parser.add_argument("--helper-restore-system", metavar="DIR", help=argparse.SUPPRESS)
 
-    # Subcommands
     subparsers = parser.add_subparsers(dest="command")
 
     backup_parser = subparsers.add_parser("backup", help="Create a new backup archive")
