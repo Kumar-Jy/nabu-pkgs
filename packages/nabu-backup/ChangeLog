@@ -1,5 +1,14 @@
 2026-11-16 Kumar-Jy <kumrjy1@gmail.com>
 
+	* nabu-backup 1.0.1-1:
+	- Compact and tablet-optimized default window dimensions (480x640).
+	- Real-time cloud storage dynamic reload across all tabs without app restart.
+	- Automatic cloud refresh on window focus and tab switching.
+	- In-app authorization notification banner with 'Check Remotes' callback.
+	- Visual storage level progress bars and pill badges (Internal, USB-C, Cloud, FS).
+	- Explicit rclone user configuration resolution for root and user environments.
+	- Refined Libadwaita aesthetic with responsive compact clamp layouts.
+
 	* nabu-backup 1.0.0-1:
 	- Initial release of Nabu Backup & Restore utility for Xiaomi Pad 5.
 	- Built with GTK4 and Libadwaita for full compatibility across KDE Plasma and GNOME.
