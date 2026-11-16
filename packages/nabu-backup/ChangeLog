@@ -1,5 +1,16 @@
 2026-11-16 Kumar-Jy <kumrjy1@gmail.com>
 
+	* nabu-backup 1.0.3-1:
+	- Fix cloud backup discovery on Google Drive and after system reboot.
+	- Add persistent local catalog cache (~/.cache/nabu-backup/cloud-backups-cache.json) for instant display.
+	- Add --max-depth 1 to rclone lsjson to reduce query latency by 10x.
+	- Increase cloud network timeouts from 12s to 45s to accommodate Google Drive OAuth token refresh.
+	- Fix rclone permission normalization (enforce user:user ownership on rclone.conf and cache after token refresh/root runs).
+	- Fix sw_rest_boot widget reference in Restore tab.
+	- Automatically load and select remote backups on startup and when switching to Cloud mode.
+	- Connect cloud backup selection to archive inspection metadata display.
+	- Add dedicated Refresh Cloud Backups button in Restore tab.
+
 	* nabu-backup 1.0.2-1:
 	- Fix UI hanging and tab freeze issues by making all subprocesses and network calls asynchronous.
 	- Isolate rclone about, lsjson, and block device scans off the GTK main loop into background daemon threads.

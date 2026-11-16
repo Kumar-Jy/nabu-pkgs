@@ -2,7 +2,7 @@
 # Backup & Restore utility for Xiaomi Pad 5 (nabu)
 
 pkgname=nabu-backup
-pkgver=1.0.2
+pkgver=1.0.3
 pkgrel=1
 pkgdesc="Comprehensive system, user data, and package backup & restore utility for Xiaomi Pad 5 (nabu)"
 arch=('any')
