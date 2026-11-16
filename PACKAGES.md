@@ -90,7 +90,7 @@ sudo pacman -Syu
 
 | Package | Install Command | What is this for? |
 | :--- | :--- | :--- |
-| **`oskb`** | `sudo pacman -S oskb` | Responsive on-screen touch keyboard designed for touch Linux devices and KDE Plasma / GNOME. Features auto-adapt portrait/landscape layouts, navigation/arrow keys, function keys, key size scaling (S, M, L), font scaling, and floating/docked positioning. |
+| **`nabu-backup`** | `sudo pacman -S nabu-backup` | Standalone GUI and CLI backup & restore utility with local and cloud support (Google Drive, OneDrive, WebDAV via rclone), archive encryption, multi-backup selection, and pre-packaged restore previews. |
 | **`plasma-keyboard-full-layout`** | `sudo pacman -S plasma-keyboard-full-layout` | Full-size, two-page on-screen keyboard for Plasma Keyboard (en_US plus 30 other layouts, including full-size Thai `th_TH` and two Hindi layouts: phonetic `hi_IN` and InScript `hi_IN_inscript`) with function/navigation keys, working modifier chords (`Ctrl+V`, `Ctrl+Shift+V`, ...), and a globe key for language switching. Installs as an add-on into `/usr/local/share` with a patched keyboard binary, leaving the stock `plasma-keyboard` package untouched. |
 | **`nabu-autobrightness`** | `sudo pacman -S nabu-autobrightness` | Ambient light sensor auto-brightness daemon for Xiaomi Pad 5. Uses a calibrated logarithmic curve with hysteresis to prevent screen flicker; includes a desktop toggle and launcher. |
 | **`stylus-popup`** | `sudo pacman -S stylus-popup` | Dynamic Island style pen status popup for the IDTP9418 dock: shows battery/charging and the detected pen generation, and maps the pen's side buttons to shell commands. |

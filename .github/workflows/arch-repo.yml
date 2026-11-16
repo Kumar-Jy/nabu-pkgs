@@ -63,10 +63,10 @@ on:
         type: boolean
         default: true
         description: Build linux-firmware-xiaomi-nabu
-      build_oskb:
+      build_nabu_backup:
         type: boolean
-        default: false
-        description: Build oskb
+        default: true
+        description: Build nabu-backup (GUI & CLI backup and restore tool)
       build_nabu_autobrightness:
         type: boolean
         default: true
@@ -127,7 +127,7 @@ jobs:
               --argjson qcom_daemons "${{ inputs.build_qcom_daemons }}" \
               --argjson alsa_ucm_conf_xiaomi_nabu "${{ inputs.build_alsa_ucm_conf_xiaomi_nabu }}" \
               --argjson linux_firmware_xiaomi_nabu "${{ inputs.build_linux_firmware_xiaomi_nabu }}" \
-              --argjson oskb "${{ inputs.build_oskb }}" \
+              --argjson nabu_backup "${{ inputs.build_nabu_backup }}" \
               --argjson nabu_autobrightness "${{ inputs.build_nabu_autobrightness }}" \
               --argjson camera_studio "${{ inputs.build_camera_studio }}" \
               --argjson nabu_torch "${{ inputs.build_nabu_torch }}" \
@@ -151,7 +151,7 @@ jobs:
                  if $qcom_daemons then "qrtr", "rmtfs", "tqftpserv" else empty end,
                  if $alsa_ucm_conf_xiaomi_nabu then "alsa-ucm-conf-xiaomi-nabu" else empty end,
                  if $linux_firmware_xiaomi_nabu then "linux-firmware-xiaomi-nabu" else empty end,
-                 if $oskb then "oskb" else empty end,
+                 if $nabu_backup then "nabu-backup" else empty end,
                  if $nabu_autobrightness then "nabu-autobrightness" else empty end,
                  if $camera_studio then "camera-studio" else empty end,
                  if $nabu_torch then "nabu-torch" else empty end,
@@ -161,7 +161,7 @@ jobs:
                  if $stylus_popup then "stylus-popup" else empty end,
                  if $plasma_keyboard_full_layout then "plasma-keyboard-full-layout" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","oskb","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout"]' > matrix.json
+            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","nabu-backup","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -217,7 +217,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            oskb|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy)
+            nabu-backup|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;
