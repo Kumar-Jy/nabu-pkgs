@@ -1,0 +1,1733 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Kumar-Jy <https://github.com/Kumar-Jy>
+# Nabu Backup & Restore: Comprehensive system and user data migration utility
+# for Xiaomi Pad 5 (nabu) under Arch Linux ARM, supporting local/external storage and cloud drives.
+
+import os
+import sys
+import time
+import json
+import shutil
+import tarfile
+import argparse
+import subprocess
+import threading
+from datetime import datetime
+from pathlib import Path
+
+APP_ID = "org.nabu.backup"
+APP_NAME = "Nabu Backup & Restore"
+APP_VERSION = "1.0.0"
+BACKUP_DIR_NAME = "NabuBackups"
+
+def get_current_user():
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        return sudo_user
+    pkexec_uid = os.environ.get("PKEXEC_UID")
+    if pkexec_uid:
+        try:
+            import pwd
+            return pwd.getpwuid(int(pkexec_uid)).pw_name
+        except Exception:
+            pass
+    return os.environ.get("USER", "user")
+
+def get_user_home(username=None):
+    if not username:
+        username = get_current_user()
+    try:
+        import pwd
+        return pwd.getpwnam(username).pw_dir
+    except Exception:
+        return f"/home/{username}"
+
+class StorageScanner:
+    VALID_FS = {'ntfs', 'ntfs3', 'vfat', 'fat32', 'fat', 'exfat', 'ext4', 'btrfs', 'f2fs', 'xfs'}
+    EXCLUDE_MOUNTS = {'/', '/boot', '/boot/efi', '/mnt/vendor/persist'}
+
+    @classmethod
+    def scan_devices(cls):
+        candidates = []
+        try:
+            res = subprocess.run(
+                ['lsblk', '-J', '-b', '-o', 'NAME,KNAME,FSTYPE,SIZE,MOUNTPOINT,LABEL,HOTPLUG,TRAN,MODEL,RM,RO,UUID,TYPE'],
+                capture_output=True, text=True, check=True
+            )
+            data = json.loads(res.stdout)
+        except Exception as e:
+            return candidates
+
+        def inspect_node(node, is_usb=False, model=''):
+            tran = node.get('tran')
+            rm = bool(node.get('rm'))
+            hotplug = bool(node.get('hotplug'))
+            cur_model = node.get('model') or model
+            if tran == 'usb' or hotplug or rm:
+                is_usb = True
+
+            fstype = (node.get('fstype') or '').lower()
+            mountpoint = node.get('mountpoint')
+            size = node.get('size') or 0
+            kname = node.get('kname')
+            label = node.get('label') or kname
+            ro = bool(node.get('ro'))
+
+            # Filter suitable data filesystems >= 1 GB, non-root, non-ro
+            if fstype in cls.VALID_FS and not ro and size >= 1024 * 1024 * 1024:
+                if mountpoint not in cls.EXCLUDE_MOUNTS:
+                    free_bytes = None
+                    if mountpoint and os.path.exists(mountpoint):
+                        try:
+                            st = os.statvfs(mountpoint)
+                            free_bytes = st.f_bavail * st.f_frsize
+                        except Exception:
+                            pass
+                    candidates.append({
+                        'device': f'/dev/{kname}',
+                        'kname': kname,
+                        'fstype': fstype,
+                        'label': label,
+                        'size': size,
+                        'mountpoint': mountpoint,
+                        'free_bytes': free_bytes,
+                        'is_usb': is_usb,
+                        'model': cur_model
+                    })
+
+            for child in node.get('children', []):
+                inspect_node(child, is_usb=is_usb, model=cur_model)
+
+        for dev in data.get('blockdevices', []):
+            is_parent_usb = (dev.get('tran') == 'usb' or dev.get('rm') or dev.get('hotplug'))
+            inspect_node(dev, is_usb=is_parent_usb, model=dev.get('model') or '')
+
+        # Sort USB / external devices first, then by size descending
+        candidates.sort(key=lambda x: (not x['is_usb'], -x['size']))
+        return candidates
+
+    @classmethod
+    def mount_device(cls, device_path):
+        """Mount unmounted device using udisksctl (no root password needed)"""
+        try:
+            res = subprocess.run(['udisksctl', 'mount', '-b', device_path], capture_output=True, text=True)
+            if res.returncode == 0:
+                # Output format: "Mounted /dev/sda33 at /run/media/root/Data."
+                parts = res.stdout.strip().split(' at ')
+                if len(parts) >= 2:
+                    return parts[1].rstrip('.')
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def find_local_backups(cls):
+        """Scans candidate drives for existing nabu-backup archives"""
+        found = []
+        drives = cls.scan_devices()
+        for d in drives:
+            mnt = d['mountpoint']
+            if not mnt or not os.path.exists(mnt):
+                continue
+            search_dirs = [mnt, os.path.join(mnt, BACKUP_DIR_NAME), os.path.join(mnt, "Backups")]
+            for sdir in search_dirs:
+                if not os.path.exists(sdir):
+                    continue
+                try:
+                    for entry in os.scandir(sdir):
+                        if entry.is_file() and entry.name.startswith("nabu-backup-") and (
+                            entry.name.endswith(".tar.zst") or entry.name.endswith(".tar.gz")
+                        ):
+                            st = entry.stat()
+                            found.append({
+                                'path': entry.path,
+                                'filename': entry.name,
+                                'size': st.st_size,
+                                'mtime': st.st_mtime,
+                                'device_label': d['label'],
+                                'is_usb': d['is_usb']
+                            })
+                except Exception:
+                    pass
+        found.sort(key=lambda x: -x['mtime'])
+        return found
+
+class CloudManager:
+    @classmethod
+    def is_available(cls):
+        return shutil.which('rclone') is not None
+
+    @classmethod
+    def list_remotes(cls):
+        """Returns list of dicts: [{'name': 'gdrive', 'type': 'drive'}, ...]"""
+        if not cls.is_available():
+            return []
+        try:
+            res = subprocess.run(['rclone', 'listremotes', '--long'], capture_output=True, text=True)
+            remotes = []
+            for line in res.stdout.splitlines():
+                parts = line.strip().split(':')
+                if parts:
+                    name = parts[0].strip()
+                    rtype = parts[1].strip() if len(parts) > 1 else 'cloud'
+                    if name:
+                        remotes.append({'name': name, 'type': rtype, 'remote': f"{name}:"})
+            return remotes
+        except Exception:
+            return []
+
+    @classmethod
+    def get_remote_space(cls, remote_name):
+        """Gets space info for remote via rclone about"""
+        try:
+            res = subprocess.run(['rclone', 'about', f"{remote_name}:", '--json'], capture_output=True, text=True, timeout=8)
+            if res.returncode == 0:
+                data = json.loads(res.stdout)
+                return {
+                    'total': data.get('total'),
+                    'used': data.get('used'),
+                    'free': data.get('free')
+                }
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def list_cloud_backups(cls, remote_name):
+        """Lists nabu-backup archives on cloud remote under NabuBackups/"""
+        if not cls.is_available():
+            return []
+        try:
+            target = f"{remote_name}:{BACKUP_DIR_NAME}"
+            res = subprocess.run(['rclone', 'lsjson', target], capture_output=True, text=True, timeout=15)
+            if res.returncode != 0:
+                # Try root of remote
+                target = f"{remote_name}:"
+                res = subprocess.run(['rclone', 'lsjson', target], capture_output=True, text=True, timeout=15)
+
+            if res.returncode == 0:
+                items = json.loads(res.stdout)
+                backups = []
+                for item in items:
+                    name = item.get('Name', '')
+                    if name.startswith("nabu-backup-") and (name.endswith(".tar.zst") or name.endswith(".tar.gz")):
+                        backups.append({
+                            'filename': name,
+                            'remote': remote_name,
+                            'remote_path': f"{target}/{name}".replace('//', '/'),
+                            'size': item.get('Size', 0),
+                            'modtime': item.get('ModTime', '')
+                        })
+                return backups
+        except Exception:
+            pass
+        return []
+
+    @classmethod
+    def create_mega_remote(cls, name, email, password):
+        """Creates MEGA remote using rclone obscure and config create"""
+        try:
+            obs = subprocess.check_output(['rclone', 'obscure', password], text=True).strip()
+            cmd = ['rclone', 'config', 'create', name, 'mega', 'user', email, 'pass', obs]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            return res.returncode == 0, res.stderr or res.stdout
+        except Exception as e:
+            return False, str(e)
+
+    @classmethod
+    def upload_archive(cls, local_path, remote_name, progress_cb=None, log_cb=None):
+        """Uploads local backup archive to remote:NabuBackups/"""
+        target = f"{remote_name}:{BACKUP_DIR_NAME}/"
+        if log_cb:
+            log_cb(f"Uploading {os.path.basename(local_path)} to {target}...")
+        cmd = ['rclone', 'copy', local_path, target, '--progress', '--stats', '1s']
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            line_str = line.strip()
+            if log_cb and ("Transferred:" in line_str or "ETA" in line_str):
+                log_cb(line_str)
+            if progress_cb and "Transferred:" in line_str and "%" in line_str:
+                try:
+                    pct_str = line_str.split('%')[0].split()[-1]
+                    progress_cb(float(pct_str) / 100.0)
+                except Exception:
+                    pass
+        proc.wait()
+        return proc.returncode == 0
+
+    @classmethod
+    def download_archive(cls, remote_path, local_dest_dir, progress_cb=None, log_cb=None):
+        """Downloads backup archive from remote to local directory"""
+        os.makedirs(local_dest_dir, exist_ok=True)
+        if log_cb:
+            log_cb(f"Downloading {remote_path} to {local_dest_dir}...")
+        cmd = ['rclone', 'copy', remote_path, local_dest_dir, '--progress', '--stats', '1s']
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            line_str = line.strip()
+            if log_cb and ("Transferred:" in line_str or "ETA" in line_str):
+                log_cb(line_str)
+            if progress_cb and "Transferred:" in line_str and "%" in line_str:
+                try:
+                    pct_str = line_str.split('%')[0].split()[-1]
+                    progress_cb(float(pct_str) / 100.0)
+                except Exception:
+                    pass
+        proc.wait()
+        return proc.returncode == 0
+
+class BackupEngine:
+    @classmethod
+    def execute_backup(cls, dest_dir, options, progress_cb=None, log_cb=None):
+        """
+        options: {
+            'include_home': bool,
+            'include_docs': bool,
+            'include_packages': bool,
+            'include_system': bool,
+            'include_boot': bool,
+            'include_waydroid': bool,
+            'target_user': str,
+            'is_cloud': bool,
+            'cloud_remote': str
+        }
+        """
+        username = options.get('target_user') or get_current_user()
+        user_home = get_user_home(username)
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+        archive_name = f"nabu-backup-{timestamp}.tar.zst"
+        staging_dir = f"/tmp/nabu-backup-staging-{int(time.time())}"
+        os.makedirs(staging_dir, exist_ok=True)
+        meta_dir = os.path.join(staging_dir, "meta")
+        os.makedirs(meta_dir, exist_ok=True)
+
+        if log_cb:
+            log_cb(f"=== Initiating Nabu Backup ({timestamp}) ===")
+            log_cb(f"User: {username} ({user_home})")
+
+        components = []
+
+        # 1. Package Lists
+        if options.get('include_packages', True):
+            if log_cb:
+                log_cb("Exporting installed pacman package lists...")
+            if progress_cb:
+                progress_cb(0.10)
+            try:
+                native_pkgs = subprocess.check_output(['pacman', '-Qqe'], text=True).splitlines()
+                with open(os.path.join(meta_dir, "pkglist-native.txt"), "w") as f:
+                    f.write("\n".join(native_pkgs) + "\n")
+                
+                try:
+                    foreign_pkgs = subprocess.check_output(['pacman', '-Qqm'], text=True).splitlines()
+                except Exception:
+                    foreign_pkgs = []
+                with open(os.path.join(meta_dir, "pkglist-foreign.txt"), "w") as f:
+                    f.write("\n".join(foreign_pkgs) + "\n")
+
+                all_pkgs = subprocess.check_output(['pacman', '-Qe'], text=True).splitlines()
+                with open(os.path.join(meta_dir, "pkglist-all.txt"), "w") as f:
+                    f.write("\n".join(all_pkgs) + "\n")
+
+                components.append("packages")
+            except Exception as e:
+                if log_cb:
+                    log_cb(f"Warning exporting packages: {e}")
+
+        # 2. System Settings (WiFi, Bluetooth, Boot cmdlines)
+        if options.get('include_system') or options.get('include_boot'):
+            if log_cb:
+                log_cb("Staging system configurations (WiFi, Bluetooth, Tablet boot)...")
+            if progress_cb:
+                progress_cb(0.20)
+            sys_staging = os.path.join(staging_dir, "system")
+            os.makedirs(sys_staging, exist_ok=True)
+            
+            # Use root helper if not running as root
+            if os.geteuid() != 0:
+                cmd = ['pkexec', sys.executable, sys.argv[0], '--helper-stage-system', sys_staging]
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        components.append("system")
+                    else:
+                        if log_cb:
+                            log_cb(f"Note: Polkit authentication skipped or cancelled: {res.stderr}")
+                except Exception as e:
+                    if log_cb:
+                        log_cb(f"Warning staging system settings: {e}")
+            else:
+                cls._stage_system_files(sys_staging)
+                components.append("system")
+
+        # 3. User Home Directory Staging
+        home_staging = os.path.join(staging_dir, "home", username)
+        if options.get('include_home', True) or options.get('include_docs', True):
+            if log_cb:
+                log_cb("Scanning user files & desktop configurations...")
+            if progress_cb:
+                progress_cb(0.35)
+            os.makedirs(home_staging, exist_ok=True)
+
+            excludes = [
+                os.path.join(user_home, ".cache"),
+                os.path.join(user_home, ".local/share/Trash"),
+                os.path.join(user_home, ".local/state"),
+                os.path.join(user_home, ".gemini"),
+            ]
+            if not options.get('include_waydroid', False):
+                excludes.append(os.path.join(user_home, ".local/share/waydroid"))
+
+            # Dotfiles and Configs
+            if options.get('include_home', True):
+                for item in ['.config', '.local', '.bashrc', '.bash_profile', '.zshrc', '.gitconfig', '.icons', '.themes', '.profile']:
+                    src = os.path.join(user_home, item)
+                    if os.path.exists(src):
+                        dst = os.path.join(home_staging, item)
+                        cls._copy_tree_filtered(src, dst, excludes)
+                components.append("home_config")
+
+            # Personal Documents & Media
+            if options.get('include_docs', True):
+                for folder in ['Documents', 'Pictures', 'Videos', 'Music', 'Desktop', 'Projects', 'Public', 'Templates']:
+                    src = os.path.join(user_home, folder)
+                    if os.path.exists(src):
+                        dst = os.path.join(home_staging, folder)
+                        cls._copy_tree_filtered(src, dst, excludes)
+                components.append("user_documents")
+
+        # 4. Generate Metadata
+        metadata = {
+            "app": APP_NAME,
+            "version": APP_VERSION,
+            "created_at": datetime.now().isoformat(),
+            "timestamp": timestamp,
+            "hostname": os.uname().nodename,
+            "kernel": os.uname().release,
+            "arch": os.uname().machine,
+            "target_user": username,
+            "components": components,
+            "native_pkg_count": len(native_pkgs) if 'packages' in components else 0,
+            "foreign_pkg_count": len(foreign_pkgs) if 'packages' in components else 0
+        }
+        with open(os.path.join(meta_dir, "nabu-backup.json"), "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        # 5. Archive Creation (tar + zstd)
+        if log_cb:
+            log_cb(f"Compressing backup archive ({archive_name})...")
+        if progress_cb:
+            progress_cb(0.65)
+
+        # Determine output location
+        is_cloud = options.get('is_cloud', False)
+        if is_cloud:
+            final_archive_path = os.path.join("/tmp", archive_name)
+        else:
+            os.makedirs(dest_dir, exist_ok=True)
+            final_archive_path = os.path.join(dest_dir, archive_name)
+
+        # Multi-threaded zstd compression
+        tar_cmd = ['tar', '-I', 'zstd -3 -T0', '-cf', final_archive_path, '-C', staging_dir, '.']
+        try:
+            res = subprocess.run(tar_cmd, capture_output=True, text=True, check=True)
+        except Exception as e:
+            # Fallback to gzip if zstd fails
+            if log_cb:
+                log_cb("Notice: Falling back to gzip compression...")
+            final_archive_path = final_archive_path.replace(".tar.zst", ".tar.gz")
+            tar_cmd = ['tar', '-czf', final_archive_path, '-C', staging_dir, '.']
+            subprocess.run(tar_cmd, check=True)
+
+        archive_size = os.path.getsize(final_archive_path)
+        size_mb = archive_size / (1024 * 1024)
+        if log_cb:
+            log_cb(f"Local archive created: {final_archive_path} ({size_mb:.1f} MB)")
+
+        # Cleanup staging
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+        # 6. Cloud Upload (if cloud destination)
+        if is_cloud:
+            remote = options.get('cloud_remote')
+            if log_cb:
+                log_cb(f"Uploading to cloud storage ({remote})...")
+            if progress_cb:
+                progress_cb(0.80)
+            success = CloudManager.upload_archive(
+                final_archive_path, remote,
+                progress_cb=lambda p: progress_cb(0.80 + (p * 0.18)) if progress_cb else None,
+                log_cb=log_cb
+            )
+            os.remove(final_archive_path)
+            if not success:
+                raise RuntimeError(f"Cloud upload to {remote} failed.")
+            if progress_cb:
+                progress_cb(1.0)
+            if log_cb:
+                log_cb(f"=== Cloud Backup Complete: {archive_name} uploaded to {remote}:{BACKUP_DIR_NAME}/ ===")
+            return True, f"{remote}:{BACKUP_DIR_NAME}/{archive_name}"
+
+        if progress_cb:
+            progress_cb(1.0)
+        if log_cb:
+            log_cb(f"=== Backup Successful! Saved to {final_archive_path} ===")
+        return True, final_archive_path
+
+    @classmethod
+    def _stage_system_files(cls, dest_sys_dir):
+        """Internal helper to copy root system files into staging dir"""
+        # 1. WiFi connections
+        nm_src = "/etc/NetworkManager/system-connections"
+        if os.path.exists(nm_src):
+            nm_dst = os.path.join(dest_sys_dir, "network")
+            os.makedirs(nm_dst, exist_ok=True)
+            for f in os.listdir(nm_src):
+                s = os.path.join(nm_src, f)
+                if os.path.isfile(s):
+                    shutil.copy2(s, os.path.join(nm_dst, f))
+
+        # 2. Bluetooth
+        bt_src = "/var/lib/bluetooth"
+        if os.path.exists(bt_src):
+            bt_dst = os.path.join(dest_sys_dir, "bluetooth")
+            if os.path.exists(bt_dst):
+                shutil.rmtree(bt_dst)
+            shutil.copytree(bt_src, bt_dst, symlinks=True)
+
+        # 3. Tablet Boot Parameters
+        cmd_src = "/etc/cmdline.d"
+        if os.path.exists(cmd_src):
+            cmd_dst = os.path.join(dest_sys_dir, "cmdline.d")
+            os.makedirs(cmd_dst, exist_ok=True)
+            for f in os.listdir(cmd_src):
+                s = os.path.join(cmd_src, f)
+                if os.path.isfile(s):
+                    shutil.copy2(s, os.path.join(cmd_dst, f))
+
+        # Ensure staging files are readable by regular user
+        for root, dirs, files in os.walk(dest_sys_dir):
+            for d in dirs:
+                os.chmod(os.path.join(root, d), 0o755)
+            for f in files:
+                os.chmod(os.path.join(root, f), 0o644)
+
+    @classmethod
+    def _copy_tree_filtered(cls, src, dst, excludes):
+        for excl in excludes:
+            if src == excl or src.startswith(excl + '/'):
+                return
+        if os.path.islink(src):
+            linkto = os.readlink(src)
+            try:
+                os.symlink(linkto, dst)
+            except FileExistsError:
+                pass
+            return
+        if os.path.isdir(src):
+            os.makedirs(dst, exist_ok=True)
+            try:
+                for entry in os.scandir(src):
+                    cls._copy_tree_filtered(entry.path, os.path.join(dst, entry.name), excludes)
+            except PermissionError:
+                pass
+        else:
+            try:
+                shutil.copy2(src, dst)
+            except Exception:
+                pass
+
+class RestoreEngine:
+    @classmethod
+    def inspect_archive(cls, archive_path):
+        """Inspects archive and extracts metadata without unpacking entire archive"""
+        meta = {}
+        try:
+            with tarfile.open(archive_path, 'r:*') as tar:
+                for member in tar.getmembers():
+                    if member.name.endswith("nabu-backup.json"):
+                        f = tar.extractfile(member)
+                        if f:
+                            meta = json.load(f)
+                            break
+        except Exception as e:
+            meta = {"error": str(e)}
+
+        meta['file_size'] = os.path.getsize(archive_path) if os.path.exists(archive_path) else 0
+        meta['archive_path'] = archive_path
+        return meta
+
+    @classmethod
+    def execute_restore(cls, archive_path, options, progress_cb=None, log_cb=None):
+        """
+        options: {
+            'restore_home': bool,
+            'restore_packages': bool,
+            'restore_system': bool,
+            'restore_boot': bool,
+            'target_user': str
+        }
+        """
+        username = options.get('target_user') or get_current_user()
+        user_home = get_user_home(username)
+        staging_dir = f"/tmp/nabu-restore-staging-{int(time.time())}"
+        os.makedirs(staging_dir, exist_ok=True)
+
+        if log_cb:
+            log_cb(f"=== Starting Restore from {os.path.basename(archive_path)} ===")
+            log_cb(f"Destination User: {username} ({user_home})")
+
+        # 1. Extract Archive to Staging
+        if log_cb:
+            log_cb("Extracting backup archive...")
+        if progress_cb:
+            progress_cb(0.15)
+        
+        try:
+            with tarfile.open(archive_path, 'r:*') as tar:
+                tar.extractall(staging_dir)
+        except Exception as e:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            raise RuntimeError(f"Extraction failed: {e}")
+
+        # Read metadata
+        meta_file = os.path.join(staging_dir, "meta", "nabu-backup.json")
+        meta = {}
+        if os.path.exists(meta_file):
+            try:
+                with open(meta_file, "r") as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+
+        # 2. Package Restoration (pacman -S --needed)
+        if options.get('restore_packages', True):
+            pkglist_native = os.path.join(staging_dir, "meta", "pkglist-native.txt")
+            if os.path.exists(pkglist_native):
+                if log_cb:
+                    log_cb("Restoring missing system packages via pacman (--needed)...")
+                if progress_cb:
+                    progress_cb(0.40)
+                
+                # Using --needed guarantees that pre-installed packages on the fresh install are NOT conflicted or overwritten!
+                cmd = ['pacman', '-S', '--needed', '--noconfirm', '-']
+                if os.geteuid() != 0:
+                    cmd = ['pkexec'] + cmd
+                
+                try:
+                    with open(pkglist_native, "r") as f:
+                        proc = subprocess.run(cmd, stdin=f, capture_output=True, text=True)
+                    if log_cb:
+                        if proc.returncode == 0:
+                            log_cb("Packages synchronized successfully without conflicts!")
+                        else:
+                            log_cb(f"Pacman status note: {proc.stderr or proc.stdout}")
+                except Exception as e:
+                    if log_cb:
+                        log_cb(f"Pacman execution note: {e}")
+
+            # Check for foreign/AUR packages
+            pkglist_foreign = os.path.join(staging_dir, "meta", "pkglist-foreign.txt")
+            if os.path.exists(pkglist_foreign):
+                try:
+                    with open(pkglist_foreign, "r") as f:
+                        fp_lines = [l.strip() for l in f if l.strip()]
+                    if fp_lines:
+                        report_path = os.path.join(user_home, "Desktop", "foreign-packages-to-reinstall.txt")
+                        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+                        with open(report_path, "w") as rf:
+                            rf.write("# The following AUR or local packages were installed on your previous system:\n")
+                            rf.write("\n".join(fp_lines) + "\n")
+                        if log_cb:
+                            log_cb(f"Saved foreign/AUR package list for reference: {report_path}")
+                except Exception:
+                    pass
+
+        # 3. User Home Restoration
+        if options.get('restore_home', True):
+            if log_cb:
+                log_cb("Restoring user files & desktop configurations...")
+            if progress_cb:
+                progress_cb(0.70)
+
+            # Locate staged home
+            staged_home_root = os.path.join(staging_dir, "home")
+            if os.path.exists(staged_home_root):
+                for src_user in os.listdir(staged_home_root):
+                    src_user_path = os.path.join(staged_home_root, src_user)
+                    if os.path.isdir(src_user_path):
+                        for item in os.listdir(src_user_path):
+                            s = os.path.join(src_user_path, item)
+                            d = os.path.join(user_home, item)
+                            if os.path.isdir(s):
+                                shutil.copytree(s, d, dirs_exist_ok=True, symlinks=True)
+                            else:
+                                shutil.copy2(s, d)
+
+            # Automatic Permission Fix: chown -R target_user:target_user
+            if log_cb:
+                log_cb(f"Normalizing user file permissions for {username}...")
+            try:
+                import pwd
+                pw = pwd.getpwnam(username)
+                uid, gid = pw.pw_uid, pw.pw_gid
+                for root, dirs, files in os.walk(user_home):
+                    for name in dirs:
+                        os.chown(os.path.join(root, name), uid, gid)
+                    for name in files:
+                        os.chown(os.path.join(root, name), uid, gid)
+            except Exception as e:
+                if log_cb:
+                    log_cb(f"Permission fix note: {e}")
+
+        # 4. System Settings & Boot Restoration
+        if options.get('restore_system', True) or options.get('restore_boot', True):
+            sys_staged = os.path.join(staging_dir, "system")
+            if os.path.exists(sys_staged):
+                if log_cb:
+                    log_cb("Restoring network credentials, bluetooth pairings, and boot parameters...")
+                if progress_cb:
+                    progress_cb(0.90)
+
+                if os.geteuid() != 0:
+                    cmd = ['pkexec', sys.executable, sys.argv[0], '--helper-restore-system', sys_staged]
+                    try:
+                        res = subprocess.run(cmd, capture_output=True, text=True)
+                        if log_cb:
+                            if res.returncode == 0:
+                                log_cb("System settings restored successfully!")
+                            else:
+                                log_cb(f"System restore note: {res.stderr}")
+                    except Exception as e:
+                        if log_cb:
+                            log_cb(f"Warning restoring system files: {e}")
+                else:
+                    cls._restore_system_files(sys_staged)
+
+        # Cleanup staging
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+        if progress_cb:
+            progress_cb(1.0)
+        if log_cb:
+            log_cb("=== System & User Data Restoration Completed Successfully! ===")
+        return True
+
+    @classmethod
+    def _restore_system_files(cls, sys_staged):
+        """Internal helper to restore root system files"""
+        # 1. WiFi connections
+        net_staged = os.path.join(sys_staged, "network")
+        if os.path.exists(net_staged):
+            dest = "/etc/NetworkManager/system-connections"
+            os.makedirs(dest, exist_ok=True)
+            for f in os.listdir(net_staged):
+                src = os.path.join(net_staged, f)
+                dst = os.path.join(dest, f)
+                shutil.copy2(src, dst)
+                os.chmod(dst, 0o600)
+            subprocess.run(['nmcli', 'connection', 'reload'], capture_output=True)
+
+        # 2. Bluetooth
+        bt_staged = os.path.join(sys_staged, "bluetooth")
+        if os.path.exists(bt_staged):
+            dest = "/var/lib/bluetooth"
+            os.makedirs(dest, exist_ok=True)
+            for item in os.listdir(bt_staged):
+                s = os.path.join(bt_staged, item)
+                d = os.path.join(dest, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True, symlinks=True)
+                else:
+                    shutil.copy2(s, d)
+            os.chmod(dest, 0o700)
+            subprocess.run(['systemctl', 'restart', 'bluetooth'], capture_output=True)
+
+        # 3. Boot cmdlines
+        cmd_staged = os.path.join(sys_staged, "cmdline.d")
+        if os.path.exists(cmd_staged):
+            dest = "/etc/cmdline.d"
+            os.makedirs(dest, exist_ok=True)
+            for f in os.listdir(cmd_staged):
+                shutil.copy2(os.path.join(cmd_staged, f), os.path.join(dest, f))
+
+# ==============================================================================
+# GTK4 & Libadwaita User Interface
+# ==============================================================================
+def launch_gui():
+    import gi
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Adw', '1')
+    from gi.repository import Gtk, Adw, GLib, Gio, Pango
+
+    class NabuBackupApp(Adw.Application):
+        def __init__(self):
+            super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+
+        def do_activate(self):
+            win = NabuBackupWindow(self)
+            win.present()
+
+    class NabuBackupWindow(Adw.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app)
+            self.set_title(APP_NAME)
+            self.set_default_size(780, 800)
+
+            # Selected targets state
+            self.selected_drive = None
+            self.selected_cloud_remote = None
+            self.custom_folder_path = None
+            self.dest_mode = "drive"  # "drive", "cloud", "custom"
+
+            self.restore_source_mode = "local" # "local", "cloud", "file"
+            self.selected_restore_file = None
+
+            self._build_ui()
+            self._refresh_drives()
+            self._refresh_cloud_remotes()
+            self._refresh_restore_list()
+
+        def _build_ui(self):
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.set_content(main_box)
+
+            # 1. HeaderBar
+            header = Adw.HeaderBar()
+            header_title = Adw.WindowTitle(title=APP_NAME, subtitle="Xiaomi Pad 5 Backup & Migration")
+            header.set_title_widget(header_title)
+            main_box.append(header)
+
+            # View Switcher Bar / Title
+            view_stack = Adw.ViewStack()
+            view_switcher = Adw.ViewSwitcher(stack=view_stack, policy=Adw.ViewSwitcherPolicy.WIDE)
+            header_title.set_title(APP_NAME)
+
+            # Tab 1: Backup Page
+            backup_page = self._build_backup_page()
+            view_stack.add_titled_with_icon(backup_page, "backup", "Create Backup", "document-save-symbolic")
+
+            # Tab 2: Restore Page
+            restore_page = self._build_restore_page()
+            view_stack.add_titled_with_icon(restore_page, "restore", "Restore", "edit-undo-symbolic")
+
+            # Tab 3: Cloud Page
+            cloud_page = self._build_cloud_page()
+            view_stack.add_titled_with_icon(cloud_page, "cloud", "Cloud Storage", "folder-remote-symbolic")
+
+            # Header Switcher
+            header.set_title_widget(view_switcher)
+
+            main_box.append(view_stack)
+
+        # ----------------------------------------------------------------------
+        # Backup Tab
+        # ----------------------------------------------------------------------
+        def _build_backup_page(self):
+            scroll = Gtk.ScrolledWindow(vexpand=True)
+            clamp = Adw.Clamp(maximum_size=750, tightening_threshold=600)
+            scroll.set_child(clamp)
+
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_top=16, margin_bottom=24, margin_start=16, margin_end=16)
+            clamp.set_child(vbox)
+
+            # Destination Mode Selector
+            mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=8)
+            btn_drive = Gtk.ToggleButton(label="Internal / USB Drive", active=True)
+            btn_cloud = Gtk.ToggleButton(label="Remote Cloud Drive")
+            btn_custom = Gtk.ToggleButton(label="Custom Folder")
+            btn_cloud.set_group(btn_drive)
+            btn_custom.set_group(btn_drive)
+
+            btn_drive.connect("toggled", lambda b: self._on_dest_mode_changed("drive") if b.get_active() else None)
+            btn_cloud.connect("toggled", lambda b: self._on_dest_mode_changed("cloud") if b.get_active() else None)
+            btn_custom.connect("toggled", lambda b: self._on_dest_mode_changed("custom") if b.get_active() else None)
+
+            mode_box.append(btn_drive)
+            mode_box.append(btn_cloud)
+            mode_box.append(btn_custom)
+            vbox.append(mode_box)
+
+            # Storage Warning Banner
+            self.storage_banner = Adw.Banner(title="No external USB drive or secondary partition with sufficient space detected. Please insert a USB-C drive or select a folder.")
+            self.storage_banner.set_revealed(False)
+            self.storage_banner.set_button_label("Refresh")
+            self.storage_banner.connect("button-clicked", lambda b: self._refresh_drives())
+            vbox.append(self.storage_banner)
+
+            # Section: Drive Selection Group
+            self.drive_group = Adw.PreferencesGroup(title="Backup Destination Drive", description="Select internal partition (WINNABU, Data) or external USB-C drive")
+            vbox.append(self.drive_group)
+            self.drive_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.drive_group.add(self.drive_rows_box)
+
+            # Refresh Drives Button
+            rescan_btn = Gtk.Button(label="Rescan Connected Drives", halign=Gtk.Align.END)
+            rescan_btn.add_css_class("flat")
+            rescan_btn.connect("clicked", lambda b: self._refresh_drives())
+            self.drive_group.set_header_suffix(rescan_btn)
+
+            # Section: Cloud Destination Group (Hidden by default)
+            self.cloud_dest_group = Adw.PreferencesGroup(title="Cloud Storage Remote", description="Backup will be uploaded directly to remote cloud storage")
+            self.cloud_combo_row = Adw.ComboRow(title="Select Cloud Remote")
+            self.cloud_dest_group.add(self.cloud_combo_row)
+            self.cloud_dest_group.set_visible(False)
+            vbox.append(self.cloud_dest_group)
+
+            # Section: Custom Folder Group (Hidden by default)
+            self.custom_dest_group = Adw.PreferencesGroup(title="Custom Directory")
+            self.custom_entry_row = Adw.ActionRow(title="Selected Folder", subtitle="None chosen")
+            btn_browse = Gtk.Button(label="Browse...", valign=Gtk.Align.CENTER)
+            btn_browse.connect("clicked", self._on_browse_custom_folder)
+            self.custom_entry_row.add_suffix(btn_browse)
+            self.custom_dest_group.add(self.custom_entry_row)
+            self.custom_dest_group.set_visible(False)
+            vbox.append(self.custom_dest_group)
+
+            # Section: Backup Scope Checkboxes
+            scope_group = Adw.PreferencesGroup(title="Backup Scope & Components")
+            vbox.append(scope_group)
+
+            self.sw_home = Adw.SwitchRow(title="User Documents & Personal Files", subtitle="Documents, Pictures, Videos, Music, Desktop, Projects", active=True)
+            self.sw_config = Adw.SwitchRow(title="Desktop & App Configurations", subtitle="~/.config, ~/.local/share, shell dotfiles & themes", active=True)
+            self.sw_pkgs = Adw.SwitchRow(title="Installed Packages List", subtitle="Explicitly installed pacman & AUR package lists", active=True)
+            self.sw_sys = Adw.SwitchRow(title="Network Connections & Bluetooth Pairings", subtitle="Saved WiFi passwords & paired Bluetooth devices (Xiaomi Pen, keyboards)", active=True)
+            self.sw_boot = Adw.SwitchRow(title="Tablet Boot & Display Settings", subtitle="/etc/cmdline.d/ rotation, memory & hardware boot parameters", active=True)
+            self.sw_waydroid = Adw.SwitchRow(title="Waydroid Container Data", subtitle="Android apps & data (~2.2 GB) - increases backup size", active=False)
+
+            scope_group.add(self.sw_home)
+            scope_group.add(self.sw_config)
+            scope_group.add(self.sw_pkgs)
+            scope_group.add(self.sw_sys)
+            scope_group.add(self.sw_boot)
+            scope_group.add(self.sw_waydroid)
+
+            # Action Box
+            action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=8)
+            self.btn_start_backup = Gtk.Button(label="Create Backup Archive")
+            self.btn_start_backup.add_css_class("suggested-action")
+            self.btn_start_backup.add_css_class("pill")
+            self.btn_start_backup.set_size_request(240, 50)
+            self.btn_start_backup.set_halign(Gtk.Align.CENTER)
+            self.btn_start_backup.connect("clicked", self._on_start_backup_clicked)
+            action_box.append(self.btn_start_backup)
+
+            # Progress Bar & Status
+            self.backup_progress = Gtk.ProgressBar(show_text=True, text="Ready", visible=False)
+            self.backup_log_label = Gtk.Label(label="", wrap=True, visible=False)
+            self.backup_log_label.add_css_class("caption")
+            action_box.append(self.backup_progress)
+            action_box.append(self.backup_log_label)
+
+            vbox.append(action_box)
+            return scroll
+
+        def _on_dest_mode_changed(self, mode):
+            self.dest_mode = mode
+            self.drive_group.set_visible(mode == "drive")
+            self.cloud_dest_group.set_visible(mode == "cloud")
+            self.custom_dest_group.set_visible(mode == "custom")
+            if mode == "drive":
+                self._check_storage_warning()
+
+        def _check_storage_warning(self):
+            if not self.selected_drive:
+                self.storage_banner.set_title("No drive selected. Please choose an internal partition or connect a USB drive.")
+                self.storage_banner.set_revealed(True)
+            elif self.selected_drive.get('free_bytes') is not None and self.selected_drive['free_bytes'] < 3 * 1024**3:
+                free_gb = self.selected_drive['free_bytes'] / (1024**3)
+                self.storage_banner.set_title(f"Warning: Selected drive has only {free_gb:.1f} GB free space. Backup may require more.")
+                self.storage_banner.set_revealed(True)
+            else:
+                self.storage_banner.set_revealed(False)
+
+        def _refresh_drives(self):
+            # Clear old rows
+            while self.drive_rows_box.get_first_child():
+                self.drive_rows_box.remove(self.drive_rows_box.get_first_child())
+
+            drives = StorageScanner.scan_devices()
+            if not drives:
+                row = Adw.ActionRow(title="No suitable storage drives detected", subtitle="Connect a USB-C flash drive or OTG drive")
+                self.drive_rows_box.append(row)
+                self.selected_drive = None
+                self._check_storage_warning()
+                return
+
+            self.drive_radio_group = None
+            first_valid = None
+
+            for d in drives:
+                row = Adw.ActionRow()
+                title_prefix = "🔌 [USB-C Drive] " if d['is_usb'] else "💾 [Internal] "
+                row.set_title(f"{title_prefix}{d['label']} ({d['kname']})")
+                
+                free_str = f"{d['free_bytes']/(1024**3):.1f} GB free" if d['free_bytes'] is not None else "Unmounted (auto-mounts on select)"
+                total_str = f"{d['size']/(1024**3):.1f} GB"
+                row.set_subtitle(f"Filesystem: {d['fstype'].upper()} | Total: {total_str} | Available: {free_str}")
+
+                # Check radio
+                radio = Gtk.CheckButton()
+                if self.drive_radio_group:
+                    radio.set_group(self.drive_radio_group)
+                else:
+                    self.drive_radio_group = radio
+                    radio.set_active(True)
+                    first_valid = d
+
+                def make_toggle(drv):
+                    return lambda b: self._on_drive_selected(drv) if b.get_active() else None
+
+                radio.connect("toggled", make_toggle(d))
+                row.add_prefix(radio)
+                self.drive_rows_box.append(row)
+
+            self.selected_drive = first_valid
+            self._check_storage_warning()
+
+        def _on_drive_selected(self, drive_dict):
+            # If unmounted, mount it now
+            if not drive_dict.get('mountpoint'):
+                mnt = StorageScanner.mount_device(drive_dict['device'])
+                if mnt:
+                    drive_dict['mountpoint'] = mnt
+                    try:
+                        st = os.statvfs(mnt)
+                        drive_dict['free_bytes'] = st.f_bavail * st.f_frsize
+                    except Exception:
+                        pass
+            self.selected_drive = drive_dict
+            self._check_storage_warning()
+
+        def _refresh_cloud_remotes(self):
+            remotes = CloudManager.list_remotes()
+            model = Gtk.StringList()
+            if not remotes:
+                model.append("No cloud accounts configured (Add in Cloud tab)")
+                self.selected_cloud_remote = None
+            else:
+                for r in remotes:
+                    model.append(f"{r['name']} ({r['type']})")
+                self.selected_cloud_remote = remotes[0]['name']
+
+            self.cloud_combo_row.set_model(model)
+            self.cloud_combo_row.connect("notify::selected", self._on_cloud_remote_selected)
+
+        def _on_cloud_remote_selected(self, row, param):
+            remotes = CloudManager.list_remotes()
+            idx = row.get_selected()
+            if remotes and idx < len(remotes):
+                self.selected_cloud_remote = remotes[idx]['name']
+
+        def _on_browse_custom_folder(self, btn):
+            dialog = Gtk.FileDialog(title="Choose Backup Destination Folder")
+            dialog.select_folder(self, None, self._on_folder_dialog_finish)
+
+        def _on_folder_dialog_finish(self, dialog, result):
+            try:
+                gfile = dialog.select_folder_finish(result)
+                if gfile:
+                    self.custom_folder_path = gfile.get_path()
+                    self.custom_entry_row.set_subtitle(self.custom_folder_path)
+            except Exception:
+                pass
+
+        def _on_start_backup_clicked(self, btn):
+            dest_dir = None
+            is_cloud = (self.dest_mode == "cloud")
+
+            if self.dest_mode == "drive":
+                if not self.selected_drive:
+                    self._show_alert("Error", "Please select a destination drive.")
+                    return
+                mnt = self.selected_drive.get('mountpoint')
+                if not mnt:
+                    mnt = StorageScanner.mount_device(self.selected_drive['device'])
+                if not mnt:
+                    self._show_alert("Mount Error", "Could not mount selected drive. Please select another partition or custom folder.")
+                    return
+                dest_dir = os.path.join(mnt, BACKUP_DIR_NAME)
+            elif self.dest_mode == "cloud":
+                if not self.selected_cloud_remote:
+                    self._show_alert("Cloud Error", "Please configure and select a cloud remote (Google Drive / MEGA).")
+                    return
+            else:
+                if not self.custom_folder_path:
+                    self._show_alert("Custom Folder Error", "Please browse and select a destination folder.")
+                    return
+                dest_dir = self.custom_folder_path
+
+            options = {
+                'include_home': self.sw_config.get_active(),
+                'include_docs': self.sw_home.get_active(),
+                'include_packages': self.sw_pkgs.get_active(),
+                'include_system': self.sw_sys.get_active(),
+                'include_boot': self.sw_boot.get_active(),
+                'include_waydroid': self.sw_waydroid.get_active(),
+                'target_user': get_current_user(),
+                'is_cloud': is_cloud,
+                'cloud_remote': self.selected_cloud_remote
+            }
+
+            self.btn_start_backup.set_sensitive(False)
+            self.backup_progress.set_visible(True)
+            self.backup_progress.set_fraction(0.05)
+            self.backup_log_label.set_visible(True)
+            self.backup_log_label.set_text("Starting backup process...")
+
+            def worker():
+                def prog_cb(f):
+                    GLib.idle_add(lambda: self.backup_progress.set_fraction(f))
+                def log_cb(msg):
+                    GLib.idle_add(lambda: self.backup_log_label.set_text(msg))
+
+                try:
+                    success, path = BackupEngine.execute_backup(dest_dir, options, prog_cb, log_cb)
+                    GLib.idle_add(lambda: self._on_backup_finished(success, path))
+                except Exception as e:
+                    GLib.idle_add(lambda: self._on_backup_finished(False, str(e)))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_backup_finished(self, success, result_str):
+            self.btn_start_backup.set_sensitive(True)
+            self.backup_progress.set_fraction(1.0 if success else 0.0)
+            if success:
+                self.backup_log_label.set_text(f"Backup Completed Successfully!\n{result_str}")
+                self._show_alert("Backup Complete", f"Backup archive created and saved:\n{result_str}")
+                self._refresh_restore_list()
+            else:
+                self.backup_log_label.set_text(f"Backup Failed: {result_str}")
+                self._show_alert("Backup Failed", f"An error occurred:\n{result_str}")
+
+        # ----------------------------------------------------------------------
+        # Restore Tab
+        # ----------------------------------------------------------------------
+        def _build_restore_page(self):
+            scroll = Gtk.ScrolledWindow(vexpand=True)
+            clamp = Adw.Clamp(maximum_size=750, tightening_threshold=600)
+            scroll.set_child(clamp)
+
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_top=16, margin_bottom=24, margin_start=16, margin_end=16)
+            clamp.set_child(vbox)
+
+            # Source Selector
+            mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=8)
+            btn_local = Gtk.ToggleButton(label="Detected Local Backups", active=True)
+            btn_cloud = Gtk.ToggleButton(label="Cloud Backups")
+            btn_file = Gtk.ToggleButton(label="Select File Manually")
+            btn_cloud.set_group(btn_local)
+            btn_file.set_group(btn_local)
+
+            btn_local.connect("toggled", lambda b: self._on_restore_source_changed("local") if b.get_active() else None)
+            btn_cloud.connect("toggled", lambda b: self._on_restore_source_changed("cloud") if b.get_active() else None)
+            btn_file.connect("toggled", lambda b: self._on_restore_source_changed("file") if b.get_active() else None)
+
+            mode_box.append(btn_local)
+            mode_box.append(btn_cloud)
+            mode_box.append(btn_file)
+            vbox.append(mode_box)
+
+            # Local Backups Group
+            self.restore_local_group = Adw.PreferencesGroup(title="Available Backups", description="Select backup archive from internal or external drives")
+            self.restore_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.restore_local_group.add(self.restore_rows_box)
+            vbox.append(self.restore_local_group)
+
+            # Cloud Backups Group (Hidden by default)
+            self.restore_cloud_group = Adw.PreferencesGroup(title="Cloud Storage Backups", description="Select remote and backup file to download & restore")
+            self.cloud_restore_combo = Adw.ComboRow(title="Remote Account")
+            self.cloud_backup_combo = Adw.ComboRow(title="Cloud Backup Archive")
+            self.restore_cloud_group.add(self.cloud_restore_combo)
+            self.restore_cloud_group.add(self.cloud_backup_combo)
+            self.restore_cloud_group.set_visible(False)
+            vbox.append(self.restore_cloud_group)
+
+            # File Chooser Group (Hidden by default)
+            self.restore_file_group = Adw.PreferencesGroup(title="Custom Archive File")
+            self.restore_file_row = Adw.ActionRow(title="Chosen File", subtitle="None")
+            btn_browse_archive = Gtk.Button(label="Browse File...", valign=Gtk.Align.CENTER)
+            btn_browse_archive.connect("clicked", self._on_browse_restore_file)
+            self.restore_file_row.add_suffix(btn_browse_archive)
+            self.restore_file_group.add(self.restore_file_row)
+            self.restore_file_group.set_visible(False)
+            vbox.append(self.restore_file_group)
+
+            # Archive Inspection Card
+            self.inspect_group = Adw.PreferencesGroup(title="Backup Archive Inspection", description="Metadata & contents from selected backup archive")
+            self.lbl_inspect_date = Adw.ActionRow(title="Created On", subtitle="--")
+            self.lbl_inspect_host = Adw.ActionRow(title="Host & Kernel", subtitle="--")
+            self.lbl_inspect_pkgs = Adw.ActionRow(title="Package Counts", subtitle="--")
+            self.lbl_inspect_comps = Adw.ActionRow(title="Included Components", subtitle="--")
+            self.inspect_group.add(self.lbl_inspect_date)
+            self.inspect_group.add(self.lbl_inspect_host)
+            self.inspect_group.add(self.lbl_inspect_pkgs)
+            self.inspect_group.add(self.lbl_inspect_comps)
+            vbox.append(self.inspect_group)
+
+            # Restore Options Checkboxes
+            restore_opts_group = Adw.PreferencesGroup(title="Restore Components Selection")
+            vbox.append(restore_opts_group)
+
+            self.sw_rest_home = Adw.SwitchRow(title="User Files & Configurations", subtitle="Restores ~/ files, configs, dotfiles and applies chown $USER:$USER", active=True)
+            self.sw_rest_pkgs = Adw.SwitchRow(title="Synchronize Packages (Non-Conflicting)", subtitle="Runs pacman -S --needed (skips pre-installed packages safely)", active=True)
+            self.sw_rest_sys = Adw.SwitchRow(title="Network Credentials & Bluetooth Pairings", subtitle="WiFi passwords (chmod 600) and paired Bluetooth devices", active=True)
+            self.sw_rest_boot = Adw.SwitchRow(title="Tablet Boot & Cmdline Settings", subtitle="/etc/cmdline.d/ rotation & kernel parameters", active=True)
+
+            restore_opts_group.add(self.sw_rest_home)
+            restore_opts_group.add(self.sw_rest_pkgs)
+            restore_opts_group.add(self.sw_rest_sys)
+            restore_opts_group.add(self.sw_rest_boot)
+
+            # Start Restore Action
+            rest_action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=8)
+            self.btn_start_restore = Gtk.Button(label="Start Restore Process")
+            self.btn_start_restore.add_css_class("suggested-action")
+            self.btn_start_restore.add_css_class("pill")
+            self.btn_start_restore.set_size_request(240, 50)
+            self.btn_start_restore.set_halign(Gtk.Align.CENTER)
+            self.btn_start_restore.connect("clicked", self._on_start_restore_clicked)
+            rest_action_box.append(self.btn_start_restore)
+
+            self.restore_progress = Gtk.ProgressBar(show_text=True, text="Ready", visible=False)
+            self.restore_log_label = Gtk.Label(label="", wrap=True, visible=False)
+            self.restore_log_label.add_css_class("caption")
+            rest_action_box.append(self.restore_progress)
+            rest_action_box.append(self.restore_log_label)
+
+            vbox.append(rest_action_box)
+            return scroll
+
+        def _on_restore_source_changed(self, mode):
+            self.restore_source_mode = mode
+            self.restore_local_group.set_visible(mode == "local")
+            self.restore_cloud_group.set_visible(mode == "cloud")
+            self.restore_file_group.set_visible(mode == "file")
+
+            if mode == "cloud":
+                self._load_cloud_backups()
+
+        def _refresh_restore_list(self):
+            while self.restore_rows_box.get_first_child():
+                self.restore_rows_box.remove(self.restore_rows_box.get_first_child())
+
+            backups = StorageScanner.find_local_backups()
+            if not backups:
+                row = Adw.ActionRow(title="No backup archives found on mounted drives", subtitle="Select archive manually or check cloud storage")
+                self.restore_rows_box.append(row)
+                self.selected_restore_file = None
+                return
+
+            self.restore_radio_group = None
+            first_b = None
+
+            for b in backups:
+                row = Adw.ActionRow()
+                title = f"{b['filename']} ({b['size'] / (1024*1024):.1f} MB)"
+                row.set_title(title)
+                mtime_str = datetime.fromtimestamp(b['mtime']).strftime("%Y-%m-%d %H:%M")
+                row.set_subtitle(f"Location: {b['device_label']} | Date: {mtime_str}")
+
+                radio = Gtk.CheckButton()
+                if self.restore_radio_group:
+                    radio.set_group(self.restore_radio_group)
+                else:
+                    self.restore_radio_group = radio
+                    radio.set_active(True)
+                    first_b = b['path']
+
+                def make_toggle(path):
+                    return lambda btn: self._on_restore_file_selected(path) if btn.get_active() else None
+
+                radio.connect("toggled", make_toggle(b['path']))
+                row.add_prefix(radio)
+                self.restore_rows_box.append(row)
+
+            if first_b:
+                self._on_restore_file_selected(first_b)
+
+        def _on_restore_file_selected(self, path):
+            self.selected_restore_file = path
+            meta = RestoreEngine.inspect_archive(path)
+            self.lbl_inspect_date.set_subtitle(meta.get('created_at', 'Unknown'))
+            self.lbl_inspect_host.set_subtitle(f"{meta.get('hostname', 'unknown')} | Kernel: {meta.get('kernel', 'unknown')}")
+            self.lbl_inspect_pkgs.set_subtitle(f"Native: {meta.get('native_pkg_count', 0)}, Foreign/AUR: {meta.get('foreign_pkg_count', 0)}")
+            comps = ", ".join(meta.get('components', [])) or "None listed"
+            self.lbl_inspect_comps.set_subtitle(comps)
+
+        def _on_browse_restore_file(self, btn):
+            dialog = Gtk.FileDialog(title="Select Nabu Backup Archive (*.tar.zst, *.tar.gz)")
+            dialog.open(self, None, self._on_file_dialog_finish)
+
+        def _on_file_dialog_finish(self, dialog, result):
+            try:
+                gfile = dialog.open_finish(result)
+                if gfile:
+                    path = gfile.get_path()
+                    self.restore_file_row.set_subtitle(path)
+                    self._on_restore_file_selected(path)
+            except Exception:
+                pass
+
+        def _load_cloud_backups(self):
+            remotes = CloudManager.list_remotes()
+            rm_model = Gtk.StringList()
+            if not remotes:
+                rm_model.append("No cloud remotes")
+            else:
+                for r in remotes:
+                    rm_model.append(r['name'])
+            self.cloud_restore_combo.set_model(rm_model)
+
+            if remotes:
+                cur_rem = remotes[0]['name']
+                self._populate_remote_backup_list(cur_rem)
+
+        def _populate_remote_backup_list(self, remote_name):
+            b_model = Gtk.StringList()
+            self.current_cloud_backups = CloudManager.list_cloud_backups(remote_name)
+            if not self.current_cloud_backups:
+                b_model.append("No backups found on this cloud remote")
+            else:
+                for b in self.current_cloud_backups:
+                    b_model.append(f"{b['filename']} ({b['size'] / (1024*1024):.1f} MB)")
+            self.cloud_backup_combo.set_model(b_model)
+
+        def _on_start_restore_clicked(self, btn):
+            archive_to_restore = self.selected_restore_file
+            is_cloud = (self.restore_source_mode == "cloud")
+
+            if is_cloud:
+                if not hasattr(self, 'current_cloud_backups') or not self.current_cloud_backups:
+                    self._show_alert("Cloud Restore Error", "No cloud backup selected.")
+                    return
+                idx = self.cloud_backup_combo.get_selected()
+                if idx >= len(self.current_cloud_backups):
+                    self._show_alert("Cloud Restore Error", "Invalid cloud backup index.")
+                    return
+                cloud_item = self.current_cloud_backups[idx]
+            else:
+                if not archive_to_restore or not os.path.exists(archive_to_restore):
+                    self._show_alert("Restore Error", "Please select a valid backup archive.")
+                    return
+
+            # Confirmation Dialog
+            dlg = Adw.AlertDialog(
+                heading="Confirm System & Data Restore",
+                body="Are you ready to restore selected files, desktop settings, and packages? Any pre-installed packages on this system will be safely preserved without conflict."
+            )
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("restore", "Start Restore")
+            dlg.set_response_appearance("restore", Adw.ResponseAppearance.SUGGESTED)
+
+            def on_response(d, resp):
+                if resp == "restore":
+                    self._execute_restore_confirmed(is_cloud, cloud_item if is_cloud else None, archive_to_restore)
+
+            dlg.connect("response", on_response)
+            dlg.present(self)
+
+        def _execute_restore_confirmed(self, is_cloud, cloud_item, local_archive_path):
+            self.btn_start_restore.set_sensitive(False)
+            self.restore_progress.set_visible(True)
+            self.restore_progress.set_fraction(0.05)
+            self.restore_log_label.set_visible(True)
+            self.restore_log_label.set_text("Initiating restore process...")
+
+            options = {
+                'restore_home': self.sw_rest_home.get_active(),
+                'restore_packages': self.sw_rest_pkgs.get_active(),
+                'restore_system': self.sw_rest_sys.get_active(),
+                'restore_boot': self.sw_rest_boot.get_active(),
+                'target_user': get_current_user()
+            }
+
+            def worker():
+                def prog_cb(f):
+                    GLib.idle_add(lambda: self.restore_progress.set_fraction(f))
+                def log_cb(msg):
+                    GLib.idle_add(lambda: self.restore_log_label.set_text(msg))
+
+                target_path = local_archive_path
+                try:
+                    if is_cloud:
+                        log_cb(f"Downloading {cloud_item['filename']} from cloud remote...")
+                        dl_dir = "/tmp/nabu-cloud-restore-cache"
+                        ok = CloudManager.download_archive(cloud_item['remote_path'], dl_dir, prog_cb, log_cb)
+                        if not ok:
+                            raise RuntimeError("Cloud download failed.")
+                        target_path = os.path.join(dl_dir, cloud_item['filename'])
+
+                    RestoreEngine.execute_restore(target_path, options, prog_cb, log_cb)
+                    GLib.idle_add(lambda: self._on_restore_finished(True, "All selected items restored."))
+                except Exception as e:
+                    GLib.idle_add(lambda: self._on_restore_finished(False, str(e)))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_restore_finished(self, success, msg):
+            self.btn_start_restore.set_sensitive(True)
+            self.restore_progress.set_fraction(1.0 if success else 0.0)
+            if success:
+                self.restore_log_label.set_text("Restore Completed Successfully!")
+                self._show_alert("Restore Complete", "System and user data restore completed successfully.\nPlease log out or restart your session for all desktop settings to refresh.")
+            else:
+                self.restore_log_label.set_text(f"Restore Failed: {msg}")
+                self._show_alert("Restore Failed", f"Error during restore:\n{msg}")
+
+        # ----------------------------------------------------------------------
+        # Cloud Accounts Tab
+        # ----------------------------------------------------------------------
+        def _build_cloud_page(self):
+            scroll = Gtk.ScrolledWindow(vexpand=True)
+            clamp = Adw.Clamp(maximum_size=750, tightening_threshold=600)
+            scroll.set_child(clamp)
+
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_top=16, margin_bottom=24, margin_start=16, margin_end=16)
+            clamp.set_child(vbox)
+
+            # Cloud Status Banner
+            if not CloudManager.is_available():
+                b = Adw.Banner(title="rclone package is not installed. Cloud backup features require rclone (sudo pacman -S rclone).", revealed=True)
+                vbox.append(b)
+
+            # Configured Remotes Group
+            self.cloud_accounts_group = Adw.PreferencesGroup(title="Connected Cloud Remotes", description="Configured cloud providers for remote backup and restore")
+            self.cloud_acc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.cloud_accounts_group.add(self.cloud_acc_box)
+            vbox.append(self.cloud_accounts_group)
+
+            self._refresh_cloud_accounts_ui()
+
+            # Actions Group
+            add_group = Adw.PreferencesGroup(title="Connect New Cloud Storage")
+            vbox.append(add_group)
+
+            row_mega = Adw.ActionRow(title="Add MEGA Account", subtitle="Connect via MEGA email and password (instant encryption)")
+            btn_add_mega = Gtk.Button(label="Connect MEGA", valign=Gtk.Align.CENTER)
+            btn_add_mega.connect("clicked", self._on_add_mega_dialog)
+            row_mega.add_suffix(btn_add_mega)
+            add_group.add(row_mega)
+
+            row_drive = Adw.ActionRow(title="Add Google Drive Account", subtitle="Authorize Google Drive via web browser login")
+            btn_add_drive = Gtk.Button(label="Connect Google Drive", valign=Gtk.Align.CENTER)
+            btn_add_drive.connect("clicked", self._on_add_gdrive_clicked)
+            row_drive.add_suffix(btn_add_drive)
+            add_group.add(row_drive)
+
+            row_other = Adw.ActionRow(title="Other Cloud Providers (OneDrive, Dropbox, S3, WebDAV)", subtitle="Launch guided rclone configuration wizard")
+            btn_add_other = Gtk.Button(label="Launch Setup Wizard", valign=Gtk.Align.CENTER)
+            btn_add_other.connect("clicked", self._on_launch_rclone_wizard)
+            row_other.add_suffix(btn_add_other)
+            add_group.add(row_other)
+
+            return scroll
+
+        def _refresh_cloud_accounts_ui(self):
+            while self.cloud_acc_box.get_first_child():
+                self.cloud_acc_box.remove(self.cloud_acc_box.get_first_child())
+
+            remotes = CloudManager.list_remotes()
+            if not remotes:
+                row = Adw.ActionRow(title="No Cloud Remotes Connected", subtitle="Click below to connect Google Drive, MEGA, or other cloud storage")
+                self.cloud_acc_box.append(row)
+                return
+
+            for r in remotes:
+                row = Adw.ActionRow(title=f"☁️ {r['name']} ({r['type'].upper()})", subtitle=f"Remote path: {r['remote']}")
+                btn_remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+                btn_remove.add_css_class("flat")
+                def make_del(r_name):
+                    return lambda b: self._delete_remote(r_name)
+                btn_remove.connect("clicked", make_del(r['name']))
+                row.add_suffix(btn_remove)
+                self.cloud_acc_box.append(row)
+
+        def _delete_remote(self, r_name):
+            try:
+                subprocess.run(['rclone', 'config', 'delete', r_name], check=True)
+                self._refresh_cloud_accounts_ui()
+                self._refresh_cloud_remotes()
+            except Exception as e:
+                self._show_alert("Error", f"Failed to delete remote: {e}")
+
+        def _on_add_mega_dialog(self, btn):
+            dlg = Adw.AlertDialog(heading="Connect MEGA Account", body="Enter your MEGA credentials. The password is encrypted locally before storing.")
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            entry_name = Gtk.Entry(placeholder_text="Remote Name (e.g. mymega)")
+            entry_email = Gtk.Entry(placeholder_text="MEGA Email Address")
+            entry_pass = Gtk.PasswordEntry(placeholder_text="MEGA Password")
+            vbox.append(entry_name)
+            vbox.append(entry_email)
+            vbox.append(entry_pass)
+            dlg.set_extra_child(vbox)
+
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("connect", "Connect")
+            dlg.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
+
+            def on_resp(d, resp):
+                if resp == "connect":
+                    name = entry_name.get_text().strip() or "mega"
+                    email = entry_email.get_text().strip()
+                    passwd = entry_pass.get_text().strip()
+                    if not email or not passwd:
+                        self._show_alert("Error", "Email and password are required.")
+                        return
+                    ok, msg = CloudManager.create_mega_remote(name, email, passwd)
+                    if ok:
+                        self._show_alert("Connected", f"MEGA account '{name}' connected successfully!")
+                        self._refresh_cloud_accounts_ui()
+                        self._refresh_cloud_remotes()
+                    else:
+                        self._show_alert("Connection Failed", msg)
+
+            dlg.connect("response", on_resp)
+            dlg.present(self)
+
+        def _on_add_gdrive_clicked(self, btn):
+            dlg = Adw.AlertDialog(heading="Connect Google Drive", body="A browser window will open to authorize Google Drive access.\nEnter a name for this remote:")
+            entry_name = Gtk.Entry(text="gdrive", placeholder_text="Remote Name")
+            dlg.set_extra_child(entry_name)
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("login", "Authorize in Browser")
+            dlg.set_response_appearance("login", Adw.ResponseAppearance.SUGGESTED)
+
+            def on_resp(d, resp):
+                if resp == "login":
+                    name = entry_name.get_text().strip() or "gdrive"
+                    # Launch rclone config in terminal emulator
+                    term = shutil.which("konsole") or shutil.which("kgx") or shutil.which("gnome-terminal") or shutil.which("xterm")
+                    if term:
+                        cmd = [term, "-e", "rclone", "config", "create", name, "drive"]
+                        subprocess.Popen(cmd)
+                    else:
+                        subprocess.Popen(["rclone", "config", "create", name, "drive"])
+                    self._show_alert("Authorization Launched", "Complete the Google Drive sign-in in your browser, then refresh the Cloud Accounts list.")
+
+            dlg.connect("response", on_resp)
+            dlg.present(self)
+
+        def _on_launch_rclone_wizard(self, btn):
+            term = shutil.which("konsole") or shutil.which("kgx") or shutil.which("gnome-terminal") or shutil.which("xterm")
+            if term:
+                subprocess.Popen([term, "-e", "rclone", "config"])
+            else:
+                self._show_alert("Terminal Required", "Please run 'rclone config' in your terminal emulator.")
+
+        def _show_alert(self, heading, body):
+            alert = Adw.AlertDialog(heading=heading, body=body)
+            alert.add_response("ok", "OK")
+            alert.present(self)
+
+    app = NabuBackupApp()
+    app.run([])
+
+# ==============================================================================
+# CLI Interactive and Batch Operations
+# ==============================================================================
+def run_cli_interactive():
+    print(f"\n=======================================================")
+    print(f"      {APP_NAME} v{APP_VERSION} (CLI Mode)")
+    print(f"=======================================================")
+    print("1. Create Full Backup (Internal / USB Drive)")
+    print("2. Create Backup to Cloud (Google Drive / MEGA)")
+    print("3. Restore System & User Data")
+    print("4. List Detected Drives & Storage")
+    print("5. List Cloud Remotes & Cloud Backups")
+    print("6. Connect Cloud Account (MEGA / Google Drive)")
+    print("7. Exit")
+    choice = input("\nEnter choice [1-7]: ").strip()
+
+    if choice == "1":
+        drives = StorageScanner.scan_devices()
+        if not drives:
+            print("No suitable drives detected. Please connect a USB drive or specify folder.")
+            dest = input("Enter custom destination path: ").strip()
+        else:
+            print("\nAvailable Storage Drives:")
+            for i, d in enumerate(drives, 1):
+                free_gb = d['free_bytes'] / (1024**3) if d['free_bytes'] else 0
+                usb = "[USB-C]" if d['is_usb'] else "[Internal]"
+                print(f"  {i}. {usb} {d['label']} ({d['kname']}) - {free_gb:.1f} GB free (Mount: {d['mountpoint']})")
+            idx = int(input(f"Select drive [1-{len(drives)}]: ").strip()) - 1
+            sel = drives[idx]
+            mnt = sel['mountpoint'] or StorageScanner.mount_device(sel['device'])
+            dest = os.path.join(mnt, BACKUP_DIR_NAME)
+
+        opts = {
+            'include_home': True, 'include_docs': True, 'include_packages': True,
+            'include_system': True, 'include_boot': True, 'include_waydroid': False,
+            'target_user': get_current_user(), 'is_cloud': False
+        }
+        print(f"\nStarting backup to: {dest} ...")
+        BackupEngine.execute_backup(dest, opts, log_cb=print)
+
+    elif choice == "2":
+        remotes = CloudManager.list_remotes()
+        if not remotes:
+            print("No cloud remotes found. Configure one via option 6 or rclone config.")
+            return
+        print("\nConfigured Cloud Remotes:")
+        for i, r in enumerate(remotes, 1):
+            print(f"  {i}. {r['name']} ({r['type']})")
+        idx = int(input(f"Select remote [1-{len(remotes)}]: ").strip()) - 1
+        rem = remotes[idx]['name']
+
+        opts = {
+            'include_home': True, 'include_docs': True, 'include_packages': True,
+            'include_system': True, 'include_boot': True, 'include_waydroid': False,
+            'target_user': get_current_user(), 'is_cloud': True, 'cloud_remote': rem
+        }
+        print(f"\nStarting cloud backup to {rem} ...")
+        BackupEngine.execute_backup("/tmp", opts, log_cb=print)
+
+    elif choice == "3":
+        backups = StorageScanner.find_local_backups()
+        if not backups:
+            path = input("Enter path to backup archive file: ").strip()
+        else:
+            print("\nFound Local Backups:")
+            for i, b in enumerate(backups, 1):
+                print(f"  {i}. {b['filename']} ({b['size'] / (1024*1024):.1f} MB) on {b['device_label']}")
+            sel = input(f"Select backup [1-{len(backups)}] or enter path: ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= len(backups):
+                path = backups[int(sel)-1]['path']
+            else:
+                path = sel
+
+        opts = {
+            'restore_home': True, 'restore_packages': True,
+            'restore_system': True, 'restore_boot': True,
+            'target_user': get_current_user()
+        }
+        RestoreEngine.execute_restore(path, opts, log_cb=print)
+
+    elif choice == "4":
+        drives = StorageScanner.scan_devices()
+        print("\n--- Detected Storage Drives ---")
+        for d in drives:
+            free = f"{d['free_bytes'] / (1024**3):.1f} GB free" if d['free_bytes'] else "Unmounted"
+            usb = "USB-C OTG" if d['is_usb'] else "Internal UFS"
+            print(f"[{usb}] {d['label']} ({d['kname']}, {d['fstype'].upper()}) - Total: {d['size']/(1024**3):.1f} GB | Free: {free} | Mount: {d['mountpoint']}")
+
+    elif choice == "5":
+        remotes = CloudManager.list_remotes()
+        print("\n--- Cloud Remotes ---")
+        for r in remotes:
+            print(f"• {r['name']} ({r['type']})")
+            backups = CloudManager.list_cloud_backups(r['name'])
+            for b in backups:
+                print(f"    - {b['filename']} ({b['size'] / (1024*1024):.1f} MB)")
+
+    elif choice == "6":
+        p = input("Provider (1: MEGA, 2: Google Drive, 3: Other): ").strip()
+        if p == "1":
+            name = input("Remote name [mega]: ").strip() or "mega"
+            email = input("MEGA Email: ").strip()
+            pw = input("MEGA Password: ").strip()
+            ok, msg = CloudManager.create_mega_remote(name, email, pw)
+            print("Success!" if ok else f"Failed: {msg}")
+        elif p == "2":
+            name = input("Remote name [gdrive]: ").strip() or "gdrive"
+            subprocess.run(['rclone', 'config', 'create', name, 'drive'])
+        else:
+            subprocess.run(['rclone', 'config'])
+
+# ==============================================================================
+# Main Dispatcher
+# ==============================================================================
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Xiaomi Pad 5 System & Data Migration")
+    parser.add_argument("--gui", action="store_true", help="Launch Libadwaita GUI interface")
+    parser.add_argument("--cli", action="store_true", help="Launch interactive CLI menu")
+    parser.add_argument("--list-drives", action="store_true", help="List detected storage devices")
+    parser.add_argument("--list-cloud", action="store_true", help="List configured cloud remotes")
+
+    # Internal Polkit Helper flags
+    parser.add_argument("--helper-stage-system", metavar="DIR", help=argparse.SUPPRESS)
+    parser.add_argument("--helper-restore-system", metavar="DIR", help=argparse.SUPPRESS)
+
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="command")
+
+    backup_parser = subparsers.add_parser("backup", help="Create a new backup archive")
+    backup_parser.add_argument("--dest", help="Destination directory or cloud remote name")
+    backup_parser.add_argument("--cloud", action="store_true", help="Upload directly to cloud storage")
+    backup_parser.add_argument("--no-system", action="store_true", help="Skip system settings (WiFi, BT, boot)")
+    backup_parser.add_argument("--include-waydroid", action="store_true", help="Include Waydroid container")
+
+    restore_parser = subparsers.add_parser("restore", help="Restore system from an archive")
+    restore_parser.add_argument("archive", help="Path to backup archive (.tar.zst) or cloud remote:archive")
+    restore_parser.add_argument("--no-packages", action="store_true", help="Skip pacman package synchronization")
+    restore_parser.add_argument("--no-system", action="store_true", help="Skip system network and bluetooth restore")
+
+    args = parser.parse_args()
+
+    # 1. Handle Polkit Helper calls
+    if args.helper_stage_system:
+        BackupEngine._stage_system_files(args.helper_stage_system)
+        sys.exit(0)
+    if args.helper_restore_system:
+        RestoreEngine._restore_system_files(args.helper_restore_system)
+        sys.exit(0)
+
+    # 2. Command-line utility flags
+    if args.list_drives:
+        drives = StorageScanner.scan_devices()
+        for d in drives:
+            free = f"{d['free_bytes'] / (1024**3):.1f} GB" if d['free_bytes'] else "Unmounted"
+            print(f"{d['label']} ({d['kname']}, {d['fstype']}) - USB: {d['is_usb']} - Free: {free} - Mount: {d['mountpoint']}")
+        sys.exit(0)
+
+    if args.list_cloud:
+        remotes = CloudManager.list_remotes()
+        for r in remotes:
+            print(f"{r['name']}: {r['type']}")
+        sys.exit(0)
+
+    # 3. Non-interactive subcommands
+    if args.command == "backup":
+        dest = args.dest
+        if not dest:
+            drives = StorageScanner.scan_devices()
+            if drives and drives[0].get('mountpoint'):
+                dest = os.path.join(drives[0]['mountpoint'], BACKUP_DIR_NAME)
+            else:
+                dest = os.path.expanduser("~/NabuBackups")
+        opts = {
+            'include_home': True, 'include_docs': True, 'include_packages': True,
+            'include_system': not args.no_system, 'include_boot': not args.no_system,
+            'include_waydroid': args.include_waydroid, 'target_user': get_current_user(),
+            'is_cloud': args.cloud, 'cloud_remote': args.dest if args.cloud else None
+        }
+        BackupEngine.execute_backup(dest, opts, log_cb=print)
+        sys.exit(0)
+
+    if args.command == "restore":
+        opts = {
+            'restore_home': True, 'restore_packages': not args.no_packages,
+            'restore_system': not args.no_system, 'restore_boot': not args.no_system,
+            'target_user': get_current_user()
+        }
+        RestoreEngine.execute_restore(args.archive, opts, log_cb=print)
+        sys.exit(0)
+
+    if args.cli:
+        run_cli_interactive()
+        sys.exit(0)
+
+    # 4. Default: Launch GUI if display is present, else run interactive CLI
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if has_display and not args.cli:
+        try:
+            launch_gui()
+        except Exception as e:
+            print(f"Could not initialize GUI ({e}). Launching CLI instead...\n")
+            run_cli_interactive()
+    else:
+        run_cli_interactive()
+
+if __name__ == "__main__":
+    main()

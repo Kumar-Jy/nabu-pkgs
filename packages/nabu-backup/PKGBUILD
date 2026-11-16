@@ -1,0 +1,37 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+# Backup & Restore utility for Xiaomi Pad 5 (nabu)
+
+pkgname=nabu-backup
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Comprehensive system, user data, and package backup & restore utility for Xiaomi Pad 5 (nabu)"
+arch=('any')
+url="https://github.com/Kumar-Jy/nabu-pkgs"
+license=('MIT')
+depends=('python' 'python-gobject' 'libadwaita' 'gtk4' 'zstd' 'tar' 'coreutils' 'hicolor-icon-theme')
+optdepends=('rclone: cloud drive backup & restore (Google Drive, MEGA, OneDrive, Dropbox)'
+            'polkit: elevated permissions for system network and bluetooth backup/restore')
+provides=('nabu-backup')
+changelog=ChangeLog
+source=('nabu-backup'
+        'nabu-backup.desktop'
+        'nabu-backup.svg'
+        'org.nabu.backup.policy'
+        'LICENSE'
+        'README.md')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/nabu-backup" "$pkgdir/usr/bin/nabu-backup"
+  install -Dm644 "$srcdir/nabu-backup.desktop" "$pkgdir/usr/share/applications/nabu-backup.desktop"
+  install -Dm644 "$srcdir/nabu-backup.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/nabu-backup.svg"
+  install -Dm644 "$srcdir/nabu-backup.svg" "$pkgdir/usr/share/pixmaps/nabu-backup.svg"
+  install -Dm644 "$srcdir/org.nabu.backup.policy" "$pkgdir/usr/share/polkit-1/actions/org.nabu.backup.policy"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

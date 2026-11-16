@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Nabu Backup & Restore
+GenericName=System & User Backup Tool
+Comment=Backup and restore user data, system packages, WiFi, Bluetooth, and tablet boot settings to external drives or cloud (Google Drive, MEGA)
+Exec=nabu-backup
+Icon=nabu-backup
+Terminal=false
+Type=Application
+Categories=System;Archiving;Utility;Settings;
+Keywords=backup;restore;cloud;drive;mega;google;storage;pacman;nabu;xiaomi;archive;migration;
+StartupNotify=true
+X-KDE-SubstituteUID=false

@@ -1,0 +1,12 @@
+2026-11-16 Kumar-Jy <kumrjy1@gmail.com>
+
+	* nabu-backup 1.0.0-1:
+	- Initial release of Nabu Backup & Restore utility for Xiaomi Pad 5.
+	- Built with GTK4 and Libadwaita for full compatibility across KDE Plasma and GNOME.
+	- Dynamic block device and filesystem scanner supporting NTFS, FAT32, exFAT, ext4, btrfs, and f2fs.
+	- External USB-C drive detection and prompt when insufficient space or no drive is detected.
+	- Cloud storage backup and restore integration via rclone (Google Drive, MEGA, OneDrive, Dropbox, etc.).
+	- Non-conflicting restore mechanism via pacman --needed, skipping pre-installed packages on fresh installs.
+	- Automatic file permission normalization (chown -R $USER:$USER) and network/bluetooth profile restoration.
+	- Tablet boot cmdline migration (/etc/cmdline.d).
+	- Dual GUI and CLI support.
