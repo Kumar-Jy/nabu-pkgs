@@ -44,6 +44,7 @@ cp "$SCRIPT_DIR/nabu-sensors-recover" "$PKG_DIR/usr/libexec/nabu-sensors-recover
 chmod 755 "$PKG_DIR/usr/libexec/nabu-sensors-recover"
 
 cp "$SCRIPT_DIR/90-nabu-ssc-accelerometer.rules" "$PKG_DIR/lib/udev/rules.d/90-nabu-ssc-accelerometer.rules"
+cp "$SCRIPT_DIR/60-stylus-idtp9418.rules" "$PKG_DIR/lib/udev/rules.d/60-stylus-idtp9418.rules"
 cp "$SCRIPT_DIR/nabu-ssc.conf" "$PKG_DIR/lib/systemd/system/iio-sensor-proxy.service.d/nabu-ssc.conf"
 
 OUTPUT_DIR="${1:-$SCRIPT_DIR}"
