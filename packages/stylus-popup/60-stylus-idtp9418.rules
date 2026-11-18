@@ -1,0 +1,2 @@
+# Xiaomi Pad 5 (nabu) Stylus wireless charger & status event node
+KERNEL=="idtp9418", SUBSYSTEM=="misc", TAG+="uaccess", GROUP="input", MODE="0660"

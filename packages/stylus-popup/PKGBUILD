@@ -3,7 +3,7 @@
 
 pkgname=stylus-popup
 pkgver=0.1
-pkgrel=1
+pkgrel=2
 pkgdesc='Dynamic Island style stylus status popup for Wayland (Xiaomi Pad 5)'
 arch=('aarch64')
 url='https://github.com/TwinbornPlate75/stylus-popup'
@@ -16,9 +16,11 @@ source=("git+https://github.com/TwinbornPlate75/stylus-popup.git#commit=17a42eec
         '0001-stylusmonitor-robust-io-and-pen-generation.patch'
         '0002-stylus-config-and-popup-generation.patch'
         '0003-stylusbuttons-generational-layout.patch'
+        '60-stylus-idtp9418.rules'
         'ChangeLog'
         'stylus-popup.install')
 sha256sums=('SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -41,4 +43,5 @@ build() {
 package() {
   cd "$pkgname"
   DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$srcdir/60-stylus-idtp9418.rules" "$pkgdir/usr/lib/udev/rules.d/60-stylus-idtp9418.rules"
 }

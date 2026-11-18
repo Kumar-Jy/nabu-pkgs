@@ -1,3 +1,9 @@
+2026-11-18 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 0.1-2:
+	- Add 60-stylus-idtp9418.rules udev rule for /dev/idtp9418
+	- Grant active seat user (TAG+="uaccess") and input group read/write permissions
+	- Fixes "Permission denied" error when running under unprivileged user session
+
 2026-10-07 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 0.1-1:
 	- Initial package of the Dynamic Island style pen status popup for the IDTP9418 dock
