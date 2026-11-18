@@ -1,0 +1,27 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+
+pkgname=wvkbd
+pkgver=0.21
+pkgrel=1
+pkgdesc="On-screen touch keyboard for wlroots / Wayland compositors (Hyprland, Sway)"
+arch=('aarch64')
+url="https://git.sr.ht/~proycon/wvkbd"
+license=('GPL-3.0-only')
+depends=('wayland' 'pango' 'cairo' 'glibc')
+makedepends=('fontconfig' 'libxkbcommon' 'scdoc' 'wayland-protocols' 'pkgconf')
+provides=('wvkbd-mobintl' 'wvkbd-deskintl')
+source=("$pkgname-$pkgver.tar.gz::https://git.sr.ht/~proycon/wvkbd/archive/v$pkgver.tar.gz")
+sha256sums=('9fbe3beca107d1ebbee90116d891a353df8deadeea491edea96fb29a5bff9378')
+
+build() {
+  cd "$pkgname-v$pkgver"
+  make LAYOUT=mobintl PREFIX=/usr
+  make LAYOUT=deskintl PREFIX=/usr
+}
+
+package() {
+  cd "$pkgname-v$pkgver"
+  make LAYOUT=mobintl PREFIX=/usr DESTDIR="$pkgdir" install
+  make LAYOUT=deskintl PREFIX=/usr DESTDIR="$pkgdir" install
+  ln -sf wvkbd-mobintl "$pkgdir/usr/bin/wvkbd"
+}
