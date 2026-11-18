@@ -82,7 +82,7 @@ on:
       build_sddm_nabu:
         type: boolean
         default: true
-        description: Build sddm-nabu
+        description: Build sddm-nabu & wlogout (session managers)
       build_nabu_boot_tools:
         type: boolean
         default: true
@@ -155,13 +155,13 @@ jobs:
                  if $nabu_autobrightness then "nabu-autobrightness" else empty end,
                  if $camera_studio then "camera-studio" else empty end,
                  if $nabu_torch then "nabu-torch" else empty end,
-                 if $sddm_nabu then "sddm-nabu" else empty end,
+                 if $sddm_nabu then "sddm-nabu", "wlogout" else empty end,
                  if $nabu_boot_tools then "nabu-boot-tools", "nabu-kclean" else empty end,
                  if $iio_sensor_proxy then "iio-sensor-proxy" else empty end,
                  if $stylus_popup then "stylus-popup" else empty end,
                  if $virtual_keyboards then "wvkbd", "oskb", "plasma-keyboard-full-layout" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","nabu-backup","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout","wvkbd","oskb"]' > matrix.json
+            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","nabu-backup","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","wlogout","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout","wvkbd","oskb"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -217,7 +217,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            nabu-backup|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy|wvkbd|oskb|plasma-keyboard-full-layout)
+            nabu-backup|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|wlogout|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy|wvkbd|oskb|plasma-keyboard-full-layout)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;

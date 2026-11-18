@@ -1,0 +1,25 @@
+# Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+
+pkgname=wlogout
+pkgver=1.2.2
+pkgrel=1
+pkgdesc="Wayland-based touch-friendly logout menu"
+arch=('aarch64')
+license=('MIT')
+url="https://github.com/ArtsyMacaw/wlogout"
+depends=('gtk3' 'gtk-layer-shell')
+makedepends=('meson' 'ninja' 'scdoc' 'pkgconf' 'git')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/ArtsyMacaw/$pkgname/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=('4c9204bfa19c73f51176c94c67711f54f3e393301c0809c61ae379054060fa46')
+
+build() {
+  cd "$pkgname-$pkgver"
+  meson setup build --prefix=/usr
+  ninja -C build
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  DESTDIR="$pkgdir" ninja -C build install
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
