@@ -1,0 +1,77 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# nabu-keyboard-toggle - Enable/disable physical pogo-pin keyboard on Xiaomi Pad 5
+#
+# Usage:
+#   nabu-keyboard-toggle         # Toggle between on and off
+#   nabu-keyboard-toggle on      # Enable pogo-pin keyboard power
+#   nabu-keyboard-toggle off     # Disable pogo-pin keyboard power (folio-only mode)
+#   nabu-keyboard-toggle status  # Print current status
+
+SYSFS="/sys/devices/platform/xiaomi_keyboard/xiaomi_keyboard_enabled"
+TMPFILES="/etc/tmpfiles.d/xiaomi-keyboard.conf"
+
+get_status() {
+    if [ -f "$SYSFS" ]; then
+        val=$(cat "$SYSFS" 2>/dev/null)
+        if [ "$val" = "1" ]; then
+            echo "enabled"
+        else
+            echo "disabled"
+        fi
+    else
+        echo "unavailable"
+    fi
+}
+
+notify_user() {
+    local msg="$1"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "Keyboard" -i "input-keyboard" "Xiaomi Pogo Keyboard" "$msg" 2>/dev/null || true
+    fi
+}
+
+set_state() {
+    local target="$1"
+    case "$target" in
+        on|enable|1)
+            if [ -w "$SYSFS" ]; then
+                echo 1 > "$SYSFS"
+            else
+                echo 1 | sudo tee "$SYSFS" >/dev/null
+            fi
+            echo "w- $SYSFS - - - - 1" | sudo tee "$TMPFILES" >/dev/null
+            echo "Pogo-pin keyboard: ENABLED"
+            notify_user "Pogo-pin keyboard: ENABLED"
+            ;;
+        off|disable|0)
+            if [ -w "$SYSFS" ]; then
+                echo 0 > "$SYSFS"
+            else
+                echo 0 | sudo tee "$SYSFS" >/dev/null
+            fi
+            echo "w- $SYSFS - - - - 0" | sudo tee "$TMPFILES" >/dev/null
+            echo "Pogo-pin keyboard: DISABLED (Folio-only mode)"
+            notify_user "Pogo-pin keyboard: DISABLED"
+            ;;
+        status)
+            echo "Pogo-pin keyboard is currently: $(get_status)"
+            ;;
+        *)
+            echo "Usage: $0 [on|off|status]"
+            exit 1
+            ;;
+    esac
+}
+
+if [ $# -eq 0 ]; then
+    current=$(get_status)
+    if [ "$current" = "enabled" ]; then
+        set_state "off"
+    else
+        set_state "on"
+    fi
+else
+    set_state "$1"
+fi

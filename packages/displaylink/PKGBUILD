@@ -6,7 +6,7 @@ pkgname=displaylink
 pkgver=6.3
 _releasedate=2026-06
 _pkgfullver=6.3.0-48
-pkgrel=1
+pkgrel=2
 pkgdesc="Linux driver for DisplayLink devices"
 arch=('aarch64')
 url="https://www.synaptics.com/products/displaylink-graphics"
@@ -28,7 +28,7 @@ sha256sums=('7269856c7527060c513215ce1b5a36fef074d8e89cab89bcab13df342acce098'
             'f46839b1f5a1642392c739c3044177f70dd313e7e14db7b121509fa73c91107d'
             '35b5c5cf24c0b43cbcb054e8547a2a6966ad764de40208d5364b8d57d793a635'
             '342e83abfe2a38d5635ea928345e933d2ad127ebd3f7caca476663d4f583684b'
-            '9b4609423fd9cfaa8cad8acd086dd6b92cd09182facbb28792affeac1ecc4a45')
+            '97589a3615916675fbee1e961830b5f4d4bb487356c7c72d317236980b9b9426')
 
 prepare() {
   chmod +x displaylink-driver-${_pkgfullver}.run

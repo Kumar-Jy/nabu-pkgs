@@ -3,7 +3,7 @@
 
 pkgname=nabu-tablet-mode
 pkgver=1.0.0
-pkgrel=11
+pkgrel=12
 pkgdesc="Tablet mode switch helper and sensor resume hook for GNOME/Plasma on Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/Kumar-Jy/nabu-pkgs"
@@ -22,9 +22,11 @@ source=('nabu-tablet-mode.c'
         'nabu-tablet-mode.conf'
         'nabu-tablet-toggle'
         'nabu-tablet-toggle.desktop'
+        'nabu-keyboard-toggle'
+        'xiaomi-keyboard.conf'
         'ChangeLog'
         'nabu-tablet-mode.install')
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 build() {
   cd "$srcdir"
@@ -34,6 +36,8 @@ build() {
 package() {
   install -Dm755 "$srcdir/nabu-tablet-mode" "$pkgdir/usr/local/libexec/nabu-tablet-mode"
   install -Dm755 "$srcdir/nabu-tablet-toggle" "$pkgdir/usr/bin/nabu-tablet-toggle"
+  install -Dm755 "$srcdir/nabu-keyboard-toggle" "$pkgdir/usr/bin/nabu-keyboard-toggle"
+  install -Dm644 "$srcdir/xiaomi-keyboard.conf" "$pkgdir/usr/lib/tmpfiles.d/xiaomi-keyboard.conf"
   install -Dm644 "$srcdir/nabu-tablet-mode.conf" "$pkgdir/etc/nabu-tablet-mode.conf"
   install -Dm644 "$srcdir/nabu-tablet-toggle.desktop" "$pkgdir/usr/share/applications/nabu-tablet-toggle.desktop"
   install -Dm644 "$srcdir/nabu-tablet-mode.service" "$pkgdir/usr/lib/systemd/system/nabu-tablet-mode.service"
