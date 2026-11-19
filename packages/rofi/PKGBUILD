@@ -1,0 +1,38 @@
+# Maintainer: Kumar-Jy
+pkgname=rofi
+pkgver=2.1.1
+pkgrel=1
+pkgdesc="A window switcher, application launcher and dmenu replacement (with native Wayland support)"
+url="https://davatorium.github.io/rofi"
+arch=('aarch64')
+license=('MIT')
+depends=('bash' 'cairo' 'gdk-pixbuf2' 'glib2' 'glibc' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11'
+         'pango' 'startup-notification' 'wayland' 'xcb-imdkit' 'xcb-util' 'xcb-util-cursor' 'xcb-util-keysyms' 'xcb-util-wm')
+makedepends=('check' 'git' 'meson' 'wayland-protocols')
+provides=('rofi-wayland')
+replaces=('rofi-wayland')
+source=("git+https://github.com/davatorium/rofi.git#tag=${pkgver}"
+        'git+https://github.com/sardemff7/libgwater.git'
+        'git+https://github.com/sardemff7/libnkutils.git')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+	cd "${pkgname}"
+	git submodule init
+	git config submodule.subprojects/libgwater.url "${srcdir}/libgwater"
+	git config submodule.subprojects/libnkutils.url "${srcdir}/libnkutils"
+	git -c protocol.file.allow=always submodule update
+}
+
+build() {
+	arch-meson "${pkgname}" build
+	meson compile -C build
+}
+
+package() {
+	meson install -C build --destdir "${pkgdir}"
+	cd "${pkgname}"
+	install -Dm 644 COPYING "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

@@ -99,6 +99,10 @@ on:
         type: boolean
         default: true
         description: Build virtual keyboards (wvkbd, oskb, plasma-keyboard-full-layout)
+      build_rofi:
+        type: boolean
+        default: true
+        description: Build rofi (native Wayland launcher)
 
 jobs:
   resolve-packages:
@@ -136,6 +140,7 @@ jobs:
               --argjson iio_sensor_proxy "${{ inputs.build_iio_sensor_proxy }}" \
               --argjson stylus_popup "${{ inputs.build_stylus_popup }}" \
               --argjson virtual_keyboards "${{ inputs.build_virtual_keyboards }}" \
+              --argjson rofi "${{ inputs.build_rofi }}" \
               '[ if $upower_nncc then "upower-nncc" else empty end,
                  if $bootc then "bootc" else empty end,
                  if $code then "code" else empty end,
@@ -159,9 +164,10 @@ jobs:
                  if $nabu_boot_tools then "nabu-boot-tools", "nabu-kclean" else empty end,
                  if $iio_sensor_proxy then "iio-sensor-proxy" else empty end,
                  if $stylus_popup then "stylus-popup" else empty end,
-                 if $virtual_keyboards then "wvkbd", "oskb", "plasma-keyboard-full-layout" else empty end ]' > matrix.json
+                 if $virtual_keyboards then "wvkbd", "oskb", "plasma-keyboard-full-layout" else empty end,
+                 if $rofi then "rofi" else empty end ]' > matrix.json
           else
-            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","nabu-backup","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","wlogout","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout","wvkbd","oskb"]' > matrix.json
+            echo '["upower-nncc","bootc","code","widevine","linux-nabu-73","nabu-pmac","nabu-tablet-mode","google-chrome","hexagonrpcd","iris-vaapi","evdi-dkms","displaylink","system-monitor","qrtr","rmtfs","tqftpserv","brave-bin","alsa-ucm-conf-xiaomi-nabu","linux-firmware-xiaomi-nabu","nabu-backup","nabu-autobrightness","camera-studio","nabu-torch","sddm-nabu","wlogout","ffmpeg-iris","mpv-iris","vlc-nabu","nabu-boot-tools","nabu-kclean","iio-sensor-proxy","stylus-popup","plasma-keyboard-full-layout","wvkbd","oskb","rofi"]' > matrix.json
           fi
           pkg=$(cat matrix.json)
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
@@ -217,7 +223,7 @@ jobs:
             nabu-pmac)
               sig="$pkg-$pkgver-$pkgrel"
               ;;
-            nabu-backup|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|wlogout|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy|wvkbd|oskb|plasma-keyboard-full-layout)
+            nabu-backup|nabu-autobrightness|nabu-tablet-mode|linux-firmware-xiaomi-nabu|nabu-torch|sddm-nabu|wlogout|ffmpeg-iris|mpv-iris|nabu-boot-tools|nabu-kclean|iio-sensor-proxy|wvkbd|oskb|plasma-keyboard-full-layout|rofi)
               shasum=$(find "packages/$pkg" -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}' | cut -c1-12)
               sig="$pkg-$pkgver-$pkgrel-$shasum"
               ;;

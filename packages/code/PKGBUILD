@@ -2,7 +2,7 @@
 
 pkgname=code
 pkgver=1.137.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Visual Studio Code - Open Source Code Editor (ARM64)"
 arch=('aarch64')
 url="https://code.visualstudio.com"
@@ -34,6 +34,9 @@ package() {
   mkdir -p "$pkgdir/opt/visual-studio-code"
   cp -r "$srcdir/VSCode-linux-arm64"/. "$pkgdir/opt/visual-studio-code/"
   
+  # Auto-detect Wayland and support ~/.config/code-flags.conf
+  sed -i 's|ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" "$@"|XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"\nUSER_FLAGS=""\nif [ -f "$XDG_CONFIG_HOME/code-flags.conf" ]; then\n\tUSER_FLAGS="$(sed '\''s/#.*//'\'' "$XDG_CONFIG_HOME/code-flags.conf" \| tr '\''\\n'\'' '\'' '\'')" \nfi\nWAYLAND_FLAGS=""\nif [ -n "$WAYLAND_DISPLAY" ] \|\| [ "$XDG_SESSION_TYPE" = "wayland" ]; then\n\tcase " $@ $USER_FLAGS " in\n\t\t*"--ozone-platform="*) ;;\n\t\t*) WAYLAND_FLAGS="--ozone-platform=wayland" ;;\n\tesac\nfi\nELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" $WAYLAND_FLAGS $USER_FLAGS "$@"|' "$pkgdir/opt/visual-studio-code/bin/code"
+
   install -dm755 "$pkgdir/usr/bin"
 
   ln -sf "/opt/visual-studio-code/bin/code" "$pkgdir/usr/bin/code"
