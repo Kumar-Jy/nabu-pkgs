@@ -41,7 +41,7 @@ index 7c65e74..92efcf8 100644
  static bool readState(int fd, StylusState *out)
  {
      Idtp9418Event evt;
-@@ -57,43 +79,88 @@ static bool readState(int fd, StylusState *out)
+@@ -57,43 +79,102 @@ static bool readState(int fd, StylusState *out)
          isMacNonZero(evt.pen_mac),
          evt.state == static_cast<uint8_t>(StylusPhase::Attaching)
              ? StylusPhase::Attaching
@@ -141,10 +141,24 @@ index 7c65e74..92efcf8 100644
 +            }
 +            if (pfds[1].revents & (POLLERR | POLLHUP | POLLNVAL))
 +                break;  // device vanished; reconnect
++            bool gotAny = false;
 +            if (pfds[1].revents & POLLIN) {
 +                StylusState cur;
-+                while (readState(fd, &cur))
++                while (readState(fd, &cur)) {
 +                    emit stateChanged(cur);
++                    gotAny = true;
++                }
++            }
++            if (!gotAny) {
++                // The kernel driver for /dev/idtp9418 lacks a .poll implementation,
++                // causing poll() to return POLLIN even when the kfifo is empty.
++                // Wait on m_wakeFd for 500ms so stop() is responsive while avoiding a 100% CPU spin.
++                struct pollfd wf = { m_wakeFd, POLLIN, 0 };
++                if (::poll(&wf, 1, 500) > 0) {
++                    uint64_t drained = 0;
++                    while (::read(m_wakeFd, &drained, sizeof drained) > 0) {}
++                    break;
++                }
 +            }
 +        }
 +        ::close(fd);

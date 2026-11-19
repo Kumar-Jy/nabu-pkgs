@@ -1,0 +1,22 @@
+diff --git a/src/waylandlayersurface.cpp b/src/waylandlayersurface.cpp
+index af77c79..470c44d 100644
+--- a/src/waylandlayersurface.cpp
++++ b/src/waylandlayersurface.cpp
+@@ -267,14 +267,15 @@ void WaylandLayerSurface::hide()
+ 
+     const int physW  = m_width * m_scale;
+     const int stride = physW * 4;
+-    if (!ensureBuffer(physW, 1, stride))
++    const int physH = std::max(1, m_scale);
++    if (!ensureBuffer(physW, physH, stride))
+         return;
+ 
+     zwlr_layer_surface_v1_set_size(m_layerSurf, m_width, 1);
+     m_committedHeight = 1;
+ 
+     wl_surface_attach(m_surface, m_buffer, 0, 0);
+-    wl_surface_damage_buffer(m_surface, 0, 0, physW, 1);
++    wl_surface_damage_buffer(m_surface, 0, 0, physW, physH);
+     wl_surface_commit(m_surface);
+     flushDisplay(m_display);
+ }

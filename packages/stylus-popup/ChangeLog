@@ -1,3 +1,8 @@
+2026-11-19 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 0.1-3:
+	- Fix Wayland layer-surface protocol error on fractional scale (buffer dimension multiple of scale)
+	- Fix StylusMonitor 100% CPU busy spin when /dev/idtp9418 returns POLLIN with empty kfifo
+
 2026-11-18 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 0.1-2:
 	- Add 60-stylus-idtp9418.rules udev rule for /dev/idtp9418
