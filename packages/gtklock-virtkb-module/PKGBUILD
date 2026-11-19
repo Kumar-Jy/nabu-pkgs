@@ -1,0 +1,31 @@
+# Maintainer: Kumar-Jy
+# Author: ProgAndy <progandy@users.noreply.github.com>
+
+pkgname=gtklock-virtkb-module
+pkgver=0.1
+pkgrel=1
+pkgdesc='On-screen virtual keyboard module for gtklock on tablets'
+arch=('aarch64')
+url='https://github.com/progandy/gtklock-virtkb-module'
+license=('GPL3')
+depends=('gtklock' 'gtk3')
+makedepends=('make' 'gcc' 'git' 'pkgconf')
+source=("git+https://github.com/progandy/gtklock-virtkb-module.git"
+        "0001-gtklock-5-compatibility.patch")
+sha256sums=('SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$pkgname"
+  patch -Np1 -i "$srcdir/0001-gtklock-5-compatibility.patch"
+}
+
+build() {
+  cd "$pkgname"
+  make PREFIX=/usr
+}
+
+package() {
+  cd "$pkgname"
+  make PREFIX=/usr DESTDIR="$pkgdir" install
+}

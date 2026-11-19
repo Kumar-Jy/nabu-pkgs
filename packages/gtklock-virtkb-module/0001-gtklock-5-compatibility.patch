@@ -1,0 +1,37 @@
+diff --git a/gtklock-module.h b/gtklock-module.h
+index 4c513b3..13f1387 100644
+--- a/gtklock-module.h
++++ b/gtklock-module.h
+@@ -1,5 +1,5 @@
+-// gtklock-playerctl-module
+-// Copyright (c) 2024 Jovan Lanik
++// gtklock-powerbar-module
++// Copyright (c) 2026 Jovan Lanik
+ 
+ // Module header
+ 
+@@ -56,8 +56,11 @@ struct GtkLock {
+ 	char *layout_path;
+ 	char *lock_command;
+ 	char *unlock_command;
++	char *idle_command;
+ 
+ 	GArray *modules;
++
++	gboolean test_mode;
+ };
+ 
+ const gchar *g_module_check_init(GModule *m);
+diff --git a/source.c b/source.c
+index a1b38ee..20e5284 100644
+--- a/source.c
++++ b/source.c
+@@ -15,7 +15,7 @@ extern void config_load(const char *path, const char *group,
+ 
+ // Module information
+ const gchar module_name[] = "virtual_keyboard";
+-const guint module_major_version = 4;
++const guint module_major_version = 5;
+ const guint module_minor_version = 0;
+ 
+ static int self_id; // Module's unique ID
