@@ -1,7 +1,3 @@
-2026-11-20 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
-	* 1.0.0-13:
-	- Pogo Keyboard: Enable the keyboard cover by default; use nabu-keyboard-toggle off for folio-only use
-
 2026-09-30 Kumar <kumar@nabu>
 	* 1.0.0-11:
 	- CPU Optimization: Cache shell PID to eliminate 200ms /proc scan loop (idle CPU dropped from ~10% to 0.0%)
