@@ -89,6 +89,7 @@ build() {
     -D v4l2=enabled
     -D tracing=disabled
     -D test=false
+    -D werror=false
     -D rpi-awb-nn=disabled
   )
 
