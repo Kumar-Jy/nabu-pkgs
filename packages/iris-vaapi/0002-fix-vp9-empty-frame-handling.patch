@@ -1,0 +1,22 @@
+--- a/src/decode.c
++++ b/src/decode.c
+@@ -1588,6 +1588,11 @@ assign_frame(struct vpu_decode_ctx *ctx, const struct vpu_decoded_frame *frame)
+ 	if (frame->bytesused && ctx->stats_enabled)
+ 		ctx->stats_capture_frames++;
+ 
++	if (!frame->bytesused) {
++		vpu_platform_session_requeue_index(ctx->session, frame->index);
++		return 0;
++	}
++
+ 	if (ctx->codec == VPU_CODEC_HEVC &&
+ 	    (ctx->platform_quirks & VPU_PLATFORM_QUIRK_HEVC_CAPTURE_FIFO)) {
+ 		if (hevc_pending_take(ctx, &id, &generation)) {
+@@ -1598,7 +1603,7 @@ assign_frame(struct vpu_decode_ctx *ctx, const struct vpu_decoded_frame *frame)
+ 		if (frame->timestamp < 1000000000ULL) {
+ 			vpu_platform_session_requeue_index(ctx->session, frame->index);
+-			return -EIO;
++			return 0;
+ 		}
+ 		frame_seq = (frame->timestamp / 1000000000ULL) - 1000;
+ 		slot = frame_seq % ARRAY_SIZE(ctx->target_ring);
