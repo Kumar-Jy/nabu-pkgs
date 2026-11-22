@@ -1,0 +1,13 @@
+Package: camera-studio
+Version: 1.0.6-3
+Architecture: all
+Maintainer: Kumar-Jy <https://github.com/Kumar-Jy>
+Section: utils
+Priority: optional
+Provides: pro-camera, cam-studio
+Depends: python3, python3-gi, python3-pil, gir1.2-adw-1, gir1.2-gtk-4.0, gstreamer1.0-tools, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-ugly, libcamera-tools, v4l-utils, iio-sensor-proxy, hicolor-icon-theme
+Description: Camera Studio for Xiaomi Pad 5 (nabu)
+ GTK4 / Libadwaita camera application featuring real-time tablet orientation
+ tracking, VCM autofocus control (tap-to-focus, slider, presets), manual
+ exposure and gain adjustment, color presets, photo & video recording, and
+ built-in photo gallery.

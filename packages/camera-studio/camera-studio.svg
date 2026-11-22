@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2c313a"/>
+      <stop offset="100%" stop-color="#181a1f"/>
+    </linearGradient>
+    <linearGradient id="lensRing" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4c566a"/>
+      <stop offset="50%" stop-color="#2e3440"/>
+      <stop offset="100%" stop-color="#1e222b"/>
+    </linearGradient>
+    <radialGradient id="glassGrad" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
+      <stop offset="40%" stop-color="#0284c7" stop-opacity="0.6"/>
+      <stop offset="80%" stop-color="#0f172a" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="100%" stop-color="#e11d48"/>
+    </linearGradient>
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Body -->
+  <rect x="14" y="24" width="100" height="84" rx="20" fill="url(#bodyGrad)" filter="url(#dropShadow)"/>
+  
+  <!-- Top viewfinder notch -->
+  <path d="M46 24 L52 16 L76 16 L82 24 Z" fill="#242831"/>
+  <circle cx="58" cy="20" r="2.5" fill="#f43f5e"/>
+
+  <!-- Grip texture / accent stripe -->
+  <rect x="14" y="44" width="8" height="44" rx="4" fill="#353b45"/>
+  <circle cx="100" cy="38" r="4" fill="url(#accentGrad)"/>
+
+  <!-- Lens Outer Bezel -->
+  <circle cx="64" cy="66" r="34" fill="url(#lensRing)" filter="url(#dropShadow)"/>
+  <circle cx="64" cy="66" r="31" fill="#14171d"/>
+  <circle cx="64" cy="66" r="28" fill="#1f232b" stroke="#3b4252" stroke-width="1.5"/>
+
+  <!-- Aperture Blades / Glass -->
+  <circle cx="64" cy="66" r="22" fill="url(#glassGrad)"/>
+  
+  <!-- Lens reflection glare -->
+  <ellipse cx="56" cy="56" rx="8" ry="4" transform="rotate(-35 56 56)" fill="white" opacity="0.35"/>
+  <ellipse cx="72" cy="76" rx="4" ry="2" transform="rotate(-35 72 76)" fill="#38bdf8" opacity="0.4"/>
+
+  <!-- Studio Sensor Telemetry Reticle -->
+  <circle cx="64" cy="66" r="14" fill="none" stroke="#38bdf8" stroke-width="1" stroke-dasharray="2 3" opacity="0.7"/>
+  <circle cx="64" cy="66" r="3" fill="#f43f5e"/>
+</svg>

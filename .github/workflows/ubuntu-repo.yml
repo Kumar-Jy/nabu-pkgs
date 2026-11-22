@@ -136,7 +136,7 @@ jobs:
           - **Audio:** \`xiaomi-nabu-alsa\` (ALSA UCM2 quad-speaker profiles & mic capture)
           - **Firmware:** \`xiaomi-nabu-firmware\` (DSP, sensor, Ath10k & Cirrus calibration blobs)
           - **Sensors & Daemons:** \`hexagonrpcd\`, \`iio-sensor-proxy\`, \`libssc\`
-          - **Hardware Controls:** \`nabu-pmac\`, \`nabu-tablet-mode\`, \`nabu-torch\`, \`nabu-autobrightness\`
+          - **Hardware Controls & Camera:** \`camera-studio\` (GTK4/Libadwaita camera studio with real-time orientation tracking and VCM autofocus), \`nabu-pmac\`, \`nabu-tablet-mode\`, \`nabu-torch\`, \`nabu-autobrightness\`
           - **System Tools:** \`system-monitor\` (GTK4/Libadwaita real-time hardware telemetry and GPU diagnostics)
           EOF
 
