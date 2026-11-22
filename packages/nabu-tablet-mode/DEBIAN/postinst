@@ -3,5 +3,6 @@ set -e
 if [ "$1" = "configure" ]; then
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable --now nabu-tablet-mode.service >/dev/null 2>&1 || true
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/xiaomi-keyboard.conf >/dev/null 2>&1 || true
 fi
 exit 0

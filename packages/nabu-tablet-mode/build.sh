@@ -33,6 +33,12 @@ chmod 755 "$PKG_DIR/usr/local/libexec/nabu-tablet-mode"
 cp "$SCRIPT_DIR/nabu-tablet-toggle" "$PKG_DIR/usr/bin/nabu-tablet-toggle"
 chmod 755 "$PKG_DIR/usr/bin/nabu-tablet-toggle"
 
+cp "$SCRIPT_DIR/nabu-keyboard-toggle" "$PKG_DIR/usr/bin/nabu-keyboard-toggle"
+chmod 755 "$PKG_DIR/usr/bin/nabu-keyboard-toggle"
+
+mkdir -p "$PKG_DIR/usr/lib/tmpfiles.d"
+cp "$SCRIPT_DIR/xiaomi-keyboard.conf" "$PKG_DIR/usr/lib/tmpfiles.d/xiaomi-keyboard.conf"
+
 cp "$SCRIPT_DIR/nabu-tablet-mode.conf" "$PKG_DIR/etc/nabu-tablet-mode.conf"
 cp "$SCRIPT_DIR/nabu-tablet-toggle.desktop" "$PKG_DIR/usr/share/applications/nabu-tablet-toggle.desktop"
 cp "$SCRIPT_DIR/nabu-tablet-mode.service" "$PKG_DIR/lib/systemd/system/nabu-tablet-mode.service"
