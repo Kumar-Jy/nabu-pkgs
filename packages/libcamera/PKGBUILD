@@ -29,6 +29,7 @@ makedepends=(
   libdrm
   libgcc
   libjpeg-turbo
+  libpisp
   libstdc++
   libtiff
   libyaml
@@ -74,6 +75,8 @@ _pick() {
 
 prepare() {
   cd $pkgbase
+  git checkout -f
+  git clean -fd
   patch -Np1 < ../$pkgbase-fix-python3.14-macro-redefinition.patch
   patch -Np1 < ../nabu-camera-rotation.patch
 
@@ -85,7 +88,8 @@ build() {
   local meson_options=(
     -D v4l2=enabled
     -D tracing=disabled
-    -D test=true
+    -D test=false
+    -D rpi-awb-nn=disabled
   )
 
   arch-meson $pkgbase build "${meson_options[@]}"
@@ -121,6 +125,7 @@ package_libcamera() {
     libelf
     libgcc
     libglvnd
+    libpisp
     libstdc++
     libunwind
     libyaml

@@ -285,7 +285,7 @@ jobs:
                 pacman-key --init
                 pacman-key --populate archlinuxarm
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc systemd-ukify libelf
+                pacman -S --noconfirm base-devel git bc python3 xmlto docbook-xsl kmod inetutils dtc systemd-ukify libelf meson
                 sed -i 's/^COMPRESSXZ=.*/COMPRESSXZ=(xz -c -z -T0 -)/' /etc/makepkg.conf
                 sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -z -q -T0 -)/' /etc/makepkg.conf
                 sed -i 's/^#*MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' /etc/makepkg.conf
