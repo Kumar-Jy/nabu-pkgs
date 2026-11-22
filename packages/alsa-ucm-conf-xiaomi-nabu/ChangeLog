@@ -1,0 +1,6 @@
+2026-11-23 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 1.0-8:
+	- Audio: restore standard power-of-two PipeWire quantum (1024) to eliminate notification crackling and buffer fragmentation in libcanberra and desktop event sounds.
+	- Audio: retain 99-nabu-speaker-protection.conf (65 Hz biquad high-pass filter) to protect quad CS35L41 micro-speakers from excessive excursion without adding crackle under 1024 quantum.
+	- Audio: retain 50-nabu-alsa.conf with aligned 1024 period-size, 2048 headroom, and session.suspend-timeout-seconds = 0 to prevent ALSA suspend pops.
+	- Audio: generalize 50-chrome.conf into 50-browsers.conf, granting a 42.7 ms buffer (node.latency = 2048/48000) across Chrome, Chromium, Brave, and Firefox to prevent spa.audioconvert buffer exhaustion during 4K video decoding.
