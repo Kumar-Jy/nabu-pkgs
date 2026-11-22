@@ -293,11 +293,7 @@ jobs:
                 echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
                 chown -R builder:builder /work
                 su builder -c 'cd /work && (makepkg -s --noconfirm --skipchecksums || makepkg -d --noconfirm --skipchecksums)' || exit 1
-                for f in /work/*.pkg.tar.*; do
-                  [ -f "$f" ] || continue
-                  clean=$(basename "$f" | tr ':' '.')
-                  cp "$f" "/output/$clean"
-                done
+                cp /work/*.pkg.tar.* /output/
               "
             echo "::endgroup::"
             ls -la pkg-cache/
