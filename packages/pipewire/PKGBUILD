@@ -93,12 +93,14 @@ source=(
   "git+https://gitlab.freedesktop.org/pipewire/pipewire.git#tag=$pkgver"
   pipewire-sysusers.conf
   nabu-camera-rotation.patch
+  99-libcamera.conf
   ChangeLog
 )
 b2sums=('2359991befdbc6cf5a2e5ad31cde4a3f1904675fe455b9ab719754549e994ba0538b0f070b9954a4d64619067101eff9ed9e03ea3d5dd4674b3d21e9991da5b2'
         'ea19c2cd60b7b9773b48b2a044c764fbec260ec356d4a0f66a31737015dad5f1509145bf97094988fc2ea55282e98d52df4448a80e46b9e3c2fef57345b87846'
         '5e98559a5ad44eeed545d07039a7af9541a0e3a8380f845bba5073a71fd1ec6cb979f74eb1800b4bf0bb61a1bab65e99a21e79499fc49f98c1f3654f6e64c7cc'
-        '737b33abd9b833847fd7a3c4d78548db4c4ae98e97c530287858877f850a0236fe98f51708298e9aec6d0d04609dc4cf462e54c2acd4ec9fdd05b20fe2685bd3')
+        'ed378726ace7449e512c11ded47679eec781c69b2c1ac6750789cd4afc557b7c1b06242bba64feec9cd3e7ef437cf90db1f8d86a946ce09ffe88491d9c00a54a'
+        'd5da066c7c24ccf9eedece9bcc7fb20765b683190059bc15915761a2b1792b2d3227e4fd04175181625746aaa0a880b98b48a78a2dbe86a63d40f74235851080')
 
 prepare() {
   cd pipewire
@@ -466,6 +468,7 @@ package_pipewire-libcamera() {
   pkgdesc+=" - Libcamera support"
   depends=(
     "pipewire=$epoch:$pkgver-$pkgrel"
+    wireplumber
     glibc
     glib2 libgio-2.0.so
     gtk3 libgdk-3.so
@@ -477,6 +480,7 @@ package_pipewire-libcamera() {
 
   mv libcamera/* "$pkgdir"
 
+  install -Dm644 99-libcamera.conf -t "$pkgdir/usr/share/wireplumber/wireplumber.conf.d"
   install -Dm644 pipewire/COPYING -t "$pkgdir/usr/share/licenses/$pkgname"
 }
 

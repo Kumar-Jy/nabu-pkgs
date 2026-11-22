@@ -2,4 +2,5 @@
 	* 1:1.6.11-3:
 	- Camera: add dynamic OS-level rotation to the PipeWire libcamera source using screen geometry and iio-sensor-proxy, following Camera Studio's nabu mapping.
 	- Camera: refresh VideoTransform metadata every frame so portrait/landscape changes apply to third-party camera apps without a separate rotation utility.
+	- Camera: enable WirePlumber's libcamera monitor and drop unused v4l2 monitor so PipeWire/portal camera discovery works across desktop apps.
 	- Packaging: patch upstream 1:1.6.11-2 for aarch64 and add glib2/gtk3/iio-sensor-proxy runtime dependencies.
