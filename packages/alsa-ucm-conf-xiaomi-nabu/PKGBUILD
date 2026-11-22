@@ -4,20 +4,26 @@
 
 pkgname=alsa-ucm-conf-xiaomi-nabu
 pkgver=1.0
-pkgrel=5
-pkgdesc="ALSA UCM profiles and PipeWire container/Waydroid audio config for Xiaomi Pad 5 (nabu)"
+pkgrel=6
+pkgdesc="ALSA UCM profiles, RTKit tuning, and PipeWire/WirePlumber audio config for Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/linux-msm/alsa-ucm-conf"
 license=('custom:ucm')
-depends=('alsa-ucm-conf')
+depends=('alsa-ucm-conf' 'rtkit')
 source=(
   "HiFi.conf"
   "sm8150.conf"
   "99-nabu-speaker-protection.conf"
   "10-quantum.conf"
   "50-waydroid.conf"
+  "50-nabu-alsa.conf"
+  "20-pipewire.conf"
+  "rtkit-override.conf"
 )
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -29,4 +35,7 @@ package() {
   install -Dm644 99-nabu-speaker-protection.conf "$pkgdir/etc/pipewire/pipewire.conf.d/99-nabu-speaker-protection.conf"
   install -Dm644 10-quantum.conf "$pkgdir/etc/pipewire/pipewire.conf.d/10-quantum.conf"
   install -Dm644 50-waydroid.conf "$pkgdir/etc/pipewire/pipewire-pulse.conf.d/50-waydroid.conf"
+  install -Dm644 50-nabu-alsa.conf "$pkgdir/etc/wireplumber/wireplumber.conf.d/50-nabu-alsa.conf"
+  install -Dm644 20-pipewire.conf "$pkgdir/etc/security/limits.d/20-pipewire.conf"
+  install -Dm644 rtkit-override.conf "$pkgdir/etc/systemd/system/rtkit-daemon.service.d/override.conf"
 }
