@@ -58,6 +58,9 @@ package() {
     "${pkgdir}/usr/share/applications/google-chrome.desktop" \
     "${pkgdir}/usr/share/applications/com.google.Chrome.desktop"
 
+  sed -i 's|exec -a "\$0" "\$HERE/chrome" "\$@"|exec -a "\$0" "\$HERE/chrome" --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport,WebRtcPipeWireCamera "\$@"|' \
+    "${pkgdir}/opt/google/chrome/google-chrome"
+
   # libva cannot auto-detect a DRM driver on Qualcomm SoCs, so select the iris
   # VA-API driver explicitly for all user processes (systemd environment.d).
   install -Dm644 /dev/stdin "${pkgdir}/usr/lib/environment.d/google-chrome-iris.conf" <<'EOF'
