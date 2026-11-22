@@ -2,7 +2,7 @@
 
 pkgname=google-chrome
 pkgver=153.0.8010.36
-pkgrel=2
+pkgrel=3
 pkgdesc="The popular web browser by Google (Stable Channel)"
 arch=('aarch64')
 url="https://www.google.com/chrome"
@@ -15,6 +15,7 @@ depends=(
 optdepends=(
   'gnome-keyring: for storing passwords in GNOME keyring'
   'pipewire: WebRTC desktop sharing under Wayland'
+  'pipewire-libcamera: camera access via libcamera'
 )
 provides=('google-chrome-stable')
 conflicts=('google-chrome-stable')
@@ -51,8 +52,9 @@ package() {
 
   # Prefer Wayland (Ozone) and enable VA-API hardware video decode via the
   # Qualcomm SM8150 iris driver.  Without these the GPU process always falls
-  # back to the FFmpeg software decoder.
-  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport|' \
+  # back to the FFmpeg software decoder.  WebRtcPipeWireCamera is still hidden
+  # in Chrome 158, so enable it explicitly for libcamera camera access.
+  sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --ozone-platform-hint=auto --ignore-gpu-blocklist --enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,PlatformHEVCDecoderSupport,WebRtcPipeWireCamera|' \
     "${pkgdir}/usr/share/applications/google-chrome.desktop" \
     "${pkgdir}/usr/share/applications/com.google.Chrome.desktop"
 
