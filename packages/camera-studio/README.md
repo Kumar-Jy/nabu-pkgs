@@ -35,6 +35,7 @@ Standard Linux camera apps like GNOME Snapshot offer almost no manual controls�
   - **HD (16:9)**: 1280 × 720 (0.9 MP).
   - **4:3 Standard**: 2048 × 1536 (3.1 MP).
   - **1:1 Square**: 2160 × 2160 (ideal for avatars & social media).
+  - The live viewfinder is capped to 1280 × 960 for smoothness; saved photos keep using the full-resolution 2048 × 1536 capture stream and the selected preset.
 - **Output Formats**:
   - **JPEG (.jpg)**: With customizable compression quality slider (50% to 100%).
   - **PNG (.png)**: Uncompressed lossless image quality.

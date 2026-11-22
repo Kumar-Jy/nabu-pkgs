@@ -228,7 +228,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     def __init__(self, app):
         super().__init__(application=app, title="Camera Studio")
-        self.set_default_size(960, 720)
+        self.set_default_size(640, 480)
 
         # Style & Dark theme
         style_mgr = Adw.StyleManager.get_default()
@@ -256,6 +256,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.record_timer_id = None
         self.current_video_path = None
         self.tee = None
+        self.capture_sink = None
 
         # Camera state
         self.cameras = discover_cameras()
@@ -1014,7 +1015,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     def build_customization_drawer(self):
         card = Adw.PreferencesPage()
-        card.set_size_request(580, -1)
+        card.set_size_request(520, -1)
         card.add_css_class("customization-drawer-card")
 
         # Top Drawer Header
@@ -2371,6 +2372,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
             self.pipeline = None
+        self.capture_sink = None
 
         if not self.cameras:
             self.show_toast("No camera devices found!")
@@ -2406,7 +2408,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             f'videobalance name=bal brightness={self.brightness} contrast={self.contrast} saturation={self.saturation} hue={self.hue} ! '
             f'gamma name=gam gamma={self.gamma} ! '
             f'video/x-raw,format=RGB ! '
-            f'gtk4paintablesink name=sink'
+            f'tee name=t_rgb '
+            f't_rgb. ! queue name=q_preview leaky=downstream max-size-buffers=3 ! '
+            f'videoscale ! '
+            f'video/x-raw,width=1280,height=960 ! '
+            f'gtk4paintablesink name=sink '
+            f't_rgb. ! queue name=q_capture leaky=downstream max-size-buffers=3 ! '
+            f'video/x-raw,format=RGB ! '
+            f'appsink name=capsink sync=false max-buffers=1 drop=true'
         )
 
         try:
@@ -2417,6 +2426,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             self.flip_elem = self.pipeline.get_by_name('flip')
             self.tee = self.pipeline.get_by_name('t')
             self.paintable_sink = self.pipeline.get_by_name('sink')
+            self.capture_sink = self.pipeline.get_by_name('capsink')
 
             self.update_video_direction()
 
@@ -2520,14 +2530,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             self._grab_and_save_capture()
 
     def _grab_and_save_capture(self):
-        # 1. Pull frame from paintable sink
-        if not self.paintable_sink:
-            self.show_toast("Error: Viewfinder sink not active")
+        # 1. Pull full-resolution frame from the processed capture branch
+        if not self.capture_sink:
+            self.show_toast("Error: Capture sink not active")
             return
 
-        sample = self.paintable_sink.props.last_sample
+        sample = self.capture_sink.emit('try-pull-sample', 1000000000)
         if not sample:
-            self.show_toast("Error: Unable to capture frame from viewfinder")
+            self.show_toast("Error: Unable to capture frame from camera")
             return
 
         caps = sample.get_caps()
@@ -3022,6 +3032,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
             self.pipeline = None
+        self.capture_sink = None
         return False
 
 
@@ -3031,7 +3042,7 @@ class GalleryInspectorDialog(Adw.Window):
 
     def __init__(self, parent_win, photo_list):
         super().__init__(title="Photo Inspector & Studio")
-        self.set_default_size(880, 620)
+        self.set_default_size(640, 480)
         self.set_modal(True)
         self.set_transient_for(parent_win)
 
