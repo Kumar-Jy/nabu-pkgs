@@ -1,0 +1,309 @@
+diff --git a/src/gstreamer/gstlibcamerasrc.cpp b/src/gstreamer/gstlibcamerasrc.cpp
+index 9061f91..f9fef2c 100644
+--- a/src/gstreamer/gstlibcamerasrc.cpp
++++ b/src/gstreamer/gstlibcamerasrc.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include <atomic>
+ #include <queue>
++#include <string>
+ #include <tuple>
+ #include <utility>
+ #include <vector>
+@@ -30,6 +31,7 @@
+ #include <libcamera/camera.h>
+ #include <libcamera/camera_manager.h>
+ #include <libcamera/control_ids.h>
++#include <libcamera/property_ids.h>
+ 
+ #include <gst/base/base.h>
+ 
+@@ -38,6 +40,7 @@
+ #include "gstlibcameraallocator.h"
+ #include "gstlibcamerapad.h"
+ #include "gstlibcamerapool.h"
++#include "nabu-orientation.h"
+ 
+ using namespace libcamera;
+ 
+@@ -128,6 +131,7 @@ struct GstLibcameraSrcState {
+ 	ControlList initControls_;
+ 	guint group_id_;
+ 	GstCameraControls controls_;
++	std::string lastOrientation_;
+ 
+ 	int queueRequest();
+ 	void requestCompleted(Request *request);
+@@ -354,6 +358,21 @@ int GstLibcameraSrcState::processRequest()
+ 	GstFlowReturn ret = GST_FLOW_OK;
+ 	gst_flow_combiner_reset(src_->flow_combiner);
+ 
++	/* Publish the effective nabu orientation so AUTO rotation elements
++	 * and apps that read GST_TAG_IMAGE_ORIENTATION follow device rotation. */
++	auto location = cam_->properties().get(properties::Location);
++	const bool front = location && location.value() == properties::CameraLocationFront;
++	const char *orientation = nabu::imageOrientationTag(front, front);
++	if (lastOrientation_ != orientation) {
++		GstTagList *tags = gst_tag_list_new(GST_TAG_IMAGE_ORIENTATION,
++						    orientation, nullptr);
++		for (GstPad *srcpad : srcpads_)
++			gst_pad_push_event(srcpad, gst_event_new_tag(gst_tag_list_ref(tags)));
++		gst_tag_list_unref(tags);
++		lastOrientation_ = orientation;
++		GST_DEBUG_OBJECT(src_, "nabu orientation tag: %s", orientation);
++	}
++
+ 	for (gsize i = 0; i < srcpads_.size(); i++) {
+ 		GstPad *srcpad = srcpads_[i];
+ 		Stream *stream = gst_libcamera_pad_get_stream(srcpad);
+diff --git a/src/gstreamer/meson.build b/src/gstreamer/meson.build
+index 602f978..3c58a50 100644
+--- a/src/gstreamer/meson.build
++++ b/src/gstreamer/meson.build
+@@ -7,8 +7,10 @@ gstvideo_dep = dependency('gstreamer-video-1.0', version : gst_dep_version,
+                           required : get_option('gstreamer'))
+ gstallocator_dep = dependency('gstreamer-allocators-1.0', version : gst_dep_version,
+                               required : get_option('gstreamer'))
++gio_dep = dependency('gio-2.0', required : get_option('gstreamer'))
++gdk_dep = dependency('gdk-3.0', required : get_option('gstreamer'))
+ 
+-if not glib_dep.found() or not gstvideo_dep.found() or not gstallocator_dep.found()
++if not glib_dep.found() or not gstvideo_dep.found() or not gstallocator_dep.found() or not gio_dep.found() or not gdk_dep.found()
+     gst_enabled = false
+     subdir_done()
+ endif
+@@ -23,6 +25,7 @@ libcamera_gst_sources = [
+     'gstlibcamerapool.cpp',
+     'gstlibcameraprovider.cpp',
+     'gstlibcamerasrc.cpp',
++    'nabu-orientation.cpp',
+ ]
+ 
+ # Generate gstreamer control properties
+@@ -60,7 +63,7 @@ endif
+ libcamera_gst = shared_library('gstlibcamera',
+     libcamera_gst_sources,
+     cpp_args : libcamera_gst_cpp_args,
+-    dependencies : [libcamera_public, gstvideo_dep, gstallocator_dep],
++    dependencies : [libcamera_public, gstvideo_dep, gstallocator_dep, gio_dep, gdk_dep],
+     install : true,
+     install_dir : '@0@/gstreamer-1.0'.format(get_option('libdir')),
+ )
+diff --git a/src/gstreamer/nabu-orientation.cpp b/src/gstreamer/nabu-orientation.cpp
+new file mode 100644
+index 0000000..f3c2eed
+--- /dev/null
++++ b/src/gstreamer/nabu-orientation.cpp
+@@ -0,0 +1,189 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Dynamic camera orientation for Xiaomi Pad 5 (nabu).
++ *
++ * Ported from Camera Studio's nabu rotation logic: screen geometry selects
++ * landscape/portrait, and iio-sensor-proxy distinguishes the inverted case.
++ */
++
++#include "nabu-orientation.h"
++
++#include <gdk/gdk.h>
++#include <gio/gio.h>
++
++#include <chrono>
++#include <mutex>
++#include <string>
++
++namespace nabu {
++
++namespace {
++
++std::mutex rotationLock;
++unsigned int cachedRotation = 0;
++std::chrono::steady_clock::time_point lastRotationUpdate;
++
++GDBusProxy *sensorProxy()
++{
++	static GDBusProxy *proxy = [] {
++		GError *error = nullptr;
++		GDBusProxy *p = g_dbus_proxy_new_for_bus_sync(
++			G_BUS_TYPE_SYSTEM,
++			G_DBUS_PROXY_FLAGS_NONE,
++			nullptr,
++			"net.hadess.SensorProxy",
++			"/net/hadess/SensorProxy",
++			"net.hadess.SensorProxy",
++			nullptr, &error);
++		if (!p) {
++			if (error)
++				g_error_free(error);
++			return static_cast<GDBusProxy *>(nullptr);
++		}
++
++		error = nullptr;
++		GVariant *result = g_dbus_proxy_call_sync(
++			p, "ClaimAccelerometer", nullptr,
++			G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
++		if (result)
++			g_variant_unref(result);
++		if (error)
++			g_error_free(error);
++
++		return p;
++	}();
++
++	return proxy;
++}
++
++std::string accelerometerOrientation()
++{
++	GDBusProxy *proxy = sensorProxy();
++	if (!proxy)
++		return "right-up";
++
++	GError *error = nullptr;
++	GVariant *result = g_dbus_proxy_call_sync(
++		proxy, "Get",
++		g_variant_new("(ss)", "net.hadess.SensorProxy",
++			      "AccelerometerOrientation"),
++		G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
++
++	std::string orientation;
++	if (result) {
++		GVariant *value = nullptr;
++		g_variant_get(result, "(v)", &value);
++		if (value) {
++			const gchar *str = g_variant_get_string(value, nullptr);
++			if (str)
++				orientation = str;
++			g_variant_unref(value);
++		}
++		g_variant_unref(result);
++	}
++	if (error)
++		g_error_free(error);
++
++	if (orientation.empty()) {
++		GVariant *cached =
++			g_dbus_proxy_get_cached_property(proxy, "AccelerometerOrientation");
++		if (cached) {
++			const gchar *str = g_variant_get_string(cached, nullptr);
++			if (str)
++				orientation = str;
++			g_variant_unref(cached);
++		}
++	}
++
++	if (orientation.empty())
++		return "right-up";
++
++	return orientation;
++}
++
++bool screenLandscape()
++{
++	static std::once_flag gdkOnce;
++	std::call_once(gdkOnce, [] {
++		int argc = 1;
++		static char arg0[] = "nabu-orientation";
++		static char argv0[] = "";
++		char *argv[] = { arg0, argv0, nullptr };
++		char **argvp = argv;
++		gdk_init_check(&argc, &argvp);
++	});
++
++	GdkDisplay *display = gdk_display_get_default();
++	if (!display)
++		return true;
++
++	GdkMonitor *monitor = gdk_display_get_primary_monitor(display);
++	if (!monitor && gdk_display_get_n_monitors(display) > 0)
++		monitor = gdk_display_get_monitor(display, 0);
++	if (!monitor)
++		return true;
++
++	GdkRectangle geometry;
++	gdk_monitor_get_geometry(monitor, &geometry);
++	return geometry.width > geometry.height;
++}
++
++unsigned int computeDeviceRotation()
++{
++	const std::string orientation = accelerometerOrientation();
++	const bool landscape = screenLandscape();
++
++	if (landscape)
++		return orientation == "left-up" ? 180u : 0u;
++
++	return orientation == "bottom-up" ? 270u : 90u;
++}
++
++} /* namespace */
++
++unsigned int deviceRotation()
++{
++	std::lock_guard<std::mutex> lock(rotationLock);
++	const auto now = std::chrono::steady_clock::now();
++	if (lastRotationUpdate.time_since_epoch().count() &&
++	    now - lastRotationUpdate < std::chrono::milliseconds(250))
++		return cachedRotation;
++
++	cachedRotation = computeDeviceRotation();
++	lastRotationUpdate = now;
++	return cachedRotation;
++}
++
++int videoDirection(bool front, bool mirrored)
++{
++	static const int rear[4] = { 0, 1, 2, 3 };
++	static const int rearMirrored[4] = { 4, 7, 5, 6 };
++	static const int frontMirrored[4] = { 5, 6, 4, 7 };
++	static const int frontNormal[4] = { 2, 1, 0, 3 };
++
++	const unsigned int rotation = deviceRotation();
++	const unsigned int index = rotation / 90 % 4;
++
++	if (front)
++		return mirrored ? frontMirrored[index] : frontNormal[index];
++
++	return mirrored ? rearMirrored[index] : rear[index];
++}
++
++const char *imageOrientationTag(bool front, bool mirrored)
++{
++	static const char *tags[8] = {
++		"rotate-0",
++		"rotate-90",
++		"rotate-180",
++		"rotate-270",
++		"flip-rotate-0",
++		"flip-rotate-180",
++		"flip-rotate-90",
++		"flip-rotate-270",
++	};
++
++	return tags[videoDirection(front, mirrored)];
++}
++
++} /* namespace nabu */
+diff --git a/src/gstreamer/nabu-orientation.h b/src/gstreamer/nabu-orientation.h
+new file mode 100644
+index 0000000..03e1a6e
+--- /dev/null
++++ b/src/gstreamer/nabu-orientation.h
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Dynamic camera orientation for Xiaomi Pad 5 (nabu).
++ *
++ * Follows Camera Studio: the display geometry selects the base orientation and
++ * iio-sensor-proxy only distinguishes the inverted case.
++ */
++
++#pragma once
++
++namespace nabu {
++
++unsigned int deviceRotation();
++int videoDirection(bool front, bool mirrored);
++const char *imageOrientationTag(bool front, bool mirrored);
++
++} /* namespace nabu */

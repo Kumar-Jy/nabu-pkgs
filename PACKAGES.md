@@ -39,6 +39,8 @@ sudo pacman -Syu
 | **`ffmpeg-iris`** | `sudo pacman -S ffmpeg-iris` | Self-contained FFmpeg build with Qualcomm Iris V4L2 mem2mem + DRM-Prime P010 (10-bit) hardware decoding. Isolated in `/usr/lib/iris-ffmpeg` with `ffmpeg-iris` and `ffprobe-iris` companion wrappers so it never conflicts with system FFmpeg. |
 | **`mpv-iris`** | `sudo pacman -S mpv-iris` | Dedicated MPV launcher configured for Qualcomm Iris hardware video decode via `--hwdec=v4l2m2m` and `--vo=dmabuf-wayland` using the `ffmpeg-iris` libraries. |
 | **`vlc-nabu`** | `sudo pacman -S vlc-nabu` | Hardware-accelerated VLC player launcher and dependencies for Xiaomi Pad 5. Configures VLC with Qualcomm Iris VA-API hardware decoding and installs a ready-to-use desktop application shortcut. |
+| **`pipewire-libcamera`** | `sudo pacman -S pipewire-libcamera` | Patched PipeWire libcamera source for Xiaomi Pad 5. Applies Camera Studio's device-rotation mapping at OS level through `VideoTransform` metadata so third-party camera apps follow portrait/landscape changes without a separate utility. Replaces the upstream package. |
+| **`gst-plugin-libcamera`** | `sudo pacman -S gst-plugin-libcamera` | Patched GStreamer libcamera plugin for Xiaomi Pad 5. Publishes `GST_TAG_IMAGE_ORIENTATION` from screen geometry and the accelerometer proxy so camera apps and `videoflip video-direction=auto` follow device rotation. Replaces the upstream package. |
 
 ---
 

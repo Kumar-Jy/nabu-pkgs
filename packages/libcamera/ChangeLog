@@ -1,0 +1,5 @@
+2026-11-22 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 0.7.2-5:
+	- Camera: add dynamic OS-level rotation tags to gstlibcamerasrc using screen geometry and iio-sensor-proxy, following Camera Studio's nabu mapping.
+	- Camera: emit GST_TAG_IMAGE_ORIENTATION when effective orientation changes so third-party GStreamer camera apps and AUTO videoflip follow device rotation.
+	- Packaging: patch upstream 0.7.2-4 for aarch64 and add glib2/gtk3/iio-sensor-proxy runtime dependencies to gst-plugin-libcamera.
