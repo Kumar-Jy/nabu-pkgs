@@ -1,3 +1,10 @@
+2026-11-23 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 1:1.6.11-5:
+	- Camera: drop GTK3 GDK calls from the PipeWire libcamera source thread and derive nabu orientation from iio-sensor-proxy.
+	- Camera: map Camera Studio rotation values to the SPA videotransform values expected by GNOME Camera in both landscape and portrait.
+	- Camera: keep api.libcamera.rotation as the static sensor mounting angle; dynamic rotation is now carried only by the per-frame videotransform.
+	- Packaging: drop the gtk3 runtime dependency from pipewire-libcamera.
+
 2026-11-22 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 1:1.6.11-3:
 	- Camera: add dynamic OS-level rotation to the PipeWire libcamera source using screen geometry and iio-sensor-proxy, following Camera Studio's nabu mapping.

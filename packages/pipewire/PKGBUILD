@@ -30,7 +30,7 @@ pkgname=(
   pulse-native-provider
 )
 pkgver=1.6.11
-pkgrel=4
+pkgrel=5
 epoch=1
 pkgdesc="Low-latency audio/video router and processor"
 url="https://pipewire.org"
@@ -49,7 +49,6 @@ makedepends=(
   glib2
   glib2-devel
   graphviz
-  gtk3
   gst-plugins-base
   jack2
   libcamera
@@ -96,9 +95,9 @@ source=(
 )
 b2sums=('2359991befdbc6cf5a2e5ad31cde4a3f1904675fe455b9ab719754549e994ba0538b0f070b9954a4d64619067101eff9ed9e03ea3d5dd4674b3d21e9991da5b2'
         'ea19c2cd60b7b9773b48b2a044c764fbec260ec356d4a0f66a31737015dad5f1509145bf97094988fc2ea55282e98d52df4448a80e46b9e3c2fef57345b87846'
-        '5e98559a5ad44eeed545d07039a7af9541a0e3a8380f845bba5073a71fd1ec6cb979f74eb1800b4bf0bb61a1bab65e99a21e79499fc49f98c1f3654f6e64c7cc'
+        'ffe9f2e1fabaaa15dd58c37c10455e4914e00ae7f75329c3006eed93c48e67764d07e32d58f606bd1f2980c555a487ad187211e3974251ebc049855019246dde'
         'ed378726ace7449e512c11ded47679eec781c69b2c1ac6750789cd4afc557b7c1b06242bba64feec9cd3e7ef437cf90db1f8d86a946ce09ffe88491d9c00a54a'
-        'd5da066c7c24ccf9eedece9bcc7fb20765b683190059bc15915761a2b1792b2d3227e4fd04175181625746aaa0a880b98b48a78a2dbe86a63d40f74235851080')
+        '8b65c902f1ecac66bfc594a92464530edf5478de4dff04b4f8f906c43a2c16104f6d424198675398e10551b0e80cf22cd741ce6b4c89c87b4c33d78f934dda8d')
 
 prepare() {
   cd pipewire
@@ -469,7 +468,6 @@ package_pipewire-libcamera() {
     wireplumber
     glibc
     glib2 libgio-2.0.so
-    gtk3 libgdk-3.so
     iio-sensor-proxy
     libcamera libcamera-base.so libcamera.so
     libgcc

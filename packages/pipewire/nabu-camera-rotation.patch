@@ -1,163 +1,3 @@
-diff --git a/spa/plugins/libcamera/libcamera-device.cpp b/spa/plugins/libcamera/libcamera-device.cpp
-index 0aeaed8..0e37ce1 100644
---- a/spa/plugins/libcamera/libcamera-device.cpp
-+++ b/spa/plugins/libcamera/libcamera-device.cpp
-@@ -7,6 +7,7 @@
- #include <cstddef>
- #include <span>
- #include <sstream>
-+#include <time.h>
- 
- #include <spa/support/plugin.h>
- #include <spa/support/log.h>
-@@ -23,6 +24,7 @@
- 
- #include "libcamera.h"
- #include "libcamera-manager.hpp"
-+#include "nabu-orientation.h"
- 
- #include <libcamera/base/span.h>
- 
-@@ -33,11 +35,16 @@ using namespace libcamera;
- 
- namespace {
- 
-+static void onRotationTimer(void *data, uint64_t expiration);
-+
- struct impl {
- 	struct spa_handle handle;
- 	struct spa_device device = {};
- 
- 	struct spa_log *log;
-+	struct spa_loop_utils *loopUtils;
-+	struct spa_source *rotationTimer;
-+	unsigned int rotation;
- 
- 	std::string device_id;
- 
-@@ -46,10 +53,11 @@ struct impl {
- 	std::shared_ptr<CameraManager> manager;
- 	std::shared_ptr<Camera> camera;
- 
--	impl(spa_log *log,
-+	impl(spa_log *log, spa_loop_utils *loopUtils,
- 	     std::shared_ptr<CameraManager> manager,
- 	     std::shared_ptr<Camera> camera,
- 	     std::string device_id);
-+	~impl();
- };
- 
- std::span<const int64_t> cameraDevice(const Camera& camera)
-@@ -81,22 +89,10 @@ const char *cameraLoc(const Camera& camera)
- 	return nullptr;
- }
- 
--const char *cameraRot(const Camera& camera)
-+std::string cameraRot([[maybe_unused]] const Camera& camera)
- {
--	if (auto rotation = camera.properties().get(properties::Rotation)) {
--		switch (rotation.value()) {
--		case 90:
--			return "90";
--		case 180:
--			return "180";
--		case 270:
--			return "270";
--		default:
--			return "0";
--		}
--	}
--
--	return nullptr;
-+	/* Use the effective nabu rotation, not the static sensor mounting angle. */
-+	return std::to_string(nabu::deviceRotation());
- }
- 
- int emit_info(struct impl *impl, bool full)
-@@ -123,8 +119,8 @@ int emit_info(struct impl *impl, bool full)
- 
- 	if (auto location = cameraLoc(camera))
- 		ADD_ITEM(SPA_KEY_API_LIBCAMERA_LOCATION, location);
--	if (auto rotation = cameraRot(camera))
--		ADD_ITEM(SPA_KEY_API_LIBCAMERA_ROTATION, rotation);
-+	const std::string rotation = cameraRot(camera);
-+	ADD_ITEM(SPA_KEY_API_LIBCAMERA_ROTATION, rotation.c_str());
- 
- 	const auto model = cameraModel(camera);
- 	ADD_ITEM(SPA_KEY_DEVICE_PRODUCT_NAME, model.c_str());
-@@ -176,6 +172,18 @@ int emit_info(struct impl *impl, bool full)
- 	return 0;
- }
- 
-+void onRotationTimer(void *data, [[maybe_unused]] uint64_t expiration)
-+{
-+	auto *impl = static_cast<struct impl *>(data);
-+	const unsigned int rotation = nabu::deviceRotation();
-+
-+	if (rotation == impl->rotation)
-+		return;
-+
-+	impl->rotation = rotation;
-+	emit_info(impl, false);
-+}
-+
- int impl_add_listener(void *object,
- 		      struct spa_hook *listener,
- 		      const struct spa_device_events *events,
-@@ -252,12 +260,15 @@ int impl_clear(struct spa_handle *handle)
- 	return 0;
- }
- 
--impl::impl(spa_log *log,
-+impl::impl(spa_log *log, spa_loop_utils *loopUtils,
- 	   std::shared_ptr<CameraManager> manager,
- 	   std::shared_ptr<Camera> camera,
- 	   std::string device_id)
- 	: handle({ SPA_VERSION_HANDLE, impl_get_interface, impl_clear }),
- 	  log(log),
-+	  loopUtils(loopUtils),
-+	  rotationTimer(nullptr),
-+	  rotation(nabu::deviceRotation()),
- 	  device_id(std::move(device_id)),
- 	  manager(std::move(manager)),
- 	  camera(std::move(camera))
-@@ -270,6 +281,16 @@ impl::impl(spa_log *log,
- 			SPA_TYPE_INTERFACE_Device,
- 			SPA_VERSION_DEVICE,
- 			&impl_device, this);
-+
-+	rotationTimer = spa_loop_utils_add_timer(loopUtils, onRotationTimer, this);
-+	struct timespec interval = { 1, 0 };
-+	spa_loop_utils_update_timer(loopUtils, rotationTimer, &interval, &interval, false);
-+}
-+
-+impl::~impl()
-+{
-+	if (rotationTimer)
-+		spa_loop_utils_destroy_source(loopUtils, rotationTimer);
- }
- 
- size_t
-@@ -293,6 +314,10 @@ impl_init(const struct spa_handle_factory *factory,
- 	spa_return_val_if_fail(handle != nullptr, -EINVAL);
- 
- 	auto log = static_cast<spa_log *>(spa_support_find(support, n_support, SPA_TYPE_INTERFACE_Log));
-+	auto loopUtils = static_cast<spa_loop_utils *>(
-+		spa_support_find(support, n_support, SPA_TYPE_INTERFACE_LoopUtils));
-+	if (!loopUtils)
-+		return -ENOENT;
- 
- 	auto manager = libcamera_manager_acquire(res);
- 	if (!manager) {
-@@ -310,7 +335,7 @@ impl_init(const struct spa_handle_factory *factory,
- 		return -ENOENT;
- 	}
- 
--	new (handle) impl(log, std::move(manager), std::move(camera), std::move(device_id));
-+	new (handle) impl(log, loopUtils, std::move(manager), std::move(camera), std::move(device_id));
- 
- 	return 0;
- }
 diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
 index a9095d4..197a048 100644
 --- a/spa/plugins/libcamera/libcamera-source.cpp
@@ -226,8 +66,8 @@ index a9095d4..197a048 100644
 +		SPA_META_TRANSFORMATION_270,
 +		SPA_META_TRANSFORMATION_Flipped,
 +		SPA_META_TRANSFORMATION_Flipped180,
-+		SPA_META_TRANSFORMATION_Flipped270,
 +		SPA_META_TRANSFORMATION_Flipped90,
++		SPA_META_TRANSFORMATION_Flipped270,
 +	};
 +
 +	if (direction < 0 || direction >= 8)
@@ -265,7 +105,7 @@ diff --git a/spa/plugins/libcamera/meson.build b/spa/plugins/libcamera/meson.bui
 index 9f396ab..0406901 100644
 --- a/spa/plugins/libcamera/meson.build
 +++ b/spa/plugins/libcamera/meson.build
-@@ -2,12 +2,16 @@ libcamera_sources = [
+@@ -2,12 +2,15 @@ libcamera_sources = [
    'libcamera.c',
    'libcamera-manager.cpp',
    'libcamera-device.cpp',
@@ -275,13 +115,12 @@ index 9f396ab..0406901 100644
  ]
  
 +gio_dep = dependency('gio-2.0')
-+gdk_dep = dependency('gdk-3.0')
 +
  libcameralib = shared_library('spa-libcamera',
    libcamera_sources,
    include_directories : [ configinc ],
 -  dependencies : [ spa_dep, libcamera_dep, pthread_lib  ],
-+  dependencies : [ spa_dep, libcamera_dep, pthread_lib, gio_dep, gdk_dep ],
++  dependencies : [ spa_dep, libcamera_dep, pthread_lib, gio_dep ],
    install : true,
    install_dir : spa_plugindir / 'libcamera')
 diff --git a/spa/plugins/libcamera/nabu-orientation.cpp b/spa/plugins/libcamera/nabu-orientation.cpp
@@ -289,18 +128,17 @@ new file mode 100644
 index 0000000..bcd4bf1
 --- /dev/null
 +++ b/spa/plugins/libcamera/nabu-orientation.cpp
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,166 @@
 +/* SPDX-License-Identifier: MIT */
 +/*
 + * Dynamic camera orientation for Xiaomi Pad 5 (nabu).
 + *
-+ * Ported from Camera Studio's nabu rotation logic: screen geometry selects
-+ * landscape/portrait, and iio-sensor-proxy distinguishes the inverted case.
++ * Uses iio-sensor-proxy to select landscape/portrait and distinguish the
++ * inverted case. No toolkit dependency: this runs on PipeWire threads.
 + */
 +
 +#include "nabu-orientation.h"
 +
-+#include <gdk/gdk.h>
 +#include <gio/gio.h>
 +
 +#include <chrono>
@@ -393,37 +231,15 @@ index 0000000..bcd4bf1
 +	return orientation;
 +}
 +
-+bool screenLandscape()
++bool screenLandscape(const std::string &orientation)
 +{
-+	static std::once_flag gdkOnce;
-+	std::call_once(gdkOnce, [] {
-+		int argc = 1;
-+		static char arg0[] = "nabu-orientation";
-+		static char argv0[] = "";
-+		char *argv[] = { arg0, argv0, nullptr };
-+		char **argvp = argv;
-+		gdk_init_check(&argc, &argvp);
-+	});
-+
-+	GdkDisplay *display = gdk_display_get_default();
-+	if (!display)
-+		return true;
-+
-+	GdkMonitor *monitor = gdk_display_get_primary_monitor(display);
-+	if (!monitor && gdk_display_get_n_monitors(display) > 0)
-+		monitor = gdk_display_get_monitor(display, 0);
-+	if (!monitor)
-+		return true;
-+
-+	GdkRectangle geometry;
-+	gdk_monitor_get_geometry(monitor, &geometry);
-+	return geometry.width > geometry.height;
++	return orientation == "left-up" || orientation == "right-up";
 +}
 +
 +unsigned int computeDeviceRotation()
 +{
 +	const std::string orientation = accelerometerOrientation();
-+	const bool landscape = screenLandscape();
++	const bool landscape = screenLandscape(orientation);
 +
 +	if (landscape)
 +		return orientation == "left-up" ? 180u : 0u;
@@ -489,8 +305,8 @@ index 0000000..dd1ee81
 +/*
 + * Dynamic camera orientation for Xiaomi Pad 5 (nabu).
 + *
-+ * Follows Camera Studio: the display geometry selects the base orientation and
-+ * iio-sensor-proxy only distinguishes the inverted case.
++ * Follows iio-sensor-proxy orientation: left/right-up are landscape,
++ * normal/bottom-up are portrait.
 + */
 +
 +#pragma once
