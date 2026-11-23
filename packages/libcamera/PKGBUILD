@@ -11,7 +11,7 @@ pkgname=(
   python-libcamera
 )
 pkgver=0.7.2
-pkgrel=5
+pkgrel=6
 pkgdesc="A complex camera support library for Linux, Android, and ChromeOS"
 arch=(aarch64)
 url="https://libcamera.org/"
@@ -24,7 +24,6 @@ makedepends=(
   glib2
   graphviz
   gst-plugins-base
-  gtk3
   gtest
   libdrm
   libgcc
@@ -51,17 +50,14 @@ makedepends=(
 source=(
   "git+$_url#tag=v$pkgver"
   "$pkgbase-fix-python3.14-macro-redefinition.patch"
-  nabu-camera-rotation.patch
   ChangeLog
 )
 sha512sums=('a5656356617a01a7e8feb535380869d38b7c58139c7f99385af355629d3e1927bbd8847f7bec755c753c72f6b065df76de53c15f9af2e5901e83e7a144a2ddcd'
             '8b54cbdf6ed767ae8d52a14480a4653f4f3a1c2187c4ccf7ceb65eaa60c819cce514122591d6e0c2dfc39d7482739f8fdd4090dbaf63701445510eefc88fb19f'
-            'c5bc4bdf409eaba2a8d8fd0a238fbfa3cf5652d9f2c840775adbb16c0ddb14a06326ad4881603a3ac075d0f251f12051afc304b0cc136d34407e16278f5ffe62'
-            '410eaf024cbe335f6a4a8d89423e4f826aeada1825260297329aaa8e138654d6b8178961cb8e71e94d202ee2f51f35236f8e933e69c51de8ce07fe319111d4f8')
+            '8858e80221c98e20ef975a8d3e31fc79becc2e1a71e18dcd900d81334fc5af10fcdd6adf638485d7077c2ffc167ba83c5db5d6a1173f3b418c4f2f0d7156c1ca')
 b2sums=('1dbd3f78f8d9a2484331798b18b871d7585b5928988e91d586366049d85e3f126e7cfc58494400e69feeec99a77894252d582f0d8f183508e5d1b8220e70f3d5'
         '4a0e24feed22d32b83b0ec49c9a7616b77deb26cae82c17a38b54a81a0468e982852147bc2d5e3b611ba014ddbd7647acfe2e68591542420da73945ba1c0d6c2'
-        '39f84199ae8fff2fbe172d4fae0f2d07b1c3d3c29e73c385f67b9444ea8d7452c97c853df1c013e1e566c3c3fbd53ea443ae0cb07ea36b97947befe0e5c9d94f'
-        '7c8a89ffdb620853073564bd6fa0d929907b12fbcbc6b04649ef9101e378a4a3603d6b0cf52870e02b201d3ee6d87ccd7627ef2cfed38d22460145a02c1b18b9')
+        'b6b4ae8ae34b3bb5d47069b756be3f86d72cec6d40e95c60985ee687c5975225c09e4291788f0a11d03988ca132d0904e8ca7614be35038b16ffd89841b551ba')
 
 _pick() {
   local p="$1" f d; shift
@@ -78,7 +74,6 @@ prepare() {
   git checkout -f
   git clean -fd
   patch -Np1 < ../$pkgbase-fix-python3.14-macro-redefinition.patch
-  patch -Np1 < ../nabu-camera-rotation.patch
 
   # add version, so that utils/gen-version.sh may rely on it
   printf "%s\n" "$pkgver" > .tarball-version
@@ -234,8 +229,6 @@ package_gst-plugin-libcamera() {
     glibc
     gst-plugins-base-libs
     gstreamer
-    gtk3 libgdk-3.so
-    iio-sensor-proxy
     libcamera libcamera.so libcamera-base.so
     libgcc
     libstdc++

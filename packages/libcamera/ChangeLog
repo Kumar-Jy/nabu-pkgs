@@ -1,3 +1,8 @@
+2026-11-23 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 0.7.2-6:
+	- Camera: remove dynamic orientation tags from gstlibcamerasrc; Camera Studio already applies its own rotation, and the tags conflicted with it.
+	- Packaging: drop the gtk3 runtime dependency and the obsolete rotation patch from gst-plugin-libcamera.
+
 2026-11-22 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 0.7.2-5:
 	- Camera: add dynamic OS-level rotation tags to gstlibcamerasrc using screen geometry and iio-sensor-proxy, following Camera Studio's nabu mapping.
