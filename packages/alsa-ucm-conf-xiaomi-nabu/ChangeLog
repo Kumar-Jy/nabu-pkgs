@@ -1,3 +1,10 @@
+2026-11-25 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
+	* 1.0-9:
+	- Audio: realign PipeWire quantum (960) with the 480-frame Qualcomm hardware period and set ALSA period 480/8, headroom 480 to fix speaker crackling.
+	- Audio: keep the generalized browser rule but align browser buffers to 960/48000 and node.latency to 1920/48000.
+	- Audio: restore 1.0-7 filter-chain alignment (audio.rate = 48000, priority.session = 1500) to prevent converter starvation after resume and heavy playback.
+	- Audio: retain the 65 Hz speaker protection filter and session.suspend-timeout-seconds = 0.
+
 2026-11-23 Kumar-Jy <20044626+Kumar-Jy@users.noreply.github.com>
 	* 1.0-8:
 	- Audio: restore standard power-of-two PipeWire quantum (1024) to eliminate notification crackling and buffer fragmentation in libcanberra and desktop event sounds.

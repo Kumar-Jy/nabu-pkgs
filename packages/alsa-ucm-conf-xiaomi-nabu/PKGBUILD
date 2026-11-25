@@ -4,7 +4,7 @@
 
 pkgname=alsa-ucm-conf-xiaomi-nabu
 pkgver=1.0
-pkgrel=8
+pkgrel=9
 pkgdesc="ALSA UCM profiles, speaker protection, RTKit tuning, and PipeWire audio config for Xiaomi Pad 5 (nabu)"
 arch=('aarch64')
 url="https://github.com/linux-msm/alsa-ucm-conf"
