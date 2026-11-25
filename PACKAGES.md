@@ -8,7 +8,7 @@ This document lists all packages available in the **`nabu-pkgs` Ubuntu repositor
 
 | Package | Source | Description |
 | :--- | :--- | :--- |
-| **`linux-image-*`** | [`Kumar-Jy/linux`](https://github.com/Kumar-Jy/linux) | Mainline Linux kernel for SM8150 Xiaomi Pad 5 (currently **7.3.5-4** with Iris VP9/H.264/HEVC hardware video decode up to 135 fps, 120Hz display, quad CS35L41 speaker routing, and fast charging). |
+| **`linux-image-*`** | [`Kumar-Jy/linux`](https://github.com/Kumar-Jy/linux) | Mainline Linux kernel for SM8150 Xiaomi Pad 5 (currently **7.3.6-0** with Iris VAAPI decode fix, Iris VP9/H.264/HEVC hardware video decode up to 135 fps, 120Hz display, quad CS35L41 speaker routing, and fast charging). |
 | **`linux-headers-*`** | [`Kumar-Jy/linux`](https://github.com/Kumar-Jy/linux) | Kernel headers matching the running kernel for building on-device DKMS modules (e.g. DisplayLink). |
 | **`linux-libc-dev`** | [`Kumar-Jy/linux`](https://github.com/Kumar-Jy/linux) | Linux API headers for userspace development. |
 
