@@ -223,12 +223,20 @@ RESOLUTION_PRESETS = [
 ]
 
 
-class CameraStudioWindow(Adw.ApplicationWindow):
+class CameraStudioWindow(Gtk.ApplicationWindow):
     __gtype_name__ = "CameraStudioWindow"
 
     def __init__(self, app):
         super().__init__(application=app, title="Camera Studio")
         self.set_default_size(640, 480)
+
+        # GTK4/Wayland only lets the compositor move a window through a real
+        # titlebar. Adw's implicit titlebar is 0px tall here, so add a slim
+        # draggable strip at the top edge.
+        drag_handle = Gtk.WindowHandle()
+        drag_handle.add_css_class("window-drag-handle")
+        drag_handle.set_size_request(-1, 24)
+        self.set_titlebar(drag_handle)
 
         # Style & Dark theme
         style_mgr = Adw.StyleManager.get_default()
@@ -358,10 +366,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
     def build_ui(self):
         # Toast Overlay
         self.toast_overlay = Adw.ToastOverlay()
-        self.set_content(self.toast_overlay)
+        self.set_child(self.toast_overlay)
 
         # Main Viewport Container (Stack / Overlay)
         self.overlay = Gtk.Overlay()
+        self.overlay.add_css_class("camera-stage")
         self.toast_overlay.set_child(self.overlay)
 
         # 1. Base Child: Viewfinder Picture
@@ -369,7 +378,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.pic_viewfinder.set_hexpand(True)
         self.pic_viewfinder.set_vexpand(True)
         self.pic_viewfinder.set_can_shrink(True)
-        self.pic_viewfinder.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.pic_viewfinder.set_content_fit(Gtk.ContentFit.COVER)
+        self.pic_viewfinder.set_margin_top(50)
+        self.pic_viewfinder.set_margin_bottom(88)
+        self.pic_viewfinder.set_margin_start(24)
+        self.pic_viewfinder.set_margin_end(24)
 
         # Tap-to-focus gesture on viewfinder
         focus_gesture = Gtk.GestureClick()
@@ -422,7 +435,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.rec_indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.rec_indicator_box.set_halign(Gtk.Align.CENTER)
         self.rec_indicator_box.set_valign(Gtk.Align.START)
-        self.rec_indicator_box.set_margin_top(20)
+        self.rec_indicator_box.set_margin_top(8)
         self.rec_indicator_box.add_css_class("rec-indicator-badge")
         self.rec_indicator_box.set_visible(False)
         self.rec_indicator_box.set_can_target(False)
@@ -445,11 +458,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # --- Top Floating Bar ---
         top_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         top_bar_wrapper.set_halign(Gtk.Align.FILL)
-        top_bar_wrapper.set_margin_top(12)
-        top_bar_wrapper.set_margin_start(16)
-        top_bar_wrapper.set_margin_end(16)
+        top_bar_wrapper.set_margin_top(2)
+        top_bar_wrapper.set_margin_start(24)
+        top_bar_wrapper.set_margin_end(24)
 
-        top_capsule = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        top_capsule = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         top_capsule.add_css_class("floating-capsule")
         top_capsule.set_hexpand(True)
         top_capsule.set_valign(Gtk.Align.CENTER)
@@ -537,9 +550,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         # Window Controls Divider
         sep_capsule = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         sep_capsule.set_valign(Gtk.Align.CENTER)
-        sep_capsule.set_size_request(-1, 20)
-        sep_capsule.set_margin_start(4)
-        sep_capsule.set_margin_end(4)
+        sep_capsule.set_size_request(-1, 16)
+        sep_capsule.set_margin_start(2)
+        sep_capsule.set_margin_end(2)
         top_capsule.append(sep_capsule)
 
         # Fullscreen Toggle Button
@@ -573,41 +586,26 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_revealer.set_reveal_child(False)
         self.hud_revealer.set_valign(Gtk.Align.CENTER)
         self.hud_revealer.set_halign(Gtk.Align.CENTER)
-        self.hud_revealer.set_margin_bottom(10)
-        self.hud_revealer.set_margin_start(16)
-        self.hud_revealer.set_margin_end(16)
+        self.hud_revealer.set_margin_bottom(4)
+        self.hud_revealer.set_margin_start(4)
+        self.hud_revealer.set_margin_end(4)
 
         hud_content = self.build_live_pro_hud()
-        self.hud_revealer.set_child(hud_content)
+        hud_scroller = Gtk.ScrolledWindow()
+        hud_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        hud_scroller.set_min_content_width(480)
+        hud_scroller.set_min_content_height(200)
+        hud_scroller.set_child(hud_content)
+        self.hud_revealer.set_child(hud_scroller)
         controls_layout.append(self.hud_revealer)
-
-        # --- Camera Mode Switcher (PHOTO / VIDEO) ---
-        mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        mode_box.set_halign(Gtk.Align.CENTER)
-        mode_box.set_valign(Gtk.Align.CENTER)
-        mode_box.set_margin_bottom(8)
-        mode_box.add_css_class("mode-switcher-container")
-
-        self.btn_mode_photo = Gtk.Button(label="PHOTO")
-        self.btn_mode_photo.add_css_class("mode-btn")
-        self.btn_mode_photo.add_css_class("mode-btn-active")
-        self.btn_mode_photo.connect('clicked', lambda _: self.set_camera_mode('photo'))
-        mode_box.append(self.btn_mode_photo)
-
-        self.btn_mode_video = Gtk.Button(label="VIDEO")
-        self.btn_mode_video.add_css_class("mode-btn")
-        self.btn_mode_video.connect('clicked', lambda _: self.set_camera_mode('video'))
-        mode_box.append(self.btn_mode_video)
-
-        controls_layout.append(mode_box)
 
         # --- Bottom Shutter & Controls Bar ---
         bottom_bar_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         bottom_bar_wrapper.set_halign(Gtk.Align.CENTER)
         bottom_bar_wrapper.set_valign(Gtk.Align.CENTER)
-        bottom_bar_wrapper.set_margin_bottom(20)
-        bottom_bar_wrapper.set_margin_start(20)
-        bottom_bar_wrapper.set_margin_end(20)
+        bottom_bar_wrapper.set_margin_bottom(4)
+        bottom_bar_wrapper.set_margin_start(4)
+        bottom_bar_wrapper.set_margin_end(4)
 
         # CenterBox guarantees the Shutter Button is at the true geometric horizontal center
         bottom_capsule = Gtk.CenterBox()
@@ -615,7 +613,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         bottom_capsule.set_valign(Gtk.Align.CENTER)
 
         # 1. Left Flank: Gallery Thumbnail & Image Fine-Tuning Drawer Button
-        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         left_box.set_halign(Gtk.Align.START)
         left_box.set_valign(Gtk.Align.CENTER)
 
@@ -625,7 +623,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_gallery.set_valign(Gtk.Align.CENTER)
         self.btn_gallery.set_halign(Gtk.Align.CENTER)
         self.img_thumb = Gtk.Image(icon_name="image-x-generic-symbolic")
-        self.img_thumb.set_pixel_size(44)
+        self.img_thumb.set_pixel_size(30)
         self.img_thumb.set_valign(Gtk.Align.CENTER)
         self.img_thumb.set_halign(Gtk.Align.CENTER)
         self.btn_gallery.set_child(self.img_thumb)
@@ -653,12 +651,21 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_adjust_color.connect('clicked', self.on_toggle_hud)
         left_box.append(self.btn_adjust_color)
 
+        self.btn_switch_cam = Gtk.Button(icon_name="camera-switch-symbolic")
+        self.btn_switch_cam.set_tooltip_text("Switch Front / Rear Camera (C)")
+        self.btn_switch_cam.add_css_class("action-circle-btn")
+        self.btn_switch_cam.add_css_class("switch-cam-btn-prominent")
+        self.btn_switch_cam.set_valign(Gtk.Align.CENTER)
+        self.btn_switch_cam.set_halign(Gtk.Align.CENTER)
+        self.btn_switch_cam.connect('clicked', self.on_switch_camera)
+        left_box.append(self.btn_switch_cam)
+
         # 2. Center: Large Concentric Circular Shutter Button
         center_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         center_box.set_halign(Gtk.Align.CENTER)
         center_box.set_valign(Gtk.Align.CENTER)
-        center_box.set_margin_start(24)
-        center_box.set_margin_end(24)
+        center_box.set_margin_start(10)
+        center_box.set_margin_end(10)
 
         self.btn_shutter = Gtk.Button()
         self.btn_shutter.set_tooltip_text("Capture Photo (Space)")
@@ -673,8 +680,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_shutter.connect('clicked', self.on_shutter_clicked)
         center_box.append(self.btn_shutter)
 
-        # 3. Right Flank: Flash Light Quick Toggle & Camera Flip Button
-        right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        # 3. Right Flank: Flash, Photo, Video
+        right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         right_box.set_halign(Gtk.Align.END)
         right_box.set_valign(Gtk.Align.CENTER)
 
@@ -685,14 +692,22 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_flash_quick.connect('clicked', self.on_cycle_flash)
         right_box.append(self.btn_flash_quick)
 
-        self.btn_switch_cam = Gtk.Button(icon_name="camera-switch-symbolic")
-        self.btn_switch_cam.set_tooltip_text("Switch Front / Rear Camera (C)")
-        self.btn_switch_cam.add_css_class("action-circle-btn")
-        self.btn_switch_cam.add_css_class("switch-cam-btn-prominent")
-        self.btn_switch_cam.set_valign(Gtk.Align.CENTER)
-        self.btn_switch_cam.set_halign(Gtk.Align.CENTER)
-        self.btn_switch_cam.connect('clicked', self.on_switch_camera)
-        right_box.append(self.btn_switch_cam)
+        self.btn_mode_photo = Gtk.Button(icon_name="camera-photo-symbolic")
+        self.btn_mode_photo.set_tooltip_text("Photo Mode")
+        self.btn_mode_photo.add_css_class("mode-btn")
+        self.btn_mode_photo.add_css_class("mode-btn-active")
+        self.btn_mode_photo.set_valign(Gtk.Align.CENTER)
+        self.btn_mode_photo.set_halign(Gtk.Align.CENTER)
+        self.btn_mode_photo.connect('clicked', lambda _: self.set_camera_mode('photo'))
+        right_box.append(self.btn_mode_photo)
+
+        self.btn_mode_video = Gtk.Button(icon_name="camera-video-symbolic")
+        self.btn_mode_video.set_tooltip_text("Video Mode")
+        self.btn_mode_video.add_css_class("mode-btn")
+        self.btn_mode_video.set_valign(Gtk.Align.CENTER)
+        self.btn_mode_video.set_halign(Gtk.Align.CENTER)
+        self.btn_mode_video.connect('clicked', lambda _: self.set_camera_mode('video'))
+        right_box.append(self.btn_mode_video)
 
         # SizeGroup locks left and right flanks to identical pixel widths for absolute horizontal centering
         flank_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
@@ -712,9 +727,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.drawer_revealer.set_reveal_child(False)
         self.drawer_revealer.set_valign(Gtk.Align.END)
         self.drawer_revealer.set_halign(Gtk.Align.CENTER)
-        self.drawer_revealer.set_margin_bottom(20)
-        self.drawer_revealer.set_margin_start(20)
-        self.drawer_revealer.set_margin_end(20)
+        self.drawer_revealer.set_margin_bottom(8)
+        self.drawer_revealer.set_margin_start(8)
+        self.drawer_revealer.set_margin_end(8)
 
         drawer_content = self.build_customization_drawer()
         self.drawer_revealer.set_child(drawer_content)
@@ -778,8 +793,13 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         hud_capsule.add_css_class("live-pro-capsule")
 
         # Row 1: Category Switcher Tab Bar
-        hud_tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        hud_tab_bar.set_halign(Gtk.Align.CENTER)
+        hud_tab_bar = Gtk.FlowBox()
+        hud_tab_bar.set_selection_mode(Gtk.SelectionMode.NONE)
+        hud_tab_bar.set_homogeneous(False)
+        hud_tab_bar.set_max_children_per_line(4)
+        hud_tab_bar.set_column_spacing(6)
+        hud_tab_bar.set_row_spacing(6)
+        hud_tab_bar.set_halign(Gtk.Align.FILL)
         hud_tab_bar.set_valign(Gtk.Align.CENTER)
 
         self.hud_tab_buttons = {}
@@ -820,11 +840,17 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         # --- 1. Page: Looks (Preset Pills) ---
         filter_scroll = Gtk.ScrolledWindow()
-        filter_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        filter_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        filter_scroll.set_hexpand(True)
         filter_scroll.set_halign(Gtk.Align.CENTER)
         filter_scroll.set_valign(Gtk.Align.CENTER)
 
-        preset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        preset_box = Gtk.FlowBox()
+        preset_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        preset_box.set_homogeneous(False)
+        preset_box.set_max_children_per_line(3)
+        preset_box.set_column_spacing(6)
+        preset_box.set_row_spacing(6)
         preset_box.add_css_class("preset-pill-strip")
         preset_box.set_valign(Gtk.Align.CENTER)
 
@@ -844,8 +870,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_stack.add_named(filter_scroll, 'looks')
 
         # --- 2. Page: Exposure (EV Bias) ---
-        box_ev = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box_ev.set_halign(Gtk.Align.CENTER)
+        box_ev = Gtk.FlowBox()
+        box_ev.set_selection_mode(Gtk.SelectionMode.NONE)
+        box_ev.set_homogeneous(False)
+        box_ev.set_max_children_per_line(3)
+        box_ev.set_column_spacing(8)
+        box_ev.set_row_spacing(8)
+        box_ev.set_hexpand(True)
+        box_ev.set_halign(Gtk.Align.FILL)
         box_ev.set_valign(Gtk.Align.CENTER)
 
         lbl_ev_tag = Gtk.Label(label="EV:")
@@ -873,8 +905,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_stack.add_named(box_ev, 'ev')
 
         # --- 3. Page: WB Tint (Green ↔ Magenta Balance) ---
-        box_tint = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box_tint.set_halign(Gtk.Align.CENTER)
+        box_tint = Gtk.FlowBox()
+        box_tint.set_selection_mode(Gtk.SelectionMode.NONE)
+        box_tint.set_homogeneous(False)
+        box_tint.set_max_children_per_line(3)
+        box_tint.set_column_spacing(8)
+        box_tint.set_row_spacing(8)
+        box_tint.set_hexpand(True)
+        box_tint.set_halign(Gtk.Align.FILL)
         box_tint.set_valign(Gtk.Align.CENTER)
 
         lbl_mag = Gtk.Label(label="🌸 Magenta")
@@ -906,8 +944,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_stack.add_named(box_tint, 'tint')
 
         # --- 4. Page: Contrast & Clarity ---
-        box_c = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box_c.set_halign(Gtk.Align.CENTER)
+        box_c = Gtk.FlowBox()
+        box_c.set_selection_mode(Gtk.SelectionMode.NONE)
+        box_c.set_homogeneous(False)
+        box_c.set_max_children_per_line(3)
+        box_c.set_column_spacing(8)
+        box_c.set_row_spacing(8)
+        box_c.set_hexpand(True)
+        box_c.set_halign(Gtk.Align.FILL)
         box_c.set_valign(Gtk.Align.CENTER)
 
         lbl_c_tag = Gtk.Label(label="Contrast:")
@@ -935,8 +979,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_stack.add_named(box_c, 'contrast')
 
         # --- 5. Page: Vibrance / Saturation ---
-        box_s = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box_s.set_halign(Gtk.Align.CENTER)
+        box_s = Gtk.FlowBox()
+        box_s.set_selection_mode(Gtk.SelectionMode.NONE)
+        box_s.set_homogeneous(False)
+        box_s.set_max_children_per_line(3)
+        box_s.set_column_spacing(8)
+        box_s.set_row_spacing(8)
+        box_s.set_hexpand(True)
+        box_s.set_halign(Gtk.Align.FILL)
         box_s.set_valign(Gtk.Align.CENTER)
 
         lbl_s_tag = Gtk.Label(label="Vibrance:")
@@ -964,8 +1014,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.hud_stack.add_named(box_s, 'sat')
 
         # --- 6. Page: Sharpness ---
-        box_sh = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box_sh.set_halign(Gtk.Align.CENTER)
+        box_sh = Gtk.FlowBox()
+        box_sh.set_selection_mode(Gtk.SelectionMode.NONE)
+        box_sh.set_homogeneous(False)
+        box_sh.set_max_children_per_line(3)
+        box_sh.set_column_spacing(8)
+        box_sh.set_row_spacing(8)
+        box_sh.set_hexpand(True)
+        box_sh.set_halign(Gtk.Align.FILL)
         box_sh.set_valign(Gtk.Align.CENTER)
 
         lbl_sh_tag = Gtk.Label(label="Sharpness:")
@@ -1327,32 +1383,38 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
     def apply_css(self):
         css = """
+        .camera-stage {
+            background-color: #000000;
+        }
+        .window-drag-handle {
+            background-color: #000000;
+        }
         .floating-capsule {
-            background-color: rgba(22, 26, 33, 0.86);
+            background-color: #161a21;
             border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 26px;
-            padding: 6px 14px;
-            min-height: 48px;
+            border-radius: 16px;
+            padding: 2px 8px;
+            min-height: 32px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
         }
         .floating-bottom-bar {
-            background-color: rgba(18, 21, 28, 0.88);
+            background-color: #12151c;
             border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 46px;
-            padding: 10px 24px;
-            min-height: 90px;
-            min-width: 480px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
+            border-radius: 26px;
+            padding: 4px 10px;
+            min-height: 52px;
+            min-width: 340px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.65);
         }
         .cam-badge-btn {
             font-weight: 700;
-            font-size: 13px;
+            font-size: 11px;
             color: #38bdf8;
             background-color: rgba(56, 189, 248, 0.12);
             border: 1px solid rgba(56, 189, 248, 0.28);
-            border-radius: 18px;
-            padding: 4px 14px;
-            min-height: 36px;
+            border-radius: 12px;
+            padding: 2px 8px;
+            min-height: 26px;
             transition: all 120ms ease;
         }
         .cam-badge-btn:hover {
@@ -1361,13 +1423,13 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .flash-mode-btn {
             font-weight: 600;
-            font-size: 12px;
+            font-size: 11px;
             color: #facc15;
             background-color: rgba(250, 204, 21, 0.12);
             border: 1px solid rgba(250, 204, 21, 0.28);
-            border-radius: 18px;
-            padding: 4px 12px;
-            min-height: 36px;
+            border-radius: 12px;
+            padding: 2px 8px;
+            min-height: 26px;
             transition: all 120ms ease;
         }
         .flash-mode-btn:hover {
@@ -1381,8 +1443,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .top-tool-btn {
             border-radius: 9999px;
-            min-width: 36px;
-            min-height: 36px;
+            min-width: 30px;
+            min-height: 26px;
             padding: 0;
             background-color: rgba(255, 255, 255, 0.08);
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1420,8 +1482,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             color: #f87171;
             border: 1px solid rgba(239, 68, 68, 0.45);
             border-radius: 9999px;
-            min-width: 36px;
-            min-height: 36px;
+            min-width: 30px;
+            min-height: 30px;
             padding: 0;
             transition: all 120ms ease;
         }
@@ -1436,11 +1498,11 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .shutter-button {
             border-radius: 9999px;
-            min-width: 72px;
-            min-height: 72px;
+            min-width: 50px;
+            min-height: 50px;
             padding: 0;
             background: transparent;
-            border: 4px solid #ffffff;
+            border: 3px solid #ffffff;
             box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
             transition: all 120ms ease-out;
         }
@@ -1454,38 +1516,31 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         .shutter-inner-circle {
             background-color: #ffffff;
             border-radius: 9999px;
-            min-width: 56px;
-            min-height: 56px;
+            min-width: 38px;
+            min-height: 38px;
             transition: all 120ms ease;
         }
         .shutter-button:active .shutter-inner-circle {
             background-color: #38bdf8;
         }
-        .mode-switcher-container {
-            background-color: rgba(18, 21, 28, 0.82);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 22px;
-            padding: 5px 9px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-        }
         .mode-btn {
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            padding: 8px 22px;
-            min-width: 72px;
-            border-radius: 18px;
-            color: rgba(255, 255, 255, 0.60);
-            background: transparent;
-            border: none;
+            border-radius: 9999px;
+            min-width: 34px;
+            min-height: 34px;
+            padding: 0;
+            background-color: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            color: #f1f5f9;
             transition: all 120ms ease;
         }
         .mode-btn:hover {
+            background-color: rgba(255, 255, 255, 0.18);
             color: #ffffff;
         }
         .mode-btn-active {
-            color: #ffffff;
-            background-color: rgba(255, 255, 255, 0.20);
+            background-color: rgba(56, 189, 248, 0.28);
+            border-color: rgba(56, 189, 248, 0.45);
+            color: #38bdf8;
         }
         .shutter-button-video {
             border-color: #ef4444;
@@ -1493,8 +1548,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         .shutter-inner-video {
             background-color: #ef4444 !important;
             border-radius: 9999px;
-            min-width: 56px;
-            min-height: 56px;
+            min-width: 38px;
+            min-height: 38px;
             transition: all 180ms ease;
         }
         .shutter-button-recording {
@@ -1502,9 +1557,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .shutter-inner-recording {
             background-color: #ef4444 !important;
-            border-radius: 10px !important;
-            min-width: 32px !important;
-            min-height: 32px !important;
+            border-radius: 8px !important;
+            min-width: 28px !important;
+            min-height: 28px !important;
             transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
         }
         .rec-indicator-badge {
@@ -1529,8 +1584,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .action-circle-btn {
             border-radius: 9999px;
-            min-width: 46px;
-            min-height: 46px;
+            min-width: 34px;
+            min-height: 34px;
             padding: 0;
             background-color: rgba(255, 255, 255, 0.08);
             border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1554,9 +1609,9 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             color: #ffffff;
         }
         .thumbnail-button {
-            border-radius: 14px;
-            min-width: 48px;
-            min-height: 48px;
+            border-radius: 11px;
+            min-width: 32px;
+            min-height: 32px;
             padding: 0;
             border: 2px solid rgba(255, 255, 255, 0.35);
             background: #111115;
@@ -1573,15 +1628,15 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         .preset-pill-strip {
             background-color: rgba(18, 21, 28, 0.80);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 20px;
-            padding: 4px 8px;
+            border-radius: 16px;
+            padding: 3px 6px;
         }
         .preset-pill {
-            border-radius: 16px;
-            font-size: 12px;
+            border-radius: 12px;
+            font-size: 11px;
             font-weight: 600;
-            padding: 4px 12px;
-            min-height: 28px;
+            padding: 3px 8px;
+            min-height: 24px;
             background: transparent;
             border: none;
             color: #d1d5db;
@@ -1624,32 +1679,39 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         }
         .res-badge-btn {
             font-weight: 700;
-            font-size: 13px;
+            font-size: 11px;
             color: #c084fc;
             background-color: rgba(192, 132, 252, 0.12);
             border: 1px solid rgba(192, 132, 252, 0.32);
-            border-radius: 18px;
-            padding: 4px 12px;
-            min-height: 36px;
+            border-radius: 12px;
+            padding: 0 8px;
+            min-height: 0;
             transition: all 120ms ease;
         }
         .res-badge-btn:hover {
             background-color: rgba(192, 132, 252, 0.25);
             border-color: #c084fc;
         }
+        .res-badge-btn > button {
+            min-height: 0;
+            padding: 0 4px;
+            background: transparent;
+            border: none;
+            color: #c084fc;
+        }
         .live-pro-capsule {
-            background-color: rgba(18, 21, 28, 0.88);
+            background-color: rgba(18, 21, 28, 0.92);
             border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 26px;
-            padding: 8px 16px;
+            border-radius: 20px;
+            padding: 6px 10px;
             box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
         }
         .hud-tab-btn {
-            border-radius: 16px;
-            font-size: 12px;
+            border-radius: 14px;
+            font-size: 10px;
             font-weight: 600;
-            padding: 4px 12px;
-            min-height: 30px;
+            padding: 2px 7px;
+            min-height: 24px;
             background: rgba(255, 255, 255, 0.06);
             border: 1px solid rgba(255, 255, 255, 0.10);
             color: #cbd5e1;
@@ -1676,25 +1738,25 @@ class CameraStudioWindow(Adw.ApplicationWindow):
             border-color: #ef4444;
         }
         .hud-control-label {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 700;
             color: #94a3b8;
         }
         .hud-value-badge {
             font-family: monospace;
             font-weight: 700;
-            font-size: 13px;
+            font-size: 11px;
             color: #38bdf8;
             background-color: rgba(56, 189, 248, 0.12);
-            border-radius: 8px;
-            padding: 2px 6px;
+            border-radius: 7px;
+            padding: 1px 5px;
         }
         .hud-chip-btn {
-            border-radius: 12px;
-            font-size: 11px;
+            border-radius: 10px;
+            font-size: 10px;
             font-weight: 600;
-            padding: 3px 8px;
-            min-height: 26px;
+            padding: 2px 6px;
+            min-height: 22px;
             background-color: rgba(255, 255, 255, 0.08);
             border: 1px solid rgba(255, 255, 255, 0.12);
             color: #f1f5f9;
@@ -2029,14 +2091,14 @@ class CameraStudioWindow(Adw.ApplicationWindow):
         self.btn_flash.remove_css_class("flash-active-torch")
 
         if self.flash_mode == 'auto':
-            self.btn_flash.set_label("⚡ Flash: Auto")
+            self.btn_flash.set_label("⚡ Auto")
             subtitle_desc = "Auto flash during photo capture"
         elif self.flash_mode == 'torch':
-            self.btn_flash.set_label("💡 Torch: ON")
+            self.btn_flash.set_label("💡 ON")
             self.btn_flash.add_css_class("flash-active-torch")
             subtitle_desc = "Continuous flashlight illumination active"
         else:
-            self.btn_flash.set_label("⚡ Flash: Off")
+            self.btn_flash.set_label("⚡ Off")
             subtitle_desc = "Flash disabled"
 
         if hasattr(self, 'btn_flash_quick'):
@@ -2103,7 +2165,7 @@ class CameraStudioWindow(Adw.ApplicationWindow):
 
         icon_str = "🤳" if is_front else "📷"
         short_name = "Front" if is_front else "Rear"
-        label_text = f"{icon_str} {short_name} ({cam['megapixels']}) ⇄"
+        label_text = f"{icon_str} {short_name}"
         self.btn_camera_switcher.set_label(label_text)
 
         if hasattr(self, 'btn_switch_cam'):
@@ -2344,7 +2406,8 @@ class CameraStudioWindow(Adw.ApplicationWindow):
     def update_resolution_ui(self):
         preset = RESOLUTION_PRESETS[self.target_res_idx]
         if hasattr(self, 'btn_res'):
-            self.btn_res.set_label(f"📐 {preset['short']}")
+            compact = preset['short'].replace(' (16:9)', '').replace(' UHD', '').replace(' QHD', '').replace('Full HD', 'FHD').replace('Full Sensor Native', 'Native').replace('Standard', '').strip()
+            self.btn_res.set_label(f"📐 {compact}")
             self.btn_res.set_tooltip_text(f"Capture Resolution: {preset['name']} ({preset['desc']})")
         if hasattr(self, 'res_pop_checks'):
             for i, check in enumerate(self.res_pop_checks):
@@ -3042,7 +3105,7 @@ class GalleryInspectorDialog(Adw.Window):
 
     def __init__(self, parent_win, photo_list):
         super().__init__(title="Photo Inspector & Studio")
-        self.set_default_size(640, 480)
+        self.set_default_size(760, 600)
         self.set_modal(True)
         self.set_transient_for(parent_win)
 
@@ -3089,10 +3152,11 @@ class GalleryInspectorDialog(Adw.Window):
 
         # Content: Horizontal Paned (Image on left, Info on right)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(540)
+        paned.set_position(460)
 
         # Left: Photo Preview with Navigation buttons & Gestures
         left_overlay = Gtk.Overlay()
+        left_overlay.set_size_request(320, -1)
         self.pic_preview = Gtk.Picture()
         self.pic_preview.set_hexpand(True)
         self.pic_preview.set_vexpand(True)
@@ -3137,6 +3201,7 @@ class GalleryInspectorDialog(Adw.Window):
 
         # Right: Info & Actions
         right_scroll = Gtk.ScrolledWindow()
+        right_scroll.set_min_content_width(280)
         right_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         info_page = Adw.PreferencesPage()
 
